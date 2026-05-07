@@ -31,14 +31,14 @@ def test_routing_unreachable_is_minus_one() -> None:
     graph.add_edge("A", "B")
     graph.add_node("C")
 
-    rows, route_map, fieldnames = generate_routing_matrix(graph, _Config(), RandomManager(1))
+    rows, route_map = generate_routing_matrix(graph, _Config(), RandomManager(1))
 
     assert rows
-    assert fieldnames == ["", "1", "2", "3"]
-
-    row_a = next(row for row in rows if row[""] == 1)
-    assert row_a["1"] == 1
-    assert row_a["3"] == -1
+    assert rows == [
+        [0, 1, -1],
+        [0, 1, -1],
+        [-1, -1, 2],
+    ]
 
     assert route_map[("A", "C")] == "-1"
     assert route_map[("A", "A")] == "A"
@@ -58,7 +58,7 @@ def test_weighted_shortest_path_routes_reach_destination_without_loops() -> None
         ]
     )
 
-    _, route_map, _ = generate_routing_matrix(graph, _Config(), RandomManager(7))
+    _, route_map = generate_routing_matrix(graph, _Config(), RandomManager(7))
 
     for src in sorted(graph.nodes()):
         for dst in sorted(graph.nodes()):

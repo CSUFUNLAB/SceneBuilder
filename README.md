@@ -1,5 +1,23 @@
 ﻿# Network Scene Generator
 
+## 简介
+
+本项目是一个可复现的网络场景生成器，用来根据拓扑与配置批量生成网络实验场景。它会输出节点、链路、网卡、路由矩阵、流量与事件等结构化文件，但本身不是仿真器，不直接计算丢包率、时延、抖动、吞吐等运行态性能指标。
+
+它的典型用途是作为上游场景生产工具，与 `ns-3` 等网络仿真器对接：先用本项目生成场景文件，再将这些文件转换或接入仿真器运行，从而获得性能数据。这样的工作流适合做数据集构建、协议评估、参数扫描、压力测试和批量自动化实验。
+
+## 支持配置
+
+- 场景级配置：`output_root`、`seed`、`num_scenes`、`scene_duration`
+- 拓扑来源配置：支持 `brite` 和 `topologyzoo`，可配置来源权重、目录与匹配模式
+- 节点配置：节点类型推断、可信角色字段、位置信息继承
+- 链路配置：链路类型推断、带宽生成、是否保留输入带宽
+- 网卡配置：队列类型模式、队列大小、IP 地址池、子网前缀与 MAC 生成
+- 路由配置：链路随机权重范围，并基于加权最短路径生成路由矩阵
+- 流量矩阵配置：`uniform`、`exponential`、`gravity`、`spike`
+- 流量特征配置：`poisson`、`on_off`、`cbr`，支持 `mixed` 和 `single` 两种整体模式
+- 事件配置：`node_failure`、`link_failure`、`route_switch` 及其时间与概率参数
+
 这是一个“网络场景生成器”，不是仿真器。它只负责按配置随机生成场景目录，不计算任何运行态指标（如丢包率、时延、抖动、吞吐）。
 
 ## 安装
@@ -54,7 +72,7 @@ python -m network_scene_generator clean --config configs/example.yaml
 
 ## 关键约定
 
-- 内部计算统一使用节点ID（正整数，1开始）。
+- 内部计算统一使用节点ID（非负整数，0开始）。
 - 除 `nodes.csv` 外，其它文件不出现原始节点名。
 - `nodes.csv` 中保留拓扑文件里的原始节点名，仅用于映射展示，不参与索引和内部计算。
 - 节点角色仅使用 `core` / `aggregation` / `edge`，默认按拓扑结构做“简单推断+适度随机”生成。
@@ -69,7 +87,7 @@ python -m network_scene_generator clean --config configs/example.yaml
 - 流量矩阵模型在每个场景开始时按 `traffic_matrix.mode_probabilities` 随机选一种；默认随机池为 `uniform` / `exponential` / `gravity` / `spike`。
 - 流量特征模型支持两种整体模式：`mixed`（混合）或 `single`（单一类型），并可按概率随机选择本场景使用哪一种模式。
 - `nodes.csv` 额外输出节点位置信息：若拓扑中有经纬度则写入，无则留空。
-- `routing_matrix.csv` 是整数矩阵；左上角（第一行第一列）为空，不写标签。
+- `routing_matrix.csv` 是纯整数矩阵，不写表头和行索引。
 - `routing_matrix.csv` 中不可达写 `-1`。
 - `routing_matrix.csv` 中 `src==dst` 时单元格写源节点ID本身。
 - `events.jsonl` 与 `traffic.jsonl` 使用 JSON Lines：每行一个 JSON 对象。
@@ -122,10 +140,9 @@ python -m network_scene_generator clean --config configs/example.yaml
 
 ### routing_matrix.csv
 
-- 表头第一格留空
-- 表头其余列是目标节点ID
-- 第一列是源节点ID
-- 单元格值是下一跳节点ID
+- 不写表头
+- 不写行索引
+- 第 `i` 行第 `j` 列表示节点 `i -> j` 的下一跳节点ID
 
 `routing` 配置当前只支持：
 
@@ -207,3 +224,6 @@ python -m network_scene_generator clean --config configs/example.yaml
 - `exponential_scale`
 - `gravity`
 - `spike`
+
+
+

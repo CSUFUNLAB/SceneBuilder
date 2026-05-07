@@ -19,6 +19,7 @@ from .utils.graph_utils import as_working_graph, ordered_nodes
 from .writers.csv_writer import write_csv
 from .writers.json_writer import write_json
 from .writers.jsonl_writer import write_jsonl
+from .writers.matrix_writer import write_matrix_csv
 
 
 def _sanitize_name(value: str) -> str:
@@ -46,7 +47,7 @@ def _build_scene_dir(config, selected: SelectedTopology, scene_index: int) -> Pa
 
 def _build_internal_id_graph(graph: nx.Graph) -> tuple[nx.Graph, dict[str, str], dict[str, int]]:
     original_nodes = ordered_nodes(graph)
-    original_to_internal = {original: str(index) for index, original in enumerate(original_nodes, start=1)}
+    original_to_internal = {original: str(index) for index, original in enumerate(original_nodes, start=0)}
     internal_to_original = {internal: original for original, internal in original_to_internal.items()}
     internal_graph = nx.relabel_nodes(graph, original_to_internal, copy=True)
     internal_id_map = {internal: int(internal) for internal in internal_to_original.keys()}
@@ -180,7 +181,7 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
     nics_metadata = resolve_queue_policy_selection(config.nics, rng)
     links_rows = generate_links(graph, config, rng, node_roles=node_roles)
     nodes_rows, node_id_map = generate_nodes(graph, internal_to_original, config, rng, node_roles=node_roles)
-    routing_rows, routing_map, routing_fields = generate_routing_matrix(graph, config, rng, node_id_map=node_id_map)
+    routing_rows, routing_map = generate_routing_matrix(graph, config, rng, node_id_map=node_id_map)
     nics_rows = generate_nics(links_rows, config, rng, selection=nics_metadata, node_roles=node_roles)
     events_rows = generate_events(graph, links_rows, routing_map, config, rng)
     traffic_rows, traffic_metadata = generate_traffic(graph, config, rng, include_metadata=True)
@@ -206,7 +207,7 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
 
     write_csv(scene_dir / "links.csv", LINK_FIELDS, links_rows)
     write_csv(scene_dir / "nodes.csv", NODE_FIELDS, nodes_rows)
-    write_csv(scene_dir / "routing_matrix.csv", routing_fields, routing_rows)
+    write_matrix_csv(scene_dir / "routing_matrix.csv", routing_rows)
     write_csv(scene_dir / "nics.csv", NIC_FIELDS, nics_rows)
     write_jsonl(scene_dir / "events.jsonl", events_rows)
     write_jsonl(scene_dir / "traffic.jsonl", traffic_rows)

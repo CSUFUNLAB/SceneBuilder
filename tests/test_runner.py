@@ -164,20 +164,23 @@ events:
     scene_dir = run(cfg)[0]
     with (scene_dir / "nodes.csv").open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
+    with (scene_dir / "routing_matrix.csv").open("r", encoding="utf-8", newline="") as handle:
+        routing_lines = [line.strip() for line in handle.readlines()]
 
     assert rows == [
         {
-            "node_id": "1",
+            "node_id": "0",
             "original_node_name": "2",
             "node_type": "edge",
             "latitude": "1.0",
             "longitude": "1.0",
         },
         {
-            "node_id": "2",
+            "node_id": "1",
             "original_node_name": "10",
             "node_type": "aggregation",
             "latitude": "0.0",
             "longitude": "0.0",
         },
     ]
+    assert routing_lines == ["0,1", "0,1"]
