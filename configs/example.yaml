@@ -7,12 +7,12 @@ topology_sources:
   - name: brite_pool
     type: brite
     weight: 0.1
-    root_dir: ../sample_topologies/brite
+    root_dir: ../topologies/brite
     glob_patterns: ["**/*.brite"]
   - name: topologyzoo_pool
     type: topologyzoo
     weight: 0.9
-    root_dir: ../sample_topologies/topologyzoo
+    root_dir: ../topologies/topologyzoo
     glob_patterns: ["**/*.gml"]
 
 link_generation:

@@ -12,9 +12,14 @@
 !/tests/
 !/tests/**
 
+
+
 # Keep example configs and example topology assets.
 !/configs/
 !/configs/**
+!/topologies/
+!/topologies/topologyzoo/
+!/topologies/topologyzoo/**
 
 # Ignore generated outputs and caches anywhere in the repo.
 generated_scenes/
