@@ -45,13 +45,11 @@ class _CbrConfig:
         "mode_probabilities": {"cbr": 1.0},
         "poisson": {"lambda_range": [3.0, 3.0]},
         "on_off": {},
-        "cbr": {
-            "rate_range_mbps": [2.0, 2.0],
-        },
+        "cbr": {},
     }
 
 
-def test_traffic_cbr_rows_only_include_cbr_parameters() -> None:
+def test_traffic_cbr_rows_have_no_extra_rate_parameters() -> None:
     graph = nx.Graph()
     graph.add_nodes_from(["A", "B"])
 
@@ -59,11 +57,11 @@ def test_traffic_cbr_rows_only_include_cbr_parameters() -> None:
     assert len(rows) == 2
     for row in rows:
         assert row["feature_model"] == "cbr"
-        assert row["param_rate_mbps"] == 2.0
         assert "param_lambda" not in row
         assert "param_on_mean" not in row
         assert "param_off_mean" not in row
         assert "param_peak_rate_mbps" not in row
+        assert "param_rate_mbps" not in row
 
 
 def test_traffic_can_return_generation_metadata() -> None:
@@ -75,8 +73,62 @@ def test_traffic_can_return_generation_metadata() -> None:
     assert len(rows) == 2
     assert metadata["traffic_matrix"]["selected_mode"] == "uniform"
     assert metadata["traffic_matrix"]["active_rule"]["uniform_range_mbps"] == [5.0, 5.0]
+    assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "available_flow_pairs": 2,
+        "requested_flow_count_range": None,
+        "selected_flow_count": 2,
+        "effective_flow_count": 2,
+        "sampled": False,
+    }
     assert metadata["flow_feature"]["selection_mode"] == "mixed"
     assert metadata["flow_feature"]["active_rule"]["mode_probabilities"] == {"poisson": 1.0}
+
+
+class _SampledTrafficConfig:
+    traffic_matrix = {
+        "mode_probabilities": {"uniform": 1.0},
+        "uniform_range_mbps": [5.0, 5.0],
+        "flow_count_range": [3, 3],
+    }
+    flow_feature = _Config.flow_feature
+
+
+def test_traffic_can_sample_a_configured_number_of_flow_pairs() -> None:
+    graph = nx.Graph()
+    graph.add_nodes_from(["A", "B", "C"])
+
+    rows, metadata = generate_traffic(graph, _SampledTrafficConfig(), RandomManager(7), include_metadata=True)
+
+    assert len(rows) == 3
+    assert len({(row["src"], row["dst"]) for row in rows}) == 3
+    assert [row["flow_id"] for row in rows] == ["F000001", "F000002", "F000003"]
+    assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "available_flow_pairs": 6,
+        "requested_flow_count_range": [3, 3],
+        "selected_flow_count": 3,
+        "effective_flow_count": 3,
+        "sampled": True,
+    }
+
+
+class _SampledTrafficRangeConfig:
+    traffic_matrix = {
+        "mode_probabilities": {"uniform": 1.0},
+        "uniform_range_mbps": [5.0, 5.0],
+        "flow_count_range": [2, 4],
+    }
+    flow_feature = _Config.flow_feature
+
+
+def test_traffic_randomizes_flow_count_within_configured_range() -> None:
+    graph = nx.Graph()
+    graph.add_nodes_from(["A", "B", "C"])
+
+    rows, metadata = generate_traffic(graph, _SampledTrafficRangeConfig(), RandomManager(8), include_metadata=True)
+
+    selected_count = metadata["traffic_matrix"]["flow_sampling"]["selected_flow_count"]
+    assert 2 <= selected_count <= 4
+    assert len(rows) == selected_count
 
 
 class _SingleFeatureConfig:
@@ -148,7 +200,7 @@ def test_traffic_can_randomly_select_traffic_matrix_mode_per_scene() -> None:
     }
 
 
-def test_hard_traffic_constraints_zero_unreachable_and_cap_to_path_bottleneck() -> None:
+def test_hard_traffic_constraints_zero_unreachable_without_capping_to_path_bottleneck() -> None:
     traffic_rows = [
         {"flow_id": "F000001", "src": "1", "dst": "3", "demand_mbps": 9.0, "feature_model": "poisson"},
         {"flow_id": "F000002", "src": "1", "dst": "4", "demand_mbps": 4.0, "feature_model": "poisson"},
@@ -165,11 +217,11 @@ def test_hard_traffic_constraints_zero_unreachable_and_cap_to_path_bottleneck() 
 
     constrained_rows, stats = apply_hard_traffic_constraints(traffic_rows, routing_map, links_rows)
 
-    assert constrained_rows[0]["demand_mbps"] == 5.0
+    assert constrained_rows[0]["demand_mbps"] == 9.0
     assert constrained_rows[1]["demand_mbps"] == 0.0
-    assert stats["cap_per_flow_to_path_bottleneck"] is True
+    assert stats["cap_per_flow_to_path_bottleneck"] is False
     assert stats["drop_unreachable_demands"] is True
-    assert stats["flows_capped_by_path_bottleneck"] == 1
+    assert stats["flows_capped_by_path_bottleneck"] == 0
     assert stats["unreachable_flows_zeroed"] == 1
 
 
@@ -180,8 +232,8 @@ def test_hard_traffic_constraints_cap_to_feature_limit_when_needed() -> None:
             "src": "1",
             "dst": "2",
             "demand_mbps": 18.0,
-            "feature_model": "cbr",
-            "param_rate_mbps": 12.0,
+            "feature_model": "on_off",
+            "param_peak_rate_mbps": 12.0,
         }
     ]
     routing_map = {

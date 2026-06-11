@@ -7,7 +7,7 @@ import numpy as np
 
 from ..rng import RandomManager
 from ..utils.graph_utils import ordered_nodes, ordered_pairs
-from ..utils.routing import build_bidirectional_bandwidth_map, path_bottleneck_bandwidth, resolve_routed_path
+from ..utils.routing import resolve_routed_path
 from ..utils.selection import weighted_pick
 
 
@@ -194,11 +194,7 @@ def _fill_feature_params(row: dict[str, Any], model: str, flow_feature_cfg: dict
         row["param_off_mean"] = round(rng.uniform(off_low, off_high), 6)
         row["param_peak_rate_mbps"] = round(rng.uniform(peak_low, peak_high), 6)
     elif model == "cbr":
-        low, high = _float_range(
-            flow_feature_cfg.get("cbr", {}).get("rate_range_mbps", [10.0, 100.0]),
-            (10.0, 100.0),
-        )
-        row["param_rate_mbps"] = round(rng.uniform(low, high), 6)
+        return
     else:
         raise ValueError(f"Unsupported flow feature model: {model}")
 
@@ -218,6 +214,44 @@ def _choose_feature_model(
     return str(rng.weighted_choice(models, weights))
 
 
+def _select_flow_pairs(nodes: list[str], tm_cfg: dict[str, Any], rng: RandomManager) -> tuple[list[tuple[str, str]], dict[str, Any]]:
+    all_pairs = ordered_pairs(nodes, include_self=False)
+    requested_range = tm_cfg.get("flow_count_range")
+    total_pairs = len(all_pairs)
+
+    if requested_range is None:
+        return all_pairs, {
+            "available_flow_pairs": int(total_pairs),
+            "requested_flow_count_range": None,
+            "selected_flow_count": int(total_pairs),
+            "effective_flow_count": int(total_pairs),
+            "sampled": False,
+        }
+
+    min_count = int(requested_range[0])
+    max_count = int(requested_range[1])
+    count = rng.randint(min_count, max_count)
+    effective_count = min(count, total_pairs)
+    if effective_count >= total_pairs:
+        return all_pairs, {
+            "available_flow_pairs": int(total_pairs),
+            "requested_flow_count_range": [int(min_count), int(max_count)],
+            "selected_flow_count": int(count),
+            "effective_flow_count": int(total_pairs),
+            "sampled": False,
+        }
+
+    selected = set(rng.sample(all_pairs, effective_count))
+    selected_pairs = [pair for pair in all_pairs if pair in selected]
+    return selected_pairs, {
+        "available_flow_pairs": int(total_pairs),
+        "requested_flow_count_range": [int(min_count), int(max_count)],
+        "selected_flow_count": int(count),
+        "effective_flow_count": int(effective_count),
+        "sampled": True,
+    }
+
+
 def _feature_rate_limit(row: dict[str, Any]) -> float | None:
     model = str(row.get("feature_model", ""))
     if model == "on_off":
@@ -229,15 +263,6 @@ def _feature_rate_limit(row: dict[str, Any]) -> float | None:
             return None
         return peak_value
 
-    if model == "cbr":
-        rate = row.get("param_rate_mbps")
-        if rate in (None, ""):
-            return None
-        rate_value = float(rate)
-        if rate_value <= 0:
-            return None
-        return rate_value
-
     return None
 
 
@@ -246,12 +271,10 @@ def apply_hard_traffic_constraints(
     routing_map: dict[tuple[str, str], str],
     links_rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    bandwidth_map = build_bidirectional_bandwidth_map(links_rows)
     constrained_rows: list[dict[str, Any]] = []
 
     unreachable_flows_zeroed = 0
     invalid_route_flows_zeroed = 0
-    flows_capped_by_path_bottleneck = 0
     flows_capped_by_feature_limit = 0
 
     for row in traffic_rows:
@@ -268,34 +291,23 @@ def apply_hard_traffic_constraints(
             constrained_rows.append(new_row)
             continue
 
-        bottleneck = path_bottleneck_bandwidth(path, bandwidth_map)
+        constrained_demand = float(demand)
+        feature_limit = _feature_rate_limit(new_row)
+        if feature_limit is not None and constrained_demand > feature_limit:
+            constrained_demand = float(feature_limit)
+            flows_capped_by_feature_limit += 1
 
-        if bottleneck is None and len(path) > 1:
-            if demand > 0:
-                invalid_route_flows_zeroed += 1
-            new_row["demand_mbps"] = 0.0
-        else:
-            constrained_demand = float(demand)
-            if bottleneck is not None and constrained_demand > bottleneck:
-                constrained_demand = float(bottleneck)
-                flows_capped_by_path_bottleneck += 1
-
-            feature_limit = _feature_rate_limit(new_row)
-            if feature_limit is not None and constrained_demand > feature_limit:
-                constrained_demand = float(feature_limit)
-                flows_capped_by_feature_limit += 1
-
-            new_row["demand_mbps"] = round(float(constrained_demand), 6)
+        new_row["demand_mbps"] = round(float(constrained_demand), 6)
 
         constrained_rows.append(new_row)
 
     return constrained_rows, {
         "drop_unreachable_demands": True,
-        "cap_per_flow_to_path_bottleneck": True,
+        "cap_per_flow_to_path_bottleneck": False,
         "cap_per_flow_to_feature_limit": True,
         "unreachable_flows_zeroed": int(unreachable_flows_zeroed),
         "invalid_route_flows_zeroed": int(invalid_route_flows_zeroed),
-        "flows_capped_by_path_bottleneck": int(flows_capped_by_path_bottleneck),
+        "flows_capped_by_path_bottleneck": 0,
         "flows_capped_by_feature_limit": int(flows_capped_by_feature_limit),
     }
 
@@ -310,11 +322,12 @@ def generate_traffic(
     tm_demands, tm_metadata = _generate_tm_demands(nodes, config.traffic_matrix, rng)
     flow_feature_cfg = config.flow_feature
     flow_feature_selection = resolve_flow_feature_selection(flow_feature_cfg, rng)
+    flow_pairs, sampling_metadata = _select_flow_pairs(nodes, config.traffic_matrix, rng)
 
     rows: list[dict[str, Any]] = []
     flow_idx = 1
 
-    for src, dst in ordered_pairs(nodes, include_self=False):
+    for src, dst in flow_pairs:
         demand = tm_demands.get((src, dst), 0.0)
         model = _choose_feature_model(flow_feature_cfg, rng, flow_feature_selection)
 
@@ -348,6 +361,6 @@ def generate_traffic(
         }
 
     return rows, {
-        "traffic_matrix": tm_metadata,
+        "traffic_matrix": {**tm_metadata, "flow_sampling": sampling_metadata},
         "flow_feature": flow_feature_metadata,
     }

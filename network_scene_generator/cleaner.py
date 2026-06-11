@@ -11,7 +11,6 @@ _SCENE_MARKER_FILES = {
     "nodes.csv",
     "routing_matrix.csv",
     "nics.csv",
-    "events.jsonl",
     "traffic.jsonl",
 }
 
@@ -24,10 +23,8 @@ def _looks_like_scene_dir(path: Path) -> bool:
     return "metadata.json" in child_names and any(name in child_names for name in _SCENE_MARKER_FILES - {"metadata.json"})
 
 
-def clean(config_path: str | Path) -> tuple[Path, list[Path]]:
-    config = load_config(config_path)
-    output_root = Path(config.output_root)
-
+def clean_output_root(output_root: str | Path) -> tuple[Path, list[Path]]:
+    output_root = Path(output_root)
     if not output_root.exists():
         return output_root, []
 
@@ -39,3 +36,8 @@ def clean(config_path: str | Path) -> tuple[Path, list[Path]]:
         removed.append(child)
 
     return output_root, removed
+
+
+def clean(config_path: str | Path) -> tuple[Path, list[Path]]:
+    config = load_config(config_path)
+    return clean_output_root(config.output_root)

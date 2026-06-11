@@ -77,7 +77,7 @@ routing:
     assert loaded.routing == {"weight_range": [3.0, 7.0]}
 
 
-def test_load_config_ignores_legacy_event_time_range_field(tmp_path: Path) -> None:
+def test_load_config_ignores_legacy_events_section(tmp_path: Path) -> None:
     topo_dir = tmp_path / "topologies"
     topo_dir.mkdir(parents=True)
     (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
@@ -105,8 +105,137 @@ events:
 
     loaded = load_config(cfg)
 
-    assert "event_time_range" not in loaded.events
-    assert loaded.events["failure_end_probability"] == 0.5
+    assert not hasattr(loaded, "events")
+
+
+def test_load_config_allows_zero_weight_source_when_another_source_is_positive(tmp_path: Path) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 123
+num_scenes: 1
+scene_duration: 60
+topology_sources:
+  - name: disabled
+    type: brite
+    weight: 0
+    root_dir: ./topologies
+    glob_patterns: ["missing.brite"]
+  - name: enabled
+    type: brite
+    weight: 1.0
+    root_dir: ./topologies
+    glob_patterns: ["sample.brite"]
+""",
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg)
+
+    assert [source.weight for source in loaded.topology_sources] == [0.0, 1.0]
+
+
+def test_load_config_rejects_unknown_entity_state(tmp_path: Path) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 123
+num_scenes: 1
+scene_duration: 60
+topology_sources:
+  - name: s
+    type: brite
+    weight: 1.0
+    root_dir: ./topologies
+    glob_patterns: ["**/*.brite"]
+nodes:
+  state_probabilities:
+    normal: 0.9
+    degraded: 0.1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="nodes.state_probabilities"):
+        load_config(cfg)
+
+
+def test_load_config_replaces_default_state_probabilities(tmp_path: Path) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 123
+num_scenes: 1
+scene_duration: 60
+topology_sources:
+  - name: s
+    type: brite
+    weight: 1.0
+    root_dir: ./topologies
+    glob_patterns: ["**/*.brite"]
+nodes:
+  state_probabilities:
+    disabled: 1.0
+nics:
+  state_probabilities:
+    disabled: 1.0
+link_generation:
+  state_probabilities:
+    degraded: 1.0
+""",
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg)
+
+    assert loaded.nodes["state_probabilities"] == {"disabled": 1.0}
+    assert loaded.nics["state_probabilities"] == {"disabled": 1.0}
+    assert loaded.link_generation["state_probabilities"] == {"degraded": 1.0}
+
+
+def test_load_config_rejects_saturated_entity_state(tmp_path: Path) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 123
+num_scenes: 1
+scene_duration: 60
+topology_sources:
+  - name: s
+    type: brite
+    weight: 1.0
+    root_dir: ./topologies
+    glob_patterns: ["**/*.brite"]
+nics:
+  state_probabilities:
+    normal: 0.9
+    saturated: 0.1
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="nics.state_probabilities"):
+        load_config(cfg)
 
 
 def test_load_config_keeps_legacy_fixed_traffic_matrix_mode_when_probabilities_missing(tmp_path: Path) -> None:
@@ -175,7 +304,7 @@ flow_feature:
     assert loaded.flow_feature["single_model"] == "cbr"
     assert loaded.flow_feature["mode_probabilities"] == {"poisson": 0.5, "cbr": 0.5}
     assert loaded.flow_feature["single_model_probabilities"] == {"cbr": 1.0}
-    assert loaded.flow_feature["cbr"] == {"rate_range_mbps": [12.0, 34.0]}
+    assert loaded.flow_feature["cbr"] == {}
     assert "abr" not in loaded.flow_feature
 
 
@@ -203,4 +332,3 @@ topology_sources:
 
     with pytest.raises(ValueError, match="graphml support has been removed"):
         load_config(cfg)
-

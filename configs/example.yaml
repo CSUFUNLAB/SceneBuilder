@@ -6,12 +6,12 @@ scene_duration: 300
 topology_sources:
   - name: brite_pool
     type: brite
-    weight: 0.1
+    weight: 0
     root_dir: ../topologies/brite
     glob_patterns: ["**/*.brite"]
   - name: topologyzoo_pool
     type: topologyzoo
-    weight: 0.9
+    weight: 1.0
     root_dir: ../topologies/topologyzoo
     glob_patterns: ["**/*.gml"]
 
@@ -19,6 +19,10 @@ link_generation:
   mode: role_based_random
   preserve_input_bandwidth: true
   treat_as_undirected: true
+  state_probabilities:
+    normal: 0.95
+    degraded: 0.03
+    disabled: 0.02
   pure_random:
     bandwidth_candidates_mbps: [100, 1000, 10000]
     uniform_range_mbps: [100.0, 10000.0]
@@ -46,20 +50,23 @@ link_generation:
       - type
 
 nics:
+  state_probabilities:
+    normal: 0.98
+    disabled: 0.02
   queue_policy_mode_probabilities:
-    mixed: 0.5
-    single: 0.5
+    mixed: 0
+    single: 1.0
   queue_policy_candidates: [FIFO, RED, CoDel, FqCoDel]
   queue_policy_probabilities:
-    FIFO: 0.25
-    RED: 0.25
-    CoDel: 0.25
-    FqCoDel: 0.25
+    FIFO: 1.0
+    RED: 0.0
+    CoDel: 0.0
+    FqCoDel: 0.0
   single_queue_policy_probabilities:
-    FIFO: 0.25
-    RED: 0.25
-    CoDel: 0.25
-    FqCoDel: 0.25
+    FIFO: 1.0
+    RED: 0.0
+    CoDel: 0.0
+    FqCoDel: 0.0
   queue_size_range_packets: [128, 2048]
   ip_cidr: 10.0.0.0/8
   ip_cidr_candidates: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
@@ -79,6 +86,9 @@ nodes:
   assignment_mode: topology_role
   default_node_type: edge
   trust_input_node_roles: false
+  state_probabilities:
+    normal: 0.95
+    disabled: 0.05
   trusted_node_role_fields:
     - source_node_role
     - node_role
@@ -94,6 +104,7 @@ routing:
   weight_range: [1.0, 10.0]
 
 traffic_matrix:
+  flow_count_range: [50, 100]
   mode_probabilities:
     uniform: 0.25
     exponential: 0.25
@@ -111,32 +122,20 @@ traffic_matrix:
 
 flow_feature:
   selection_mode_probabilities:
-    mixed: 0.5
-    single: 0.5
+    mixed: 0.0
+    single: 1.0
   mode_probabilities:
-    poisson: 0.4
-    on_off: 0.3
-    cbr: 0.3
+    poisson: 0.0
+    on_off: 0.0
+    cbr: 1.0
   single_model_probabilities:
-    poisson: 0.4
-    on_off: 0.3
-    cbr: 0.3
+    poisson: 0.0
+    on_off: 0.0
+    cbr: 1.0
   poisson:
     lambda_range: [2.0, 40.0]
   on_off:
     on_mean_range: [0.2, 5.0]
     off_mean_range: [0.2, 6.0]
     peak_rate_range_mbps: [20.0, 300.0]
-  cbr:
-    rate_range_mbps: [10.0, 120.0]
-
-events:
-  enabled: true
-  event_probability: 0.4
-  event_type_candidates: [node_failure, link_failure, route_switch]
-  failure_end_probability: 0.5
-  route_switch:
-    require_reachable_to_dst: true
-
-
-
+  cbr: {}

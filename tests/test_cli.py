@@ -29,8 +29,6 @@ topology_sources:
     weight: 1.0
     root_dir: ./topologies
     glob_patterns: ["sample.brite"]
-events:
-  enabled: false
 """,
         encoding="utf-8",
     )
@@ -74,8 +72,6 @@ topology_sources:
     weight: 1.0
     root_dir: ./topologies
     glob_patterns: ["sample.brite"]
-events:
-  enabled: false
 """,
         encoding="utf-8",
     )

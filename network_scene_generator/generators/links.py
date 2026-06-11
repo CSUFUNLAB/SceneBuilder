@@ -5,9 +5,10 @@ from typing import Any
 import networkx as nx
 
 from ..rng import RandomManager
+from ..utils.entity_states import pick_state
 from .nodes import infer_node_roles
 
-LINK_FIELDS = ["link_id", "src", "dst", "link_type", "bandwidth_mbps"]
+LINK_FIELDS = ["link_id", "src", "dst", "link_type", "bandwidth_mbps", "state"]
 
 _DEFAULT_TRUSTED_LINK_ROLE_FIELDS = [
     "source_link_role",
@@ -147,6 +148,7 @@ def generate_links(
     mode = str(link_cfg.get("mode", "pure_random"))
     preserve_input = bool(link_cfg.get("preserve_input_bandwidth", True))
     treat_as_undirected = bool(link_cfg.get("treat_as_undirected", True))
+    state_probabilities = dict(link_cfg.get("state_probabilities", {"normal": 1.0}))
 
     pure_random_cfg = link_cfg.get("pure_random", {})
     role_cfg = link_cfg.get("role_based_random", {})
@@ -202,6 +204,7 @@ def generate_links(
                 "dst": dst,
                 "link_type": link_role,
                 "bandwidth_mbps": round(float(bandwidth), 6),
+                "state": pick_state(state_probabilities, "normal", rng, key=f"link:{src}:{dst}"),
             }
         )
 

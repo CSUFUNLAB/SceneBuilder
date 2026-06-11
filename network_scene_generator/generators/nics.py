@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..rng import RandomManager
+from ..utils.entity_states import pick_state
 from ..utils.ip_mac import generate_link_interface_ips, generate_unique_macs
 from ..utils.selection import weighted_pick
 
-NIC_FIELDS = ["nic_id", "node", "link_id", "ip", "mac", "queue_policy", "queue_size_packets"]
+NIC_FIELDS = ["nic_id", "node", "interface_index", "link_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
 
 
 def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager) -> dict[str, Any]:
@@ -97,6 +98,7 @@ def generate_nics(
 ) -> list[dict[str, Any]]:
     nics_cfg = config.nics
     queue_selection = selection or resolve_queue_policy_selection(nics_cfg, rng)
+    state_probabilities = dict(nics_cfg.get("state_probabilities", {"normal": 1.0}))
 
     ip_cidr = str(nics_cfg.get("ip_cidr", "10.0.0.0/8"))
     ip_cidr_candidates = [str(item) for item in nics_cfg.get("ip_cidr_candidates", [])]
@@ -129,11 +131,13 @@ def generate_nics(
 
     rows: list[dict[str, Any]] = []
     nic_idx = 1
+    interface_counts_by_node: dict[str, int] = {}
 
     for link_index, link in enumerate(links_rows):
         link_id = str(link["link_id"])
         left_ip, right_ip = link_interface_ips[link_index]
         for node, ip in ((str(link["src"]), left_ip), (str(link["dst"]), right_ip)):
+            interface_counts_by_node[node] = int(interface_counts_by_node.get(node, 0)) + 1
             node_role = str(node_roles.get(node, "")) if node_roles else ""
             if node_role and node_role in role_queue_sizes:
                 queue_size_packets = role_queue_sizes[node_role]
@@ -141,13 +145,15 @@ def generate_nics(
                 queue_size_packets = rng.randint(q_low, q_high)
             rows.append(
                 {
-                    "nic_id": f"NIC{nic_idx:04d}",
+                    "nic_id": f"IF{nic_idx:04d}",
                     "node": node,
+                    "interface_index": interface_counts_by_node[node],
                     "link_id": link_id,
                     "ip": ip,
                     "mac": macs[nic_idx - 1],
                     "queue_policy": _choose_queue_policy(nics_cfg, rng, queue_selection),
                     "queue_size_packets": queue_size_packets,
+                    "state": pick_state(state_probabilities, "normal", rng, key=f"nic:{link_id}:{node}"),
                 }
             )
             nic_idx += 1

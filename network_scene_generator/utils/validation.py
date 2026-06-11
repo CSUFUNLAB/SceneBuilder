@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import ipaddress
 from typing import TYPE_CHECKING
@@ -14,7 +14,9 @@ ALLOWED_NODE_ASSIGNMENT_MODES = {"topology_role", "random", "fixed"}
 ALLOWED_TM_MODES = {"uniform", "exponential", "gravity", "spike"}
 ALLOWED_FLOW_MODELS = {"poisson", "on_off", "cbr"}
 ALLOWED_FLOW_SELECTION_MODES = {"mixed", "single"}
-ALLOWED_EVENT_TYPES = {"node_failure", "link_failure", "route_switch"}
+ALLOWED_NODE_STATES = {"normal", "disabled"}
+ALLOWED_NIC_STATES = {"normal", "disabled"}
+ALLOWED_LINK_STATES = {"normal", "degraded", "disabled"}
 
 
 def _ensure_probability(value: float, name: str) -> None:
@@ -29,6 +31,21 @@ def _ensure_range(value: list[float] | tuple[float, float], name: str) -> None:
         raise ValueError(f"{name} min cannot be greater than max")
 
 
+def _ensure_state_probabilities(value: object, allowed_states: set[str], name: str) -> None:
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{name} must be a non-empty mapping")
+
+    unknown_states = set(str(state) for state in value.keys()) - allowed_states
+    if unknown_states:
+        raise ValueError(f"Unsupported {name} states: {sorted(unknown_states)}")
+
+    weights = [float(weight) for weight in value.values()]
+    if any(weight < 0 for weight in weights):
+        raise ValueError(f"{name} weights must be non-negative")
+    if sum(weights) <= 0:
+        raise ValueError(f"{name} must include positive weights")
+
+
 def validate_scene_config(config: "SceneConfig") -> None:
     if int(config.num_scenes) <= 0:
         raise ValueError("num_scenes must be a positive integer")
@@ -38,11 +55,14 @@ def validate_scene_config(config: "SceneConfig") -> None:
     if not config.topology_sources:
         raise ValueError("At least one topology source is required")
 
+    if sum(float(source.weight) for source in config.topology_sources) <= 0:
+        raise ValueError("At least one topology source weight must be positive")
+
     for source in config.topology_sources:
         if source.type not in ALLOWED_SOURCE_TYPES:
             raise ValueError(f"Unsupported topology source type: {source.type}")
-        if source.weight <= 0:
-            raise ValueError(f"Topology source weight must be > 0 for {source.name}")
+        if source.weight < 0:
+            raise ValueError(f"Topology source weight must be >= 0 for {source.name}")
         if not source.root_dirs:
             raise ValueError(f"Topology source root_dirs cannot be empty for {source.name}")
         if source.type == "topologyzoo":
@@ -55,6 +75,11 @@ def validate_scene_config(config: "SceneConfig") -> None:
     link_mode = str(config.link_generation.get("mode", ""))
     if link_mode not in ALLOWED_LINK_MODES:
         raise ValueError(f"Unsupported link_generation.mode: {link_mode}")
+    _ensure_state_probabilities(
+        config.link_generation.get("state_probabilities", {}),
+        ALLOWED_LINK_STATES,
+        "link_generation.state_probabilities",
+    )
     if link_mode == "role_based_random":
         derived_role_cfg = config.link_generation.get("role_based_random", {}).get("derived_link_role", {})
         _ensure_probability(
@@ -69,6 +94,11 @@ def validate_scene_config(config: "SceneConfig") -> None:
     queue_policy_mode = str(config.nics.get("queue_policy_mode", "mixed"))
     if queue_policy_mode not in ALLOWED_QUEUE_POLICY_MODES:
         raise ValueError(f"Unsupported nics.queue_policy_mode: {queue_policy_mode}")
+    _ensure_state_probabilities(
+        config.nics.get("state_probabilities", {}),
+        ALLOWED_NIC_STATES,
+        "nics.state_probabilities",
+    )
     queue_policy_mode_probabilities = config.nics.get("queue_policy_mode_probabilities", {})
     unknown_queue_modes = set(queue_policy_mode_probabilities.keys()) - ALLOWED_QUEUE_POLICY_MODES
     if unknown_queue_modes:
@@ -153,6 +183,11 @@ def validate_scene_config(config: "SceneConfig") -> None:
     assignment_mode = str(config.nodes.get("assignment_mode", "topology_role"))
     if assignment_mode not in ALLOWED_NODE_ASSIGNMENT_MODES:
         raise ValueError(f"Unsupported nodes.assignment_mode: {assignment_mode}")
+    _ensure_state_probabilities(
+        config.nodes.get("state_probabilities", {}),
+        ALLOWED_NODE_STATES,
+        "nodes.state_probabilities",
+    )
 
     _ensure_range(config.routing.get("weight_range", [0.0, 0.0]), "routing.weight_range")
 
@@ -167,6 +202,21 @@ def validate_scene_config(config: "SceneConfig") -> None:
         tm_mode = str(config.traffic_matrix.get("mode", ""))
         if tm_mode not in ALLOWED_TM_MODES:
             raise ValueError(f"Unsupported traffic_matrix.mode: {tm_mode}")
+    flow_count_range = config.traffic_matrix.get("flow_count_range")
+    if flow_count_range is not None:
+        if not isinstance(flow_count_range, (list, tuple)) or len(flow_count_range) != 2:
+            raise ValueError("traffic_matrix.flow_count_range must be [min, max]")
+        try:
+            min_count = int(flow_count_range[0])
+            max_count = int(flow_count_range[1])
+        except (TypeError, ValueError):
+            raise ValueError("traffic_matrix.flow_count_range values must be non-negative integers") from None
+        if min_count != float(flow_count_range[0]) or max_count != float(flow_count_range[1]):
+            raise ValueError("traffic_matrix.flow_count_range values must be non-negative integers")
+        if min_count < 0 or max_count < 0:
+            raise ValueError("traffic_matrix.flow_count_range values must be non-negative integers")
+        if min_count > max_count:
+            raise ValueError("traffic_matrix.flow_count_range min cannot be greater than max")
 
     flow_selection_mode = str(config.flow_feature.get("selection_mode", "mixed"))
     if flow_selection_mode not in ALLOWED_FLOW_SELECTION_MODES:
@@ -195,16 +245,3 @@ def validate_scene_config(config: "SceneConfig") -> None:
             raise ValueError("flow_feature.mode_probabilities cannot be empty in mixed mode")
         if sum(float(v) for v in mode_probs.values()) <= 0:
             raise ValueError("flow_feature.mode_probabilities must include positive weights")
-
-    if bool(config.events.get("enabled", True)):
-        _ensure_probability(float(config.events.get("event_probability", 0.0)), "events.event_probability")
-        _ensure_probability(
-            float(config.events.get("failure_end_probability", 0.5)),
-            "events.failure_end_probability",
-        )
-        event_candidates = set(config.events.get("event_type_candidates", []))
-        if not event_candidates:
-            raise ValueError("events.event_type_candidates cannot be empty")
-        unknown_events = event_candidates - ALLOWED_EVENT_TYPES
-        if unknown_events:
-            raise ValueError(f"Unsupported event types: {sorted(unknown_events)}")

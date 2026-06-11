@@ -6,10 +6,11 @@ from typing import Any
 import networkx as nx
 
 from ..rng import RandomManager
+from ..utils.entity_states import pick_state
 from ..utils.graph_utils import ordered_nodes
 from .routing import build_node_id_map
 
-NODE_FIELDS = ["node_id", "original_node_name", "node_type", "latitude", "longitude"]
+NODE_FIELDS = ["node_id", "original_node_name", "state", "latitude", "longitude"]
 
 _DEFAULT_TRUSTED_NODE_ROLE_FIELDS = [
     "source_node_role",
@@ -45,6 +46,10 @@ def _as_optional_float(value: object) -> float | str:
         return round(float(value), 6)
     except (TypeError, ValueError):
         return ""
+
+
+def _public_node_id(value: int) -> str:
+    return f"N{int(value) + 1:04d}"
 
 
 def _original_node_name(attrs: dict[str, object], fallback: object) -> str:
@@ -263,32 +268,19 @@ def generate_nodes(
     node_id_map = build_node_id_map(nodes)
 
     nodes_cfg = getattr(config, "nodes", {})
-    type_candidates = [str(item) for item in nodes_cfg.get("type_candidates", ["core", "aggregation", "edge"])]
-    assignment_mode = str(nodes_cfg.get("assignment_mode", "topology_role"))
-    default_type = str(nodes_cfg.get("default_node_type", "edge"))
+    state_probabilities = dict(nodes_cfg.get("state_probabilities", {"normal": 1.0}))
 
-    if not type_candidates:
-        raise ValueError("nodes.type_candidates cannot be empty")
-
-    role_map = node_roles if node_roles is not None else infer_node_roles(graph, nodes_cfg, rng)
+    if node_roles is None:
+        infer_node_roles(graph, nodes_cfg, rng)
 
     rows: list[dict[str, Any]] = []
     for node in nodes:
-        if assignment_mode == "topology_role":
-            node_type = role_map.get(node, "aggregation")
-        elif assignment_mode == "fixed":
-            node_type = default_type
-        elif assignment_mode == "random":
-            node_type = rng.choice(type_candidates)
-        else:
-            raise ValueError(f"Unsupported nodes.assignment_mode: {assignment_mode}")
-
         attrs = graph.nodes[node]
         rows.append(
             {
-                "node_id": int(node_id_map[node]),
+                "node_id": _public_node_id(int(node_id_map[node])),
                 "original_node_name": _original_node_name(attrs, internal_to_original.get(str(node), str(node))),
-                "node_type": node_type,
+                "state": pick_state(state_probabilities, "normal", rng, key=f"node:{node}"),
                 "latitude": _as_optional_float(attrs.get("source_latitude")),
                 "longitude": _as_optional_float(attrs.get("source_longitude")),
             }

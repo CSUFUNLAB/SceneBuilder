@@ -32,7 +32,6 @@ class SceneConfig:
     routing: dict[str, Any]
     traffic_matrix: dict[str, Any]
     flow_feature: dict[str, Any]
-    events: dict[str, Any]
     config_path: Path
 
 
@@ -45,6 +44,11 @@ _DEFAULT_LINK_CONFIG = {
     "mode": "pure_random",
     "preserve_input_bandwidth": True,
     "treat_as_undirected": True,
+    "state_probabilities": {
+        "normal": 0.95,
+        "degraded": 0.03,
+        "disabled": 0.02,
+    },
     "pure_random": {
         "bandwidth_candidates_mbps": [100.0, 1000.0, 10000.0],
         "uniform_range_mbps": [100.0, 10000.0],
@@ -87,6 +91,10 @@ _DEFAULT_NIC_CONFIG = {
     "link_subnet_prefix": 30,
     "link_subnet_prefix_probabilities": {28: 0.15, 29: 0.35, 30: 0.5},
     "mac": {"locally_administered": True},
+    "state_probabilities": {
+        "normal": 0.98,
+        "disabled": 0.02,
+    },
 }
 
 _DEFAULT_NODE_CONFIG = {
@@ -94,6 +102,10 @@ _DEFAULT_NODE_CONFIG = {
     "assignment_mode": "topology_role",
     "default_node_type": "edge",
     "trust_input_node_roles": False,
+    "state_probabilities": {
+        "normal": 0.95,
+        "disabled": 0.05,
+    },
     "trusted_node_role_fields": [
         "source_node_role",
         "node_role",
@@ -115,6 +127,7 @@ _DEFAULT_ROUTING_CONFIG = {
 
 _DEFAULT_TM_CONFIG = {
     "mode": "uniform",
+    "flow_count_range": None,
     "mode_probabilities": {
         "uniform": 0.25,
         "exponential": 0.25,
@@ -143,19 +156,8 @@ _DEFAULT_FLOW_FEATURE_CONFIG = {
         "off_mean_range": [0.2, 6.0],
         "peak_rate_range_mbps": [10.0, 200.0],
     },
-    "cbr": {
-        "rate_range_mbps": [10.0, 100.0],
-    },
+    "cbr": {},
 }
-
-_DEFAULT_EVENTS_CONFIG = {
-    "enabled": True,
-    "event_probability": 0.3,
-    "event_type_candidates": ["node_failure", "link_failure", "route_switch"],
-    "failure_end_probability": 0.5,
-    "route_switch": {"require_reachable_to_dst": True},
-}
-
 
 def _resolve_path(base_dir: Path, raw_path: str | Path | None) -> Path:
     if raw_path is None:
@@ -232,16 +234,6 @@ def _normalize_flow_feature_config(raw_flow_feature: Any) -> dict[str, Any] | No
 
     normalized = deepcopy(raw_flow_feature)
 
-    if "abr" in normalized and "cbr" not in normalized:
-        abr_cfg = normalized.get("abr")
-        if isinstance(abr_cfg, dict):
-            rate_range = abr_cfg.get("target_rate_range_mbps")
-            if rate_range is None:
-                rate_range = abr_cfg.get("peak_rate_range_mbps")
-            if rate_range is None:
-                rate_range = [10.0, 100.0]
-            normalized["cbr"] = {"rate_range_mbps": list(rate_range)}
-
     if str(normalized.get("single_model", "")).strip().lower() == "abr":
         normalized["single_model"] = "cbr"
 
@@ -308,11 +300,13 @@ def load_config(config_path: str | Path) -> SceneConfig:
     raw_routing = _normalize_routing_config(raw.get("routing"))
 
     link_generation = _deep_merge(_DEFAULT_LINK_CONFIG, raw_link_generation)
+    link_generation = _replace_explicit_mapping_overrides(link_generation, raw_link_generation, ("state_probabilities",))
     nics = _deep_merge(_DEFAULT_NIC_CONFIG, raw_nics)
     nics = _replace_explicit_mapping_overrides(
         nics,
         raw_nics,
         (
+            "state_probabilities",
             "queue_policy_mode_probabilities",
             "queue_policy_probabilities",
             "single_queue_policy_probabilities",
@@ -321,6 +315,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         ),
     )
     nodes = _deep_merge(_DEFAULT_NODE_CONFIG, raw.get("nodes"))
+    nodes = _replace_explicit_mapping_overrides(nodes, raw.get("nodes"), ("state_probabilities",))
     routing = _deep_merge(_DEFAULT_ROUTING_CONFIG, raw_routing)
     raw_traffic_matrix = raw.get("traffic_matrix")
     traffic_matrix = _deep_merge(_DEFAULT_TM_CONFIG, raw_traffic_matrix)
@@ -334,9 +329,6 @@ def load_config(config_path: str | Path) -> SceneConfig:
         ("selection_mode_probabilities", "mode_probabilities", "single_model_probabilities"),
     )
     flow_feature.pop("abr", None)
-    events = _deep_merge(_DEFAULT_EVENTS_CONFIG, raw.get("events"))
-    events.pop("event_time_range", None)
-
     config = SceneConfig(
         output_root=output_root,
         seed=seed,
@@ -349,7 +341,6 @@ def load_config(config_path: str | Path) -> SceneConfig:
         routing=routing,
         traffic_matrix=traffic_matrix,
         flow_feature=flow_feature,
-        events=events,
         config_path=path,
     )
 
