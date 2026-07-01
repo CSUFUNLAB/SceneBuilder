@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from network_scene_generator.config import load_config
+from scene_generator.config import load_config
 
 
 _BRITE_SAMPLE = """Nodes:
@@ -77,7 +77,7 @@ routing:
     assert loaded.routing == {"weight_range": [3.0, 7.0]}
 
 
-def test_load_config_ignores_legacy_events_section(tmp_path: Path) -> None:
+def test_load_config_supports_events_section(tmp_path: Path) -> None:
     topo_dir = tmp_path / "topologies"
     topo_dir.mkdir(parents=True)
     (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
@@ -97,15 +97,33 @@ topology_sources:
     glob_patterns: ["**/*.brite"]
 events:
   enabled: true
-  event_probability: 0.3
-  event_time_range: [10.0, 200.0]
+  count: 3
+  event_type_probabilities:
+    node:
+      fault: 1.0
+    channel:
+      recovery: 1.0
+    nic:
+      fault: 1.0
+    data_flow:
+      increase: 1.0
+  data_flow:
+    increase_multiplier_range: [1.5, 2.0]
+    decrease_multiplier_range: [0.2, 0.5]
 """,
         encoding="utf-8",
     )
 
     loaded = load_config(cfg)
 
-    assert not hasattr(loaded, "events")
+    assert loaded.events["enabled"] is True
+    assert loaded.events["count"] == 3
+    assert loaded.events["event_type_probabilities"]["node"] == {"fault": 1.0}
+    assert loaded.events["event_type_probabilities"]["channel"] == {"recovery": 1.0}
+    assert loaded.events["event_type_probabilities"]["nic"] == {"fault": 1.0}
+    assert loaded.events["event_type_probabilities"]["data_flow"] == {"increase": 1.0}
+    assert loaded.events["data_flow"]["increase_multiplier_range"] == [1.5, 2.0]
+    assert loaded.events["data_flow"]["decrease_multiplier_range"] == [0.2, 0.5]
 
 
 def test_load_config_allows_zero_weight_source_when_another_source_is_positive(tmp_path: Path) -> None:

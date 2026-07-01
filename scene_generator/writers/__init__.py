@@ -1,1 +1,1 @@
-﻿"""Writers for network_scene_generator."""
+"""Writers for scene_generator."""

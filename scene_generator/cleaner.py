@@ -7,6 +7,7 @@ from .config import load_config
 
 _SCENE_MARKER_FILES = {
     "metadata.json",
+    "channels.csv",
     "links.csv",
     "nodes.csv",
     "routing_matrix.csv",

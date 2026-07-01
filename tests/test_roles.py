@@ -1,8 +1,8 @@
 import networkx as nx
 
-from network_scene_generator.generators.links import generate_links
-from network_scene_generator.generators.nodes import infer_node_roles
-from network_scene_generator.rng import RandomManager
+from scene_generator.generators.channels import generate_channels
+from scene_generator.generators.nodes import infer_node_roles
+from scene_generator.rng import RandomManager
 
 
 def test_infer_node_roles_component_rules_and_fixes() -> None:
@@ -86,7 +86,7 @@ class _LinkCfgDeterministic:
     }
 
 
-def test_link_roles_are_mapped_from_node_roles() -> None:
+def test_channel_roles_are_mapped_from_node_roles() -> None:
     graph = nx.Graph()
     graph.add_edges_from(
         [
@@ -107,9 +107,9 @@ def test_link_roles_are_mapped_from_node_roles() -> None:
         "6": "edge",
     }
 
-    rows = generate_links(graph, _LinkCfgDeterministic(), RandomManager(3), node_roles=node_roles)
+    rows = generate_channels(graph, _LinkCfgDeterministic(), RandomManager(3), node_roles=node_roles)
     by_pair = {(int(row["src"]), int(row["dst"])): int(row["bandwidth_mbps"]) for row in rows}
-    by_pair_role = {(int(row["src"]), int(row["dst"])): str(row["link_type"]) for row in rows}
+    by_pair_role = {(int(row["src"]), int(row["dst"])): str(row["channel_type"]) for row in rows}
 
     assert by_pair[(1, 2)] == 10000
     assert by_pair[(1, 3)] == 2000
@@ -150,7 +150,7 @@ class _LinkCfgPerturb:
     }
 
 
-def test_link_role_perturbation_probabilities_take_effect() -> None:
+def test_channel_role_perturbation_probabilities_take_effect() -> None:
     graph = nx.Graph()
     graph.add_edges_from(
         [
@@ -169,12 +169,17 @@ def test_link_role_perturbation_probabilities_take_effect() -> None:
         "3": "edge",
     }
 
-    rows_agg = generate_links(graph.subgraph(["1", "2"]).copy(), _LinkCfgPerturb(), RandomManager(4), node_roles=node_roles)
+    rows_agg = generate_channels(
+        graph.subgraph(["1", "2"]).copy(),
+        _LinkCfgPerturb(),
+        RandomManager(4),
+        node_roles=node_roles,
+    )
     row_agg = rows_agg[0]
     assert int(row_agg["bandwidth_mbps"]) == 2000
-    assert str(row_agg["link_type"]) == "uplink"
+    assert str(row_agg["channel_type"]) == "uplink"
 
-    rows_core_edge = generate_links(
+    rows_core_edge = generate_channels(
         graph.subgraph(["1", "3"]).copy(),
         _LinkCfgPerturb(),
         RandomManager(5),
@@ -182,4 +187,4 @@ def test_link_role_perturbation_probabilities_take_effect() -> None:
     )
     row_core_edge = rows_core_edge[0]
     assert int(row_core_edge["bandwidth_mbps"]) == 100
-    assert str(row_core_edge["link_type"]) == "access"
+    assert str(row_core_edge["channel_type"]) == "access"

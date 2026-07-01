@@ -1,7 +1,7 @@
 ﻿import networkx as nx
 
-from network_scene_generator.generators.traffic import apply_hard_traffic_constraints, generate_traffic
-from network_scene_generator.rng import RandomManager
+from scene_generator.generators.traffic import apply_hard_traffic_constraints, generate_traffic
+from scene_generator.rng import RandomManager
 
 
 class _Config:
@@ -214,12 +214,12 @@ def test_hard_traffic_constraints_zero_unreachable_without_capping_to_path_bottl
         ("2", "3"): "3",
         ("1", "4"): "-1",
     }
-    links_rows = [
-        {"link_id": "L0001", "src": "1", "dst": "2", "bandwidth_mbps": 10.0},
-        {"link_id": "L0002", "src": "2", "dst": "3", "bandwidth_mbps": 5.0},
+    channel_rows = [
+        {"channel_id": "C0001", "src": "1", "dst": "2", "bandwidth_mbps": 10.0},
+        {"channel_id": "C0002", "src": "2", "dst": "3", "bandwidth_mbps": 5.0},
     ]
 
-    constrained_rows, stats = apply_hard_traffic_constraints(traffic_rows, routing_map, links_rows)
+    constrained_rows, stats = apply_hard_traffic_constraints(traffic_rows, routing_map, channel_rows)
 
     assert constrained_rows[0]["demand_mbps"] == 9.0
     assert constrained_rows[1]["demand_mbps"] == 0.0
@@ -243,11 +243,11 @@ def test_hard_traffic_constraints_cap_to_feature_limit_when_needed() -> None:
     routing_map = {
         ("1", "2"): "2",
     }
-    links_rows = [
-        {"link_id": "L0001", "src": "1", "dst": "2", "bandwidth_mbps": 20.0},
+    channel_rows = [
+        {"channel_id": "C0001", "src": "1", "dst": "2", "bandwidth_mbps": 20.0},
     ]
 
-    constrained_rows, stats = apply_hard_traffic_constraints(traffic_rows, routing_map, links_rows)
+    constrained_rows, stats = apply_hard_traffic_constraints(traffic_rows, routing_map, channel_rows)
 
     assert constrained_rows[0]["demand_mbps"] == 12.0
     assert stats["cap_per_flow_to_feature_limit"] is True

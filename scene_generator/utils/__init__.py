@@ -1,1 +1,1 @@
-﻿"""Utility modules for network_scene_generator."""
+"""Utility modules for scene_generator."""

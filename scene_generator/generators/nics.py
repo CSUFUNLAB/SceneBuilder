@@ -4,10 +4,10 @@ from typing import Any
 
 from ..rng import RandomManager
 from ..utils.entity_states import pick_state
-from ..utils.ip_mac import generate_link_interface_ips, generate_unique_macs
+from ..utils.ip_mac import generate_channel_interface_ips, generate_unique_macs
 from ..utils.selection import weighted_pick
 
-NIC_FIELDS = ["nic_id", "node", "interface_index", "link_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
+NIC_FIELDS = ["nic_id", "node", "interface_index", "channel_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
 
 
 def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager) -> dict[str, Any]:
@@ -90,7 +90,7 @@ def _resolve_queue_size_by_role(
 
 
 def generate_nics(
-    links_rows: list[dict[str, Any]],
+    channel_rows: list[dict[str, Any]],
     config: Any,
     rng: RandomManager,
     selection: dict[str, Any] | None = None,
@@ -113,30 +113,30 @@ def generate_nics(
     q_low, q_high = int(queue_size_range[0]), int(queue_size_range[1])
     role_queue_sizes = _resolve_queue_size_by_role(nics_cfg, node_roles or {}, rng, queue_selection) if node_roles else {}
 
-    nic_count = len(links_rows) * 2
-    link_interface_ips, ip_cidr_counts, link_subnet_prefix_counts = generate_link_interface_ips(
+    nic_count = len(channel_rows) * 2
+    channel_interface_ips, ip_cidr_counts, channel_subnet_prefix_counts = generate_channel_interface_ips(
         ip_cidr,
-        len(links_rows),
+        len(channel_rows),
         link_subnet_prefix,
         rng,
         cidr_candidates=ip_cidr_candidates,
         ip_cidr_probabilities=ip_cidr_probabilities,
-        link_subnet_prefix_probabilities=link_subnet_prefix_probabilities,
+        channel_subnet_prefix_probabilities=link_subnet_prefix_probabilities,
     )
     macs = generate_unique_macs(nic_count, rng)
     queue_selection.setdefault("active_rule", {})
-    queue_selection["active_rule"]["ip_assignment"] = "per_link_random_subnet"
+    queue_selection["active_rule"]["ip_assignment"] = "per_channel_random_subnet"
     queue_selection["active_rule"]["ip_cidr_counts"] = dict(ip_cidr_counts)
-    queue_selection["active_rule"]["link_subnet_prefix_counts"] = dict(link_subnet_prefix_counts)
+    queue_selection["active_rule"]["channel_subnet_prefix_counts"] = dict(channel_subnet_prefix_counts)
 
     rows: list[dict[str, Any]] = []
     nic_idx = 1
     interface_counts_by_node: dict[str, int] = {}
 
-    for link_index, link in enumerate(links_rows):
-        link_id = str(link["link_id"])
-        left_ip, right_ip = link_interface_ips[link_index]
-        for node, ip in ((str(link["src"]), left_ip), (str(link["dst"]), right_ip)):
+    for channel_index, channel in enumerate(channel_rows):
+        channel_id = str(channel["channel_id"])
+        left_ip, right_ip = channel_interface_ips[channel_index]
+        for node, ip in ((str(channel["src"]), left_ip), (str(channel["dst"]), right_ip)):
             interface_counts_by_node[node] = int(interface_counts_by_node.get(node, 0)) + 1
             node_role = str(node_roles.get(node, "")) if node_roles else ""
             if node_role and node_role in role_queue_sizes:
@@ -148,12 +148,12 @@ def generate_nics(
                     "nic_id": f"IF{nic_idx:04d}",
                     "node": node,
                     "interface_index": interface_counts_by_node[node],
-                    "link_id": link_id,
+                    "channel_id": channel_id,
                     "ip": ip,
                     "mac": macs[nic_idx - 1],
                     "queue_policy": _choose_queue_policy(nics_cfg, rng, queue_selection),
                     "queue_size_packets": queue_size_packets,
-                    "state": pick_state(state_probabilities, "normal", rng, key=f"nic:{link_id}:{node}"),
+                    "state": pick_state(state_probabilities, "normal", rng, key=f"nic:{channel_id}:{node}"),
                 }
             )
             nic_idx += 1

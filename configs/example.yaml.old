@@ -41,9 +41,6 @@ link_generation:
       core_edge_uplink_probability: 0.8
     trust_input_link_roles: false
     trusted_link_role_fields:
-      - source_channel_role
-      - channel_role
-      - channel_type
       - source_link_role
       - link_role
       - edge_role
@@ -142,23 +139,3 @@ flow_feature:
     off_mean_range: [0.2, 6.0]
     peak_rate_range_mbps: [20.0, 300.0]
   cbr: {}
-
-events:
-  enabled: true
-  count: 100
-  event_type_probabilities:
-    node:
-      fault: 0.5
-      recovery: 0.5
-    channel:
-      fault: 0.5
-      recovery: 0.5
-    nic:
-      fault: 0.5
-      recovery: 0.5
-    data_flow:
-      increase: 0.5
-      decrease: 0.5
-  data_flow:
-    increase_multiplier_range: [1.2, 2.0]
-    decrease_multiplier_range: [0.2, 0.8]

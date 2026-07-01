@@ -1,7 +1,7 @@
 import networkx as nx
 
-from network_scene_generator.generators.routing import generate_routing_matrix
-from network_scene_generator.rng import RandomManager
+from scene_generator.generators.routing import generate_routing_matrix
+from scene_generator.rng import RandomManager
 
 
 class _Config:

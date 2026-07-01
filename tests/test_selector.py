@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from network_scene_generator.config import load_config
-from network_scene_generator.rng import RandomManager
-from network_scene_generator.topology.selector import select_topology_file
+from scene_generator.config import load_config
+from scene_generator.rng import RandomManager
+from scene_generator.topology.selector import select_topology_file
 
 
 _BRITE_SAMPLE = """Nodes:

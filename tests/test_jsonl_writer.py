@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from network_scene_generator.writers.jsonl_writer import write_jsonl
+from scene_generator.writers.jsonl_writer import write_jsonl
 
 
 def test_jsonl_writer_preserves_row_fields_as_generated(tmp_path: Path) -> None:

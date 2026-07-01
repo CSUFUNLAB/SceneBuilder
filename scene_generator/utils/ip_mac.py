@@ -33,14 +33,14 @@ def _parse_networks(cidr: str, cidr_candidates: Iterable[str] | None) -> list[ip
 
 
 def _normalize_prefix_weights(
-    link_subnet_prefix: int,
-    link_subnet_prefix_probabilities: dict[int | str, float] | None,
+    channel_subnet_prefix: int,
+    channel_subnet_prefix_probabilities: dict[int | str, float] | None,
 ) -> dict[int, float]:
-    if not link_subnet_prefix_probabilities:
-        return {int(link_subnet_prefix): 1.0}
+    if not channel_subnet_prefix_probabilities:
+        return {int(channel_subnet_prefix): 1.0}
 
     normalized: dict[int, float] = {}
-    for raw_prefix, raw_weight in link_subnet_prefix_probabilities.items():
+    for raw_prefix, raw_weight in channel_subnet_prefix_probabilities.items():
         normalized[int(raw_prefix)] = float(raw_weight)
     return normalized
 
@@ -105,22 +105,22 @@ def _find_random_available_subnet(
     return None
 
 
-def generate_link_interface_ips(
+def generate_channel_interface_ips(
     cidr: str,
-    link_count: int,
-    link_subnet_prefix: int,
+    channel_count: int,
+    channel_subnet_prefix: int,
     rng: RandomManager,
     cidr_candidates: list[str] | None = None,
     ip_cidr_probabilities: dict[str, float] | None = None,
-    link_subnet_prefix_probabilities: dict[int | str, float] | None = None,
+    channel_subnet_prefix_probabilities: dict[int | str, float] | None = None,
 ) -> tuple[list[tuple[str, str]], dict[str, int], dict[str, int]]:
-    if link_count < 0:
-        raise ValueError("link_count must be non-negative")
-    if link_count == 0:
+    if channel_count < 0:
+        raise ValueError("channel_count must be non-negative")
+    if channel_count == 0:
         return [], {}, {}
 
     networks = _parse_networks(cidr, cidr_candidates)
-    prefix_weights = _normalize_prefix_weights(link_subnet_prefix, link_subnet_prefix_probabilities)
+    prefix_weights = _normalize_prefix_weights(channel_subnet_prefix, channel_subnet_prefix_probabilities)
     network_weights = _network_weights(networks, ip_cidr_probabilities)
     network_index = {str(network): network for network in networks}
     used_subnets: dict[str, list[ipaddress._BaseNetwork]] = {str(network): [] for network in networks}
@@ -129,7 +129,7 @@ def generate_link_interface_ips(
     network_counts: dict[str, int] = {}
     prefix_counts: dict[str, int] = {}
 
-    for _ in range(link_count):
+    for _ in range(channel_count):
         prefixes = list(prefix_weights.keys())
         prefix_choice = int(rng.weighted_choice(prefixes, [prefix_weights[prefix] for prefix in prefixes]))
 
@@ -155,7 +155,7 @@ def generate_link_interface_ips(
             pool_candidates = [pool for pool in pool_candidates if str(pool) != str(chosen_pool)]
 
         if chosen_subnet is None:
-            raise ValueError("Unable to allocate enough non-overlapping link subnets from configured IP pools")
+            raise ValueError("Unable to allocate enough non-overlapping channel subnets from configured IP pools")
 
         hosts = list(chosen_subnet.hosts())
         if len(hosts) < 2:

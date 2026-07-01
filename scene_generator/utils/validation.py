@@ -4,7 +4,7 @@ import ipaddress
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from network_scene_generator.config import SceneConfig
+    from scene_generator.config import SceneConfig
 
 ALLOWED_SOURCE_TYPES = {"brite", "topologyzoo"}
 ALLOWED_LINK_MODES = {"pure_random", "role_based_random"}
@@ -17,6 +17,13 @@ ALLOWED_FLOW_SELECTION_MODES = {"mixed", "single"}
 ALLOWED_NODE_STATES = {"normal", "disabled"}
 ALLOWED_NIC_STATES = {"normal", "disabled"}
 ALLOWED_LINK_STATES = {"normal", "degraded", "disabled"}
+ALLOWED_EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
+ALLOWED_EVENT_TYPES = {
+    "node": {"fault", "recovery"},
+    "channel": {"fault", "recovery"},
+    "nic": {"fault", "recovery"},
+    "data_flow": {"increase", "decrease"},
+}
 
 
 def _ensure_probability(value: float, name: str) -> None:
@@ -44,6 +51,17 @@ def _ensure_state_probabilities(value: object, allowed_states: set[str], name: s
         raise ValueError(f"{name} weights must be non-negative")
     if sum(weights) <= 0:
         raise ValueError(f"{name} must include positive weights")
+
+
+def _ensure_positive_range(value: object, name: str) -> None:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{name} must be [min, max]")
+    low = float(value[0])
+    high = float(value[1])
+    if low <= 0 or high <= 0:
+        raise ValueError(f"{name} values must be > 0")
+    if low > high:
+        raise ValueError(f"{name} min cannot be greater than max")
 
 
 def validate_scene_config(config: "SceneConfig") -> None:
@@ -243,3 +261,41 @@ def validate_scene_config(config: "SceneConfig") -> None:
             raise ValueError("flow_feature.mode_probabilities cannot be empty in mixed mode")
         if sum(float(v) for v in mode_probs.values()) <= 0:
             raise ValueError("flow_feature.mode_probabilities must include positive weights")
+
+    events_cfg = getattr(config, "events", {})
+    if not isinstance(events_cfg, dict):
+        raise ValueError("events must be a mapping")
+    event_count = int(events_cfg.get("count", 0))
+    if event_count < 0:
+        raise ValueError("events.count must be >= 0")
+    event_type_probabilities = events_cfg.get("event_type_probabilities", {})
+    if not isinstance(event_type_probabilities, dict):
+        raise ValueError("events.event_type_probabilities must be a mapping")
+    unknown_event_entities = set(str(key) for key in event_type_probabilities.keys()) - ALLOWED_EVENT_ENTITY_TYPES
+    if unknown_event_entities:
+        raise ValueError(f"Unsupported events.event_type_probabilities keys: {sorted(unknown_event_entities)}")
+    for entity_type, probabilities in event_type_probabilities.items():
+        entity_type = str(entity_type)
+        if not isinstance(probabilities, dict) or not probabilities:
+            raise ValueError(f"events.event_type_probabilities.{entity_type} must be a non-empty mapping")
+        unknown_event_types = set(str(key) for key in probabilities.keys()) - ALLOWED_EVENT_TYPES[entity_type]
+        if unknown_event_types:
+            raise ValueError(
+                f"Unsupported events.event_type_probabilities.{entity_type} keys: {sorted(unknown_event_types)}"
+            )
+        if any(float(weight) < 0 for weight in probabilities.values()):
+            raise ValueError(f"events.event_type_probabilities.{entity_type} weights must be non-negative")
+        if sum(float(weight) for weight in probabilities.values()) <= 0:
+            raise ValueError(f"events.event_type_probabilities.{entity_type} must include positive weights")
+
+    data_flow_events = events_cfg.get("data_flow", {})
+    if not isinstance(data_flow_events, dict):
+        raise ValueError("events.data_flow must be a mapping")
+    _ensure_positive_range(
+        data_flow_events.get("increase_multiplier_range", [1.2, 2.0]),
+        "events.data_flow.increase_multiplier_range",
+    )
+    _ensure_positive_range(
+        data_flow_events.get("decrease_multiplier_range", [0.2, 0.8]),
+        "events.data_flow.decrease_multiplier_range",
+    )

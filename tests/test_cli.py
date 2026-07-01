@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from network_scene_generator.cli import main
+from scene_generator.cli import main
 
 
 _BRITE_SAMPLE = """Nodes:
@@ -33,7 +33,7 @@ topology_sources:
         encoding="utf-8",
     )
 
-    rc = main(["--config", str(cfg)])
+    rc = main(["-c", str(cfg)])
 
     assert rc == 0
     output = capsys.readouterr().out.strip().splitlines()
@@ -76,7 +76,7 @@ topology_sources:
         encoding="utf-8",
     )
 
-    rc = main(["clean", "--config", str(cfg)])
+    rc = main(["clean", "-c", str(cfg)])
 
     assert rc == 0
     assert not scene_a.exists()

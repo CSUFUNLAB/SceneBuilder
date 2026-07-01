@@ -1,7 +1,7 @@
 import ipaddress
 
-from network_scene_generator.generators.nics import generate_nics
-from network_scene_generator.rng import RandomManager
+from scene_generator.generators.nics import generate_nics
+from scene_generator.rng import RandomManager
 
 
 class _Config:
@@ -21,28 +21,28 @@ class _Config:
     }
 
 
-def test_generate_nics_creates_one_nic_per_link_endpoint() -> None:
-    links_rows = [
-        {"link_id": "L0001", "src": "1", "dst": "2"},
-        {"link_id": "L0002", "src": "2", "dst": "3"},
+def test_generate_nics_creates_one_nic_per_channel_endpoint() -> None:
+    channel_rows = [
+        {"channel_id": "C0001", "src": "1", "dst": "2"},
+        {"channel_id": "C0002", "src": "2", "dst": "3"},
     ]
 
-    rows = generate_nics(links_rows, _Config(), RandomManager(1))
+    rows = generate_nics(channel_rows, _Config(), RandomManager(1))
 
     assert len(rows) == 4
     assert rows[0]["nic_id"] == "IF0001"
     assert rows[0]["node"] == "1"
     assert rows[0]["interface_index"] == 1
-    assert rows[0]["link_id"] == "L0001"
+    assert rows[0]["channel_id"] == "C0001"
     assert rows[1]["node"] == "2"
     assert rows[1]["interface_index"] == 1
-    assert rows[1]["link_id"] == "L0001"
+    assert rows[1]["channel_id"] == "C0001"
     assert rows[2]["node"] == "2"
     assert rows[2]["interface_index"] == 2
-    assert rows[2]["link_id"] == "L0002"
+    assert rows[2]["channel_id"] == "C0002"
     assert rows[3]["node"] == "3"
     assert rows[3]["interface_index"] == 1
-    assert rows[3]["link_id"] == "L0002"
+    assert rows[3]["channel_id"] == "C0002"
     assert rows[3]["nic_id"] == "IF0004"
     assert all(row["queue_policy"] == "FIFO" for row in rows)
     assert all(row["queue_size_packets"] == 128 for row in rows)
@@ -78,9 +78,9 @@ class _SingleQueueConfig:
 
 
 def test_generate_nics_can_use_single_queue_mode() -> None:
-    links_rows = [{"link_id": "L0001", "src": "1", "dst": "2"}]
+    channel_rows = [{"channel_id": "C0001", "src": "1", "dst": "2"}]
 
-    rows = generate_nics(links_rows, _SingleQueueConfig(), RandomManager(2))
+    rows = generate_nics(channel_rows, _SingleQueueConfig(), RandomManager(2))
 
     assert len(rows) == 2
     assert all(row["queue_policy"] == "RED" for row in rows)
@@ -105,9 +105,9 @@ class _RoleSizedConfig:
 
 
 def test_generate_nics_uses_same_queue_size_for_same_node_role() -> None:
-    links_rows = [
-        {"link_id": "L0001", "src": "1", "dst": "3"},
-        {"link_id": "L0002", "src": "2", "dst": "3"},
+    channel_rows = [
+        {"channel_id": "C0001", "src": "1", "dst": "3"},
+        {"channel_id": "C0002", "src": "2", "dst": "3"},
     ]
     node_roles = {
         "1": "edge",
@@ -121,7 +121,7 @@ def test_generate_nics_uses_same_queue_size_for_same_node_role() -> None:
         },
     }
 
-    rows = generate_nics(links_rows, _RoleSizedConfig(), RandomManager(3), selection=selection, node_roles=node_roles)
+    rows = generate_nics(channel_rows, _RoleSizedConfig(), RandomManager(3), selection=selection, node_roles=node_roles)
 
     queue_sizes_by_node = {str(row["node"]): int(row["queue_size_packets"]) for row in rows}
     assert queue_sizes_by_node["1"] == queue_sizes_by_node["2"]
@@ -130,8 +130,8 @@ def test_generate_nics_uses_same_queue_size_for_same_node_role() -> None:
     assert selection["active_rule"]["queue_size_packets_by_role"]["core"] == queue_sizes_by_node["3"]
 
 
-def test_generate_nics_records_per_link_subnet_metadata() -> None:
-    links_rows = [{"link_id": "L0001", "src": "1", "dst": "2"}]
+def test_generate_nics_records_per_channel_subnet_metadata() -> None:
+    channel_rows = [{"channel_id": "C0001", "src": "1", "dst": "2"}]
     selection = {
         "selected_mode": "mixed",
         "active_rule": {
@@ -139,12 +139,12 @@ def test_generate_nics_records_per_link_subnet_metadata() -> None:
         },
     }
 
-    rows = generate_nics(links_rows, _Config(), RandomManager(4), selection=selection)
+    rows = generate_nics(channel_rows, _Config(), RandomManager(4), selection=selection)
 
     assert len(rows) == 2
-    assert selection["active_rule"]["ip_assignment"] == "per_link_random_subnet"
+    assert selection["active_rule"]["ip_assignment"] == "per_channel_random_subnet"
     assert selection["active_rule"]["ip_cidr_counts"] == {"10.0.0.0/24": 1}
-    assert selection["active_rule"]["link_subnet_prefix_counts"] == {"30": 1}
+    assert selection["active_rule"]["channel_subnet_prefix_counts"] == {"30": 1}
     assert ipaddress.ip_interface(str(rows[0]["ip"])).network.prefixlen == 30
 
 
@@ -171,9 +171,9 @@ class _RandomSubnetConfig:
 
 
 def test_generate_nics_can_use_non_default_ip_pool_and_prefix() -> None:
-    links_rows = [
-        {"link_id": "L0001", "src": "1", "dst": "2"},
-        {"link_id": "L0002", "src": "2", "dst": "3"},
+    channel_rows = [
+        {"channel_id": "C0001", "src": "1", "dst": "2"},
+        {"channel_id": "C0002", "src": "2", "dst": "3"},
     ]
     selection = {
         "selected_mode": "mixed",
@@ -182,7 +182,7 @@ def test_generate_nics_can_use_non_default_ip_pool_and_prefix() -> None:
         },
     }
 
-    rows = generate_nics(links_rows, _RandomSubnetConfig(), RandomManager(5), selection=selection)
+    rows = generate_nics(channel_rows, _RandomSubnetConfig(), RandomManager(5), selection=selection)
 
     assert len(rows) == 4
     pool = ipaddress.ip_network("172.16.0.0/12")
@@ -191,4 +191,4 @@ def test_generate_nics_can_use_non_default_ip_pool_and_prefix() -> None:
     assert ipaddress.ip_interface(str(rows[0]["ip"])).network.prefixlen == 29
     assert ipaddress.ip_interface(str(rows[2]["ip"])).network.prefixlen == 29
     assert selection["active_rule"]["ip_cidr_counts"] == {"172.16.0.0/12": 2}
-    assert selection["active_rule"]["link_subnet_prefix_counts"] == {"29": 2}
+    assert selection["active_rule"]["channel_subnet_prefix_counts"] == {"29": 2}

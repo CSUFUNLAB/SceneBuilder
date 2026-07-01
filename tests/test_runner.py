@@ -2,7 +2,7 @@ import csv
 import json
 from pathlib import Path
 
-from network_scene_generator.runner import run
+from scene_generator.runner import run
 
 
 _BRITE_SAMPLE = """Nodes:
@@ -94,7 +94,7 @@ topology_sources:
         assert metadata["generation"]["traffic_constraints"]["cap_per_flow_to_path_bottleneck"] is False
         assert metadata["generation"]["traffic_constraints"]["cap_per_flow_to_feature_limit"] is True
         assert metadata["summary"]["node_count"] == 2
-        assert metadata["summary"]["link_count"] == 1
+        assert metadata["summary"]["channel_count"] == 1
         assert metadata["summary"]["nic_count"] == 2
         assert "node_type_counts" not in metadata["summary"]
         assert "events" not in metadata["generation"]
@@ -103,7 +103,9 @@ topology_sources:
         assert "events.jsonl" not in metadata["output_files"]
         assert not (scene / "events.jsonl").exists()
         assert (scene / "traffic.jsonl").exists()
+        assert (scene / "channels.csv").exists()
         assert (scene / "metadata.json").exists()
+        assert not (scene / "links.csv").exists()
         assert not (scene / "events.csv").exists()
         assert not (scene / "traffic.csv").exists()
 
@@ -202,8 +204,8 @@ topology_sources:
     scene_dir = run(cfg)[0]
     with (scene_dir / "nodes.csv").open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    with (scene_dir / "links.csv").open("r", encoding="utf-8", newline="") as handle:
-        links = list(csv.DictReader(handle))
+    with (scene_dir / "channels.csv").open("r", encoding="utf-8", newline="") as handle:
+        channels = list(csv.DictReader(handle))
     with (scene_dir / "nics.csv").open("r", encoding="utf-8", newline="") as handle:
         nics = list(csv.DictReader(handle))
     with (scene_dir / "routing_matrix.csv").open("r", encoding="utf-8", newline="") as handle:
@@ -226,11 +228,13 @@ topology_sources:
             "longitude": "0.0",
         },
     ]
-    assert links[0]["src"] == "N0001"
-    assert links[0]["dst"] == "N0002"
+    assert channels[0]["channel_id"] == "C0001"
+    assert channels[0]["src"] == "N0001"
+    assert channels[0]["dst"] == "N0002"
     assert nics[0]["nic_id"] == "IF0001"
     assert nics[0]["node"] == "N0001"
     assert nics[0]["interface_index"] == "1"
+    assert nics[0]["channel_id"] == "C0001"
     assert traffic_first["src"] == "N0001"
     assert traffic_first["dst"] == "N0002"
     assert routing_lines == ["0,1", "1,0"]

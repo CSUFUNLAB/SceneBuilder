@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 from typing import Sequence
@@ -6,7 +6,7 @@ from typing import Sequence
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="network_scene_generator",
+        prog="scene_generator",
         description="Generate or clean reproducible network scene outputs from one YAML config file.",
     )
     parser.add_argument(
@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="generate",
         help="Use 'generate' to build scenes or 'clean' to remove generated scene directories for the config output_root.",
     )
-    parser.add_argument("--config", required=True, help="Path to YAML config file")
+    parser.add_argument("-c", "--config", required=True, help="Path to YAML config file")
     return parser
 
 

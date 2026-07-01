@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from network_scene_generator.topology.topologyzoo_parser import parse_topologyzoo
+from scene_generator.topology.topologyzoo_parser import parse_topologyzoo
 
 
 def test_parse_topologyzoo_accepts_duplicate_labels_by_using_gml_ids(tmp_path: Path) -> None:

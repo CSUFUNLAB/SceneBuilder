@@ -1,7 +1,7 @@
 import networkx as nx
 
-from network_scene_generator.generators.nodes import generate_nodes
-from network_scene_generator.rng import RandomManager
+from scene_generator.generators.nodes import generate_nodes
+from scene_generator.rng import RandomManager
 
 
 class _Config:

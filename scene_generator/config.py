@@ -32,6 +32,7 @@ class SceneConfig:
     routing: dict[str, Any]
     traffic_matrix: dict[str, Any]
     flow_feature: dict[str, Any]
+    events: dict[str, Any]
     config_path: Path
 
 
@@ -66,6 +67,9 @@ _DEFAULT_LINK_CONFIG = {
         },
         "trust_input_link_roles": False,
         "trusted_link_role_fields": [
+            "source_channel_role",
+            "channel_role",
+            "channel_type",
             "source_link_role",
             "link_role",
             "edge_role",
@@ -157,6 +161,21 @@ _DEFAULT_FLOW_FEATURE_CONFIG = {
         "peak_rate_range_mbps": [10.0, 200.0],
     },
     "cbr": {},
+}
+
+_DEFAULT_EVENTS_CONFIG = {
+    "enabled": False,
+    "count": 0,
+    "event_type_probabilities": {
+        "node": {"fault": 0.5, "recovery": 0.5},
+        "channel": {"fault": 0.5, "recovery": 0.5},
+        "nic": {"fault": 0.5, "recovery": 0.5},
+        "data_flow": {"increase": 0.5, "decrease": 0.5},
+    },
+    "data_flow": {
+        "increase_multiplier_range": [1.2, 2.0],
+        "decrease_multiplier_range": [0.2, 0.8],
+    },
 }
 
 def _resolve_path(base_dir: Path, raw_path: str | Path | None) -> Path:
@@ -329,6 +348,8 @@ def load_config(config_path: str | Path) -> SceneConfig:
         ("selection_mode_probabilities", "mode_probabilities", "single_model_probabilities"),
     )
     flow_feature.pop("abr", None)
+    events = _deep_merge(_DEFAULT_EVENTS_CONFIG, raw.get("events"))
+    events = _replace_explicit_mapping_overrides(events, raw.get("events"), ("event_type_probabilities",))
     config = SceneConfig(
         output_root=output_root,
         seed=seed,
@@ -341,6 +362,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         routing=routing,
         traffic_matrix=traffic_matrix,
         flow_feature=flow_feature,
+        events=events,
         config_path=path,
     )
 

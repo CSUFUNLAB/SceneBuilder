@@ -276,8 +276,9 @@ def _feature_rate_limit(row: dict[str, Any]) -> float | None:
 def apply_hard_traffic_constraints(
     traffic_rows: list[dict[str, Any]],
     routing_map: dict[tuple[str, str], str],
-    links_rows: list[dict[str, Any]],
+    channel_rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    del channel_rows
     constrained_rows: list[dict[str, Any]] = []
 
     unreachable_flows_zeroed = 0

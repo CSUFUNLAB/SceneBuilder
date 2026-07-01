@@ -8,9 +8,12 @@ from ..rng import RandomManager
 from ..utils.entity_states import pick_state
 from .nodes import infer_node_roles
 
-LINK_FIELDS = ["link_id", "src", "dst", "link_type", "bandwidth_mbps", "state"]
+CHANNEL_FIELDS = ["channel_id", "src", "dst", "channel_type", "bandwidth_mbps", "state"]
 
-_DEFAULT_TRUSTED_LINK_ROLE_FIELDS = [
+_DEFAULT_TRUSTED_CHANNEL_ROLE_FIELDS = [
+    "source_channel_role",
+    "channel_role",
+    "channel_type",
     "source_link_role",
     "link_role",
     "edge_role",
@@ -29,7 +32,7 @@ _NODE_ROLE_ALIASES = {
     "access": "edge",
 }
 
-_LINK_ROLE_ALIASES = {
+_CHANNEL_ROLE_ALIASES = {
     "backbone": "backbone",
     "core": "backbone",
     "uplink": "uplink",
@@ -76,25 +79,25 @@ def _normalize_node_role(value: object) -> str:
     return _NODE_ROLE_ALIASES.get(text, "edge")
 
 
-def _normalize_link_role(value: object) -> str | None:
+def _normalize_channel_role(value: object) -> str | None:
     if value in (None, ""):
         return None
     text = str(value).strip().lower()
-    return _LINK_ROLE_ALIASES.get(text)
+    return _CHANNEL_ROLE_ALIASES.get(text)
 
 
-def _extract_trusted_link_role(attrs: dict[str, Any], fields: list[str]) -> str | None:
+def _extract_trusted_channel_role(attrs: dict[str, Any], fields: list[str]) -> str | None:
     field_set = {str(field).strip().lower() for field in fields if str(field).strip()}
     for key, value in attrs.items():
         if str(key).strip().lower() not in field_set:
             continue
-        role = _normalize_link_role(value)
+        role = _normalize_channel_role(value)
         if role is not None:
             return role
     return None
 
 
-def _derive_link_role_from_nodes(
+def _derive_channel_role_from_nodes(
     src_role: str,
     dst_role: str,
     role_cfg: dict[str, Any],
@@ -122,9 +125,9 @@ def _derive_link_role_from_nodes(
     return "lateral"
 
 
-def _role_bandwidth_spec(role_bandwidth: dict[str, Any], link_role: str) -> dict[str, Any]:
-    if link_role in role_bandwidth:
-        return dict(role_bandwidth[link_role])
+def _role_bandwidth_spec(role_bandwidth: dict[str, Any], channel_role: str) -> dict[str, Any]:
+    if channel_role in role_bandwidth:
+        return dict(role_bandwidth[channel_role])
 
     fallback_keys: dict[str, list[str]] = {
         "backbone": ["core"],
@@ -132,30 +135,30 @@ def _role_bandwidth_spec(role_bandwidth: dict[str, Any], link_role: str) -> dict
         "access": ["edge"],
         "lateral": ["aggregation"],
     }
-    for key in fallback_keys.get(link_role, []):
+    for key in fallback_keys.get(channel_role, []):
         if key in role_bandwidth:
             return dict(role_bandwidth[key])
     return {}
 
 
-def generate_links(
+def generate_channels(
     graph: nx.Graph,
     config: Any,
     rng: RandomManager,
     node_roles: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    link_cfg = config.link_generation
-    mode = str(link_cfg.get("mode", "pure_random"))
-    preserve_input = bool(link_cfg.get("preserve_input_bandwidth", True))
-    treat_as_undirected = bool(link_cfg.get("treat_as_undirected", True))
-    state_probabilities = dict(link_cfg.get("state_probabilities", {"normal": 1.0}))
+    channel_cfg = config.link_generation
+    mode = str(channel_cfg.get("mode", "pure_random"))
+    preserve_input = bool(channel_cfg.get("preserve_input_bandwidth", True))
+    treat_as_undirected = bool(channel_cfg.get("treat_as_undirected", True))
+    state_probabilities = dict(channel_cfg.get("state_probabilities", {"normal": 1.0}))
 
-    pure_random_cfg = link_cfg.get("pure_random", {})
-    role_cfg = link_cfg.get("role_based_random", {})
+    pure_random_cfg = channel_cfg.get("pure_random", {})
+    role_cfg = channel_cfg.get("role_based_random", {})
     role_bandwidth = role_cfg.get("role_bandwidth_mbps", {})
-    trust_input_link_roles = bool(role_cfg.get("trust_input_link_roles", False))
-    trusted_link_role_fields = [
-        str(item) for item in role_cfg.get("trusted_link_role_fields", _DEFAULT_TRUSTED_LINK_ROLE_FIELDS)
+    trust_input_channel_roles = bool(role_cfg.get("trust_input_link_roles", False))
+    trusted_channel_role_fields = [
+        str(item) for item in role_cfg.get("trusted_link_role_fields", _DEFAULT_TRUSTED_CHANNEL_ROLE_FIELDS)
     ]
     derived_role_cfg = role_cfg.get("derived_link_role", {})
 
@@ -165,16 +168,16 @@ def generate_links(
 
     rows: list[dict[str, Any]] = []
     for idx, (src, dst, attrs) in enumerate(_ordered_edges(graph, treat_as_undirected), start=1):
-        trusted_link_role = None
-        if trust_input_link_roles:
-            trusted_link_role = _extract_trusted_link_role(attrs, trusted_link_role_fields)
+        trusted_channel_role = None
+        if trust_input_channel_roles:
+            trusted_channel_role = _extract_trusted_channel_role(attrs, trusted_channel_role_fields)
 
-        if trusted_link_role is not None:
-            link_role = trusted_link_role
+        if trusted_channel_role is not None:
+            channel_role = trusted_channel_role
         else:
             src_role = role_map.get(src, "edge")
             dst_role = role_map.get(dst, "edge")
-            link_role = _derive_link_role_from_nodes(src_role, dst_role, derived_role_cfg, rng)
+            channel_role = _derive_channel_role_from_nodes(src_role, dst_role, derived_role_cfg, rng)
 
         bandwidth: float | None = None
 
@@ -189,7 +192,7 @@ def generate_links(
             if mode == "pure_random":
                 bandwidth = _sample_bandwidth(pure_random_cfg, rng)
             elif mode == "role_based_random":
-                role_spec = _role_bandwidth_spec(role_bandwidth, link_role)
+                role_spec = _role_bandwidth_spec(role_bandwidth, channel_role)
                 try:
                     bandwidth = _sample_bandwidth(role_spec, rng)
                 except ValueError:
@@ -199,12 +202,12 @@ def generate_links(
 
         rows.append(
             {
-                "link_id": f"L{idx:04d}",
+                "channel_id": f"C{idx:04d}",
                 "src": src,
                 "dst": dst,
-                "link_type": link_role,
+                "channel_type": channel_role,
                 "bandwidth_mbps": round(float(bandwidth), 6),
-                "state": pick_state(state_probabilities, "normal", rng, key=f"link:{src}:{dst}"),
+                "state": pick_state(state_probabilities, "normal", rng, key=f"channel:{src}:{dst}"),
             }
         )
 
