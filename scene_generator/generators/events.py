@@ -47,21 +47,20 @@ def generate_events(
     traffic_rows: list[dict[str, Any]],
     config: Any,
     rng: RandomManager,
-) -> tuple[list[dict[str, Any]], dict[tuple[str, str], str]]:
+) -> list[dict[str, Any]]:
     events_cfg = dict(getattr(config, "events", {}))
     if not bool(events_cfg.get("enabled", False)):
-        return [], {}
+        return []
 
     count = int(events_cfg.get("count", 0))
     if count <= 0:
-        return [], {}
+        return []
 
     candidates = _event_candidates(nodes_rows, channel_rows, nics_rows, traffic_rows)
     if not candidates:
-        return [], {}
+        return []
 
     rows: list[dict[str, Any]] = []
-    initial_state_overrides: dict[tuple[str, str], str] = {}
     scene_duration = float(getattr(config, "scene_duration", 0.0))
 
     selected_candidates = rng.sample(candidates, min(count, len(candidates)))
@@ -69,11 +68,6 @@ def generate_events(
         entity_type = candidate["entity_type"]
         entity_id = candidate["entity_id"]
         event_type = _select_event_type(events_cfg, entity_type, rng)
-
-        if event_type == "fault":
-            initial_state_overrides[(entity_type, entity_id)] = "normal"
-        elif event_type == "recovery":
-            initial_state_overrides[(entity_type, entity_id)] = "disabled"
 
         row: dict[str, Any] = {
             "event_id": f"E{index:06d}",
@@ -87,26 +81,4 @@ def generate_events(
         rows.append(row)
 
     rows.sort(key=lambda row: (float(row["time"]), str(row["event_id"])))
-    return rows, initial_state_overrides
-
-
-def apply_event_initial_state_overrides(
-    nodes_rows: list[dict[str, Any]],
-    channel_rows: list[dict[str, Any]],
-    nics_rows: list[dict[str, Any]],
-    overrides: dict[tuple[str, str], str],
-) -> None:
-    row_groups = {
-        "node": (nodes_rows, "node_id"),
-        "channel": (channel_rows, "channel_id"),
-        "nic": (nics_rows, "nic_id"),
-    }
-
-    for entity_type, entity_id in overrides:
-        if entity_type not in row_groups:
-            continue
-        rows, id_key = row_groups[entity_type]
-        for row in rows:
-            if str(row.get(id_key, "")) == entity_id:
-                row["state"] = overrides[(entity_type, entity_id)]
-                break
+    return rows

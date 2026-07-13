@@ -9,7 +9,7 @@ import networkx as nx
 from .cleaner import clean_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
-from .generators.events import apply_event_initial_state_overrides, generate_events
+from .generators.events import generate_events
 from .generators.nics import NIC_FIELDS, generate_nics, resolve_queue_policy_selection
 from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
 from .generators.routing import generate_routing_matrix
@@ -235,7 +235,7 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
     traffic_rows, traffic_metadata = generate_traffic(graph, config, rng, include_metadata=True)
     traffic_rows, traffic_constraints = apply_hard_traffic_constraints(traffic_rows, routing_map, channel_rows)
     traffic_metadata["hard_constraints"] = traffic_constraints
-    event_rows, event_initial_state_overrides = generate_events(
+    event_rows = generate_events(
         nodes_rows,
         channel_rows,
         nics_rows,
@@ -243,7 +243,6 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
         config,
         rng,
     )
-    apply_event_initial_state_overrides(nodes_rows, channel_rows, nics_rows, event_initial_state_overrides)
 
     routing_rows = _build_interface_routing_rows(graph, routing_map, channel_rows, nics_rows)
     channel_rows = _convert_rows_node_fields_to_public_ids(channel_rows, ["src", "dst"])

@@ -221,6 +221,8 @@ python main.py clean -c configs/example.yaml
 
 每行一个事件候选对象。ns-3 运行脚本可以从该候选列表中抽取事件组；没有事件组时使用无事件结果。
 
+生成事件候选不会改写 `nodes.csv`、`channels.csv` 或 `nics.csv` 的基础状态。无事件运行直接使用这些基础状态；只有 ns-3 显式读取事件文件时，才在内存中为故障/恢复事件设置所需初态。
+
 - `event_id`
 - `time`（仿真时间，秒）
 - `entity_type`（`node` / `channel` / `nic` / `data_flow`）

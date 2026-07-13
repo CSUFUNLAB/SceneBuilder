@@ -27,7 +27,7 @@ def test_generate_events_samples_each_entity_at_most_once() -> None:
     nics_rows = [{"nic_id": "IF0001", "state": "disabled"}]
     traffic_rows = [{"flow_id": "F000001"}]
 
-    rows, overrides = generate_events(
+    rows = generate_events(
         nodes_rows,
         channel_rows,
         nics_rows,
@@ -39,9 +39,9 @@ def test_generate_events_samples_each_entity_at_most_once() -> None:
     keys = {(row["entity_type"], row["entity_id"]) for row in rows}
     assert len(rows) == 4
     assert len(keys) == 4
-    assert overrides[("node", "N0001")] == "normal"
-    assert overrides[("channel", "C0001")] == "disabled"
-    assert overrides[("nic", "IF0001")] == "normal"
+    assert nodes_rows[0]["state"] == "disabled"
+    assert channel_rows[0]["state"] == "normal"
+    assert nics_rows[0]["state"] == "disabled"
     flow_event = next(row for row in rows if row["entity_type"] == "data_flow")
     assert flow_event["event_type"] == "increase"
     assert flow_event["rate_multiplier"] == 1.5
