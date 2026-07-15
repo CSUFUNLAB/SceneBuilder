@@ -6,7 +6,6 @@ from pathlib import Path
 import networkx as nx
 
 from ..config import SceneConfig, TopologySourceConfig
-from ..rng import RandomManager
 from .base import TopologyParseError
 from .brite_parser import parse_brite
 from .topologyzoo_parser import parse_topologyzoo
@@ -38,17 +37,33 @@ def _collect_candidates(source: TopologySourceConfig) -> list[Path]:
     return sorted(candidates, key=lambda p: str(p))
 
 
-def select_topology_file(config: SceneConfig, rng: RandomManager) -> SelectedTopology:
-    source = rng.weighted_choice(config.topology_sources, [s.weight for s in config.topology_sources])
-    candidates = _collect_candidates(source)
+def collect_topologies(config: SceneConfig) -> list[SelectedTopology]:
+    selected_topologies: list[SelectedTopology] = []
+    seen: set[tuple[str, Path]] = set()
+    for source in config.topology_sources:
+        if not source.enabled:
+            continue
+        candidates = _collect_candidates(source)
+        if not candidates:
+            raise FileNotFoundError(
+                f"No candidate topology files found for source {source.name} under {source.root_dirs}"
+            )
+        for file_path in candidates:
+            key = (source.type, file_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            selected_topologies.append(
+                SelectedTopology(
+                    source_name=source.name,
+                    source_type=source.type,
+                    file_path=file_path,
+                )
+            )
 
-    if not candidates:
-        raise FileNotFoundError(
-            f"No candidate topology files found for source {source.name} under {source.root_dirs}"
-        )
-
-    chosen = rng.choice(candidates)
-    return SelectedTopology(source_name=source.name, source_type=source.type, file_path=chosen)
+    if not selected_topologies:
+        raise FileNotFoundError("No topology files found in enabled topology sources")
+    return selected_topologies
 
 
 def load_topology(selected: SelectedTopology) -> nx.Graph:
@@ -56,9 +71,3 @@ def load_topology(selected: SelectedTopology) -> nx.Graph:
     if parser is None:
         raise TopologyParseError(f"No parser registered for source type: {selected.source_type}")
     return parser(selected.file_path)
-
-
-def select_and_load_topology(config: SceneConfig, rng: RandomManager) -> tuple[SelectedTopology, nx.Graph]:
-    selected = select_topology_file(config, rng)
-    graph = load_topology(selected)
-    return selected, graph

@@ -17,7 +17,6 @@ class _Config:
         "ip_cidr_candidates": [],
         "link_subnet_prefix": 30,
         "link_subnet_prefix_probabilities": {},
-        "state_probabilities": {"normal": 1.0},
     }
 
 
@@ -73,7 +72,6 @@ class _SingleQueueConfig:
         "ip_cidr_candidates": [],
         "link_subnet_prefix": 30,
         "link_subnet_prefix_probabilities": {},
-        "state_probabilities": {"disabled": 1.0},
     }
 
 
@@ -84,7 +82,7 @@ def test_generate_nics_can_use_single_queue_mode() -> None:
 
     assert len(rows) == 2
     assert all(row["queue_policy"] == "RED" for row in rows)
-    assert all(row["state"] == "disabled" for row in rows)
+    assert all(row["state"] == "normal" for row in rows)
 
 
 class _RoleSizedConfig:
@@ -100,7 +98,6 @@ class _RoleSizedConfig:
         "ip_cidr_candidates": [],
         "link_subnet_prefix": 30,
         "link_subnet_prefix_probabilities": {},
-        "state_probabilities": {"normal": 1.0},
     }
 
 
@@ -166,7 +163,6 @@ class _RandomSubnetConfig:
         "link_subnet_prefix_probabilities": {
             29: 1.0,
         },
-        "state_probabilities": {"disabled": 1.0},
     }
 
 
@@ -187,7 +183,7 @@ def test_generate_nics_can_use_non_default_ip_pool_and_prefix() -> None:
     assert len(rows) == 4
     pool = ipaddress.ip_network("172.16.0.0/12")
     assert all(ipaddress.ip_interface(str(row["ip"])).ip in pool for row in rows)
-    assert all(row["state"] == "disabled" for row in rows)
+    assert all(row["state"] == "normal" for row in rows)
     assert ipaddress.ip_interface(str(rows[0]["ip"])).network.prefixlen == 29
     assert ipaddress.ip_interface(str(rows[2]["ip"])).network.prefixlen == 29
     assert selection["active_rule"]["ip_cidr_counts"] == {"172.16.0.0/12": 2}

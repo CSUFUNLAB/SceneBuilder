@@ -6,11 +6,10 @@ from typing import Any
 import networkx as nx
 
 from ..rng import RandomManager
-from ..utils.entity_states import pick_state
 from ..utils.graph_utils import ordered_nodes
 from .routing import build_node_id_map
 
-NODE_FIELDS = ["node_id", "original_node_name", "state", "latitude", "longitude"]
+NODE_FIELDS = ["node_id", "state", "latitude", "longitude"]
 
 _DEFAULT_TRUSTED_NODE_ROLE_FIELDS = [
     "source_node_role",
@@ -50,13 +49,6 @@ def _as_optional_float(value: object) -> float | str:
 
 def _public_node_id(value: int) -> str:
     return f"N{int(value) + 1:04d}"
-
-
-def _original_node_name(attrs: dict[str, object], fallback: object) -> str:
-    value = attrs.get("source_original_node_name")
-    if value not in (None, ""):
-        return str(value)
-    return str(fallback)
 
 
 def _normalize_node_role(value: object) -> str | None:
@@ -259,7 +251,6 @@ def infer_node_roles(graph: nx.Graph, nodes_cfg: dict[str, Any], rng: RandomMana
 
 def generate_nodes(
     graph: nx.Graph,
-    internal_to_original: dict[str, str],
     config: Any,
     rng: RandomManager,
     node_roles: dict[str, str] | None = None,
@@ -268,7 +259,6 @@ def generate_nodes(
     node_id_map = build_node_id_map(nodes)
 
     nodes_cfg = getattr(config, "nodes", {})
-    state_probabilities = dict(nodes_cfg.get("state_probabilities", {"normal": 1.0}))
 
     if node_roles is None:
         infer_node_roles(graph, nodes_cfg, rng)
@@ -279,8 +269,7 @@ def generate_nodes(
         rows.append(
             {
                 "node_id": _public_node_id(int(node_id_map[node])),
-                "original_node_name": _original_node_name(attrs, internal_to_original.get(str(node), str(node))),
-                "state": pick_state(state_probabilities, "normal", rng, key=f"node:{node}"),
+                "state": "normal",
                 "latitude": _as_optional_float(attrs.get("source_latitude")),
                 "longitude": _as_optional_float(attrs.get("source_longitude")),
             }

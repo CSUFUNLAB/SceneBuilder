@@ -1,0 +1,9 @@
+What is the current state of the network (normal, congested, or faulty)? ||| [normal, congested, faulty]
+What is the current status of node $node_id$ (normal or disabled)? ||| [normal, disabled]
+What is the current status of channel $channel_id$ (normal, disabled, degraded, or saturated)? ||| [normal, disabled, degraded, saturated]
+What is the current status of interface $nic_id$ (normal, disabled, tx_failed, rx_failed, or saturated)? ||| [normal, disabled, tx_failed, rx_failed, saturated]
+What is the current status of data flow $data_flow_id$ (normal, disabled, or saturated)?
+Which channel is the bottleneck on the path of data flow $data_flow_id$? ||| [channel_id]
+What causes the saturation of channel $channel_id$: a single large data flow or the aggregate load of multiple data flows? ||| [single_large_flow, multiple_flow_aggregation]
+What causes the degradation of data flow $data_flow_id$: channel saturation or channel degradation? ||| [channel_saturation, channel_degradation]
+What causes channel $channel_id$ to be unavailable: a fault in the channel itself or a fault in one of its endpoint nodes? ||| [channel_fault, endpoint_node_fault]

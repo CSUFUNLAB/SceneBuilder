@@ -78,7 +78,9 @@ def test_traffic_can_return_generation_metadata() -> None:
         "requested_flow_ratio_range": None,
         "selected_flow_ratio": 1.0,
         "selected_flow_count": 2,
+        "max_flow_count": None,
         "effective_flow_count": 2,
+        "capped_by_max_flow_count": False,
         "sampled": False,
     }
     assert metadata["flow_feature"]["selection_mode"] == "mixed"
@@ -108,7 +110,38 @@ def test_traffic_can_sample_a_configured_ratio_of_flow_pairs() -> None:
         "requested_flow_ratio_range": [0.5, 0.5],
         "selected_flow_ratio": 0.5,
         "selected_flow_count": 3,
+        "max_flow_count": None,
         "effective_flow_count": 3,
+        "capped_by_max_flow_count": False,
+        "sampled": True,
+    }
+
+
+class _CappedTrafficConfig:
+    traffic_matrix = {
+        "mode_probabilities": {"uniform": 1.0},
+        "uniform_range_mbps": [5.0, 5.0],
+        "flow_count_range": [1.0, 1.0],
+        "max_flow_count": 2,
+    }
+    flow_feature = _Config.flow_feature
+
+
+def test_traffic_caps_sampled_flow_count() -> None:
+    graph = nx.Graph()
+    graph.add_nodes_from(["A", "B", "C"])
+
+    rows, metadata = generate_traffic(graph, _CappedTrafficConfig(), RandomManager(9), include_metadata=True)
+
+    assert len(rows) == 2
+    assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "available_flow_pairs": 6,
+        "requested_flow_ratio_range": [1.0, 1.0],
+        "selected_flow_ratio": 1.0,
+        "selected_flow_count": 6,
+        "max_flow_count": 2,
+        "effective_flow_count": 2,
+        "capped_by_max_flow_count": True,
         "sampled": True,
     }
 

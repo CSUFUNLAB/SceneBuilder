@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import hashlib
 import random
 from typing import Iterable, Sequence, TypeVar
 
@@ -21,6 +22,11 @@ class RandomManager:
 
     def probability(self, p: float) -> bool:
         return self.random() < float(p)
+
+    def fork(self, namespace: str) -> "RandomManager":
+        seed_material = f"{self.seed}:{namespace}".encode("utf-8")
+        derived_seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+        return RandomManager(derived_seed)
 
     def randint(self, a: int, b: int) -> int:
         return self._py.randint(int(a), int(b))

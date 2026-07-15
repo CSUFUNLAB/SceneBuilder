@@ -5,10 +5,17 @@ from typing import Any
 import networkx as nx
 
 from ..rng import RandomManager
-from ..utils.entity_states import pick_state
 from .nodes import infer_node_roles
 
-CHANNEL_FIELDS = ["channel_id", "src", "dst", "channel_type", "bandwidth_mbps", "state"]
+CHANNEL_FIELDS = [
+    "channel_id",
+    "src",
+    "dst",
+    "channel_type",
+    "bandwidth_mbps",
+    "state",
+    "capacity_multiplier",
+]
 
 _DEFAULT_TRUSTED_CHANNEL_ROLE_FIELDS = [
     "source_channel_role",
@@ -151,7 +158,6 @@ def generate_channels(
     mode = str(channel_cfg.get("mode", "pure_random"))
     preserve_input = bool(channel_cfg.get("preserve_input_bandwidth", True))
     treat_as_undirected = bool(channel_cfg.get("treat_as_undirected", True))
-    state_probabilities = dict(channel_cfg.get("state_probabilities", {"normal": 1.0}))
 
     pure_random_cfg = channel_cfg.get("pure_random", {})
     role_cfg = channel_cfg.get("role_based_random", {})
@@ -207,7 +213,8 @@ def generate_channels(
                 "dst": dst,
                 "channel_type": channel_role,
                 "bandwidth_mbps": round(float(bandwidth), 6),
-                "state": pick_state(state_probabilities, "normal", rng, key=f"channel:{src}:{dst}"),
+                "state": "normal",
+                "capacity_multiplier": 1.0,
             }
         )
 

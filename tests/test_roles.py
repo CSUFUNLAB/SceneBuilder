@@ -68,7 +68,6 @@ class _LinkCfgDeterministic:
         "mode": "role_based_random",
         "preserve_input_bandwidth": False,
         "treat_as_undirected": True,
-        "state_probabilities": {"degraded": 1.0},
         "pure_random": {"bandwidth_candidates_mbps": [999]},
         "role_based_random": {
             "role_bandwidth_mbps": {
@@ -123,7 +122,7 @@ def test_channel_roles_are_mapped_from_node_roles() -> None:
     assert by_pair_role[(3, 5)] == "lateral"
     assert by_pair_role[(1, 4)] == "uplink"
     assert by_pair_role[(4, 6)] == "access"
-    assert all(row["state"] == "degraded" for row in rows)
+    assert all(row["state"] == "normal" for row in rows)
 
 
 class _LinkCfgPerturb:
@@ -132,7 +131,6 @@ class _LinkCfgPerturb:
         "mode": "role_based_random",
         "preserve_input_bandwidth": False,
         "treat_as_undirected": True,
-        "state_probabilities": {"normal": 1.0},
         "pure_random": {"bandwidth_candidates_mbps": [999]},
         "role_based_random": {
             "role_bandwidth_mbps": {

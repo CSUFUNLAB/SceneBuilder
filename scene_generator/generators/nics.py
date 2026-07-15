@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..rng import RandomManager
-from ..utils.entity_states import pick_state
 from ..utils.ip_mac import generate_channel_interface_ips, generate_unique_macs
 from ..utils.selection import weighted_pick
 
@@ -98,7 +97,6 @@ def generate_nics(
 ) -> list[dict[str, Any]]:
     nics_cfg = config.nics
     queue_selection = selection or resolve_queue_policy_selection(nics_cfg, rng)
-    state_probabilities = dict(nics_cfg.get("state_probabilities", {"normal": 1.0}))
 
     ip_cidr = str(nics_cfg.get("ip_cidr", "10.0.0.0/8"))
     ip_cidr_candidates = [str(item) for item in nics_cfg.get("ip_cidr_candidates", [])]
@@ -153,7 +151,7 @@ def generate_nics(
                     "mac": macs[nic_idx - 1],
                     "queue_policy": _choose_queue_policy(nics_cfg, rng, queue_selection),
                     "queue_size_packets": queue_size_packets,
-                    "state": pick_state(state_probabilities, "normal", rng, key=f"nic:{channel_id}:{node}"),
+                    "state": "normal",
                 }
             )
             nic_idx += 1

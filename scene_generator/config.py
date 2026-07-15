@@ -14,7 +14,7 @@ from .utils.validation import validate_scene_config
 class TopologySourceConfig:
     name: str
     type: str
-    weight: float
+    enabled: bool
     root_dirs: list[Path]
     glob_patterns: list[str]
 
@@ -23,12 +23,14 @@ class TopologySourceConfig:
 class SceneConfig:
     output_root: Path
     seed: int
-    num_scenes: int
+    scenes_per_topology: int
+    max_topology_nodes: int
     scene_duration: float
     topology_sources: list[TopologySourceConfig]
     link_generation: dict[str, Any]
     nics: dict[str, Any]
     nodes: dict[str, Any]
+    fault_generation: dict[str, Any]
     routing: dict[str, Any]
     traffic_matrix: dict[str, Any]
     flow_feature: dict[str, Any]
@@ -45,11 +47,6 @@ _DEFAULT_LINK_CONFIG = {
     "mode": "pure_random",
     "preserve_input_bandwidth": True,
     "treat_as_undirected": True,
-    "state_probabilities": {
-        "normal": 0.95,
-        "degraded": 0.03,
-        "disabled": 0.02,
-    },
     "pure_random": {
         "bandwidth_candidates_mbps": [100.0, 1000.0, 10000.0],
         "uniform_range_mbps": [100.0, 10000.0],
@@ -95,10 +92,6 @@ _DEFAULT_NIC_CONFIG = {
     "link_subnet_prefix": 30,
     "link_subnet_prefix_probabilities": {28: 0.15, 29: 0.35, 30: 0.5},
     "mac": {"locally_administered": True},
-    "state_probabilities": {
-        "normal": 0.98,
-        "disabled": 0.02,
-    },
 }
 
 _DEFAULT_NODE_CONFIG = {
@@ -106,10 +99,6 @@ _DEFAULT_NODE_CONFIG = {
     "assignment_mode": "topology_role",
     "default_node_type": "edge",
     "trust_input_node_roles": False,
-    "state_probabilities": {
-        "normal": 0.95,
-        "disabled": 0.05,
-    },
     "trusted_node_role_fields": [
         "source_node_role",
         "node_role",
@@ -125,6 +114,24 @@ _DEFAULT_NODE_CONFIG = {
     },
 }
 
+_DEFAULT_FAULT_GENERATION_CONFIG = {
+    "scenario_probabilities": {
+        "normal": 0.5,
+        "single": 0.3,
+        "double": 0.2,
+    },
+    "channel_state_probabilities": {
+        "disabled": 0.5,
+        "degraded": 0.5,
+    },
+    "channel_degradation_multipliers": [0.5, 0.2, 0.1],
+    "nic_state_probabilities": {
+        "disabled": 0.34,
+        "tx_failed": 0.33,
+        "rx_failed": 0.33,
+    },
+}
+
 _DEFAULT_ROUTING_CONFIG = {
     "weight_range": [1.0, 10.0],
 }
@@ -132,6 +139,7 @@ _DEFAULT_ROUTING_CONFIG = {
 _DEFAULT_TM_CONFIG = {
     "mode": "uniform",
     "flow_count_range": None,
+    "max_flow_count": 1000,
     "mode_probabilities": {
         "uniform": 0.25,
         "exponential": 0.25,
@@ -208,6 +216,8 @@ def _parse_topology_sources(raw_sources: Any, base_dir: Path) -> list[TopologySo
     for source in raw_sources:
         if not isinstance(source, dict):
             raise ValueError("Each topology source must be a mapping")
+        if "weight" in source:
+            raise ValueError("topology_sources[].weight has been removed; use enabled")
 
         source_type = str(source.get("type", "")).strip()
         if not source_type:
@@ -236,7 +246,7 @@ def _parse_topology_sources(raw_sources: Any, base_dir: Path) -> list[TopologySo
             TopologySourceConfig(
                 name=str(source.get("name", source_type)),
                 type=source_type,
-                weight=float(source.get("weight", 1.0)),
+                enabled=bool(source.get("enabled", True)),
                 root_dirs=root_dirs,
                 glob_patterns=[str(pattern) for pattern in glob_patterns],
             )
@@ -303,29 +313,31 @@ def load_config(config_path: str | Path) -> SceneConfig:
         raw = {}
     if not isinstance(raw, dict):
         raise ValueError("Config root must be a YAML mapping")
+    if "num_scenes" in raw:
+        raise ValueError("num_scenes has been removed; use scenes_per_topology")
 
     base_dir = path.parent
 
     output_root = _resolve_path(base_dir, raw.get("output_root", "./generated_scenes"))
     seed = int(raw.get("seed", 0))
-    num_scenes = int(raw.get("num_scenes", 1))
+    scenes_per_topology = int(raw.get("scenes_per_topology", 100))
+    max_topology_nodes = int(raw.get("max_topology_nodes", 50))
     scene_duration = float(raw.get("scene_duration", 300.0))
 
     topology_sources = _parse_topology_sources(raw.get("topology_sources"), base_dir)
 
     raw_link_generation = raw.get("link_generation")
     raw_nics = raw.get("nics")
+    raw_fault_generation = raw.get("fault_generation")
     raw_flow_feature = _normalize_flow_feature_config(raw.get("flow_feature"))
     raw_routing = _normalize_routing_config(raw.get("routing"))
 
     link_generation = _deep_merge(_DEFAULT_LINK_CONFIG, raw_link_generation)
-    link_generation = _replace_explicit_mapping_overrides(link_generation, raw_link_generation, ("state_probabilities",))
     nics = _deep_merge(_DEFAULT_NIC_CONFIG, raw_nics)
     nics = _replace_explicit_mapping_overrides(
         nics,
         raw_nics,
         (
-            "state_probabilities",
             "queue_policy_mode_probabilities",
             "queue_policy_probabilities",
             "single_queue_policy_probabilities",
@@ -334,7 +346,12 @@ def load_config(config_path: str | Path) -> SceneConfig:
         ),
     )
     nodes = _deep_merge(_DEFAULT_NODE_CONFIG, raw.get("nodes"))
-    nodes = _replace_explicit_mapping_overrides(nodes, raw.get("nodes"), ("state_probabilities",))
+    fault_generation = _deep_merge(_DEFAULT_FAULT_GENERATION_CONFIG, raw_fault_generation)
+    fault_generation = _replace_explicit_mapping_overrides(
+        fault_generation,
+        raw_fault_generation,
+        ("scenario_probabilities", "channel_state_probabilities", "nic_state_probabilities"),
+    )
     routing = _deep_merge(_DEFAULT_ROUTING_CONFIG, raw_routing)
     raw_traffic_matrix = raw.get("traffic_matrix")
     traffic_matrix = _deep_merge(_DEFAULT_TM_CONFIG, raw_traffic_matrix)
@@ -353,12 +370,14 @@ def load_config(config_path: str | Path) -> SceneConfig:
     config = SceneConfig(
         output_root=output_root,
         seed=seed,
-        num_scenes=num_scenes,
+        scenes_per_topology=scenes_per_topology,
+        max_topology_nodes=max_topology_nodes,
         scene_duration=scene_duration,
         topology_sources=topology_sources,
         link_generation=link_generation,
         nics=nics,
         nodes=nodes,
+        fault_generation=fault_generation,
         routing=routing,
         traffic_matrix=traffic_matrix,
         flow_feature=flow_feature,

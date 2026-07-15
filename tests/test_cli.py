@@ -21,12 +21,12 @@ def test_cli_default_command_generates_scenes(tmp_path: Path, capsys) -> None:
         """
 output_root: ./out
 seed: 7
-num_scenes: 1
+scenes_per_topology: 1
 scene_duration: 60
 topology_sources:
   - name: s
     type: brite
-    weight: 1.0
+    enabled: true
     root_dir: ./topologies
     glob_patterns: ["sample.brite"]
 """,
@@ -64,12 +64,12 @@ def test_cli_clean_removes_only_generated_scene_directories(tmp_path: Path, caps
         """
 output_root: ./out
 seed: 7
-num_scenes: 1
+scenes_per_topology: 1
 scene_duration: 60
 topology_sources:
   - name: s
     type: brite
-    weight: 1.0
+    enabled: true
     root_dir: ./topologies
     glob_patterns: ["sample.brite"]
 """,

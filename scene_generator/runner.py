@@ -10,17 +10,21 @@ from .cleaner import clean_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
+from .generators.faults import apply_scene_faults
 from .generators.nics import NIC_FIELDS, generate_nics, resolve_queue_policy_selection
 from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
 from .generators.routing import generate_routing_matrix
 from .generators.traffic import apply_hard_traffic_constraints, generate_traffic
 from .rng import RandomManager
-from .topology.selector import SelectedTopology, select_and_load_topology
+from .topology.selector import SelectedTopology, collect_topologies, load_topology
 from .utils.graph_utils import as_working_graph, ordered_nodes
 from .writers.csv_writer import write_csv
 from .writers.json_writer import write_json
 from .writers.jsonl_writer import write_jsonl
 from .writers.matrix_writer import write_matrix_csv
+
+
+LEGACY_RUNTIME_EVENTS_ENABLED = False
 
 
 def _sanitize_name(value: str) -> str:
@@ -32,10 +36,10 @@ def _duration_token(value: float) -> str:
     return text.replace(".", "p")
 
 
-def _build_scene_dir(config, selected: SelectedTopology, scene_index: int) -> Path:
+def _build_scene_dir(config, selected: SelectedTopology, scene_index: int, total_scene_count: int) -> Path:
     config_stem = _sanitize_name(config.config_path.stem)
     topo_stem = _sanitize_name(selected.file_path.stem)
-    id_width = max(4, len(str(int(config.num_scenes))))
+    id_width = max(4, len(str(int(total_scene_count))))
     duration = _duration_token(float(config.scene_duration))
     scene_name = (
         f"{config_stem}_"
@@ -46,13 +50,10 @@ def _build_scene_dir(config, selected: SelectedTopology, scene_index: int) -> Pa
     return config.output_root / scene_name
 
 
-def _build_internal_id_graph(graph: nx.Graph) -> tuple[nx.Graph, dict[str, str], dict[str, int]]:
+def _build_internal_id_graph(graph: nx.Graph) -> nx.Graph:
     original_nodes = ordered_nodes(graph)
     original_to_internal = {original: str(index) for index, original in enumerate(original_nodes, start=0)}
-    internal_to_original = {internal: original for original, internal in original_to_internal.items()}
-    internal_graph = nx.relabel_nodes(graph, original_to_internal, copy=True)
-    internal_id_map = {internal: int(internal) for internal in internal_to_original.keys()}
-    return internal_graph, internal_to_original, internal_id_map
+    return nx.relabel_nodes(graph, original_to_internal, copy=True)
 
 
 def _as_public_node_id(value: object) -> object:
@@ -133,11 +134,13 @@ def _build_metadata(
     selected: SelectedTopology,
     scene_dir: Path,
     scene_index: int,
+    topology_scene_index: int,
     graph: nx.Graph,
     channel_rows: list[dict[str, object]],
     nodes_rows: list[dict[str, object]],
     nics_rows: list[dict[str, object]],
     nics_metadata: dict[str, object],
+    fault_metadata: dict[str, object],
     traffic_rows: list[dict[str, object]],
     traffic_metadata: dict[str, object],
     event_rows: list[dict[str, object]],
@@ -175,6 +178,21 @@ def _build_metadata(
             "queue_policy_mode": str(nics_metadata.get("selected_mode", "mixed")),
             "active_rule": dict(nics_metadata.get("active_rule", {})),
         },
+        "fault_generation": {
+            "scenario_probabilities": dict(config.fault_generation.get("scenario_probabilities", {})),
+            "channel_state_probabilities": dict(
+                config.fault_generation.get("channel_state_probabilities", {})
+            ),
+            "channel_degradation_multipliers": list(
+                config.fault_generation.get("channel_degradation_multipliers", [])
+            ),
+            "nic_state_probabilities": dict(
+                config.fault_generation.get("nic_state_probabilities", {})
+            ),
+            "selected_scenario": str(fault_metadata.get("selected_scenario", "normal")),
+            "fault_count": int(fault_metadata.get("fault_count", 0)),
+            "faulted_entities": list(fault_metadata.get("faulted_entities", [])),
+        },
         "traffic_matrix": dict(traffic_metadata.get("traffic_matrix", {})),
         "flow_feature": dict(traffic_metadata.get("flow_feature", {})),
         "traffic_constraints": dict(traffic_metadata.get("hard_constraints", {})),
@@ -188,6 +206,8 @@ def _build_metadata(
         "channel_type_counts": _sorted_count_map(channel_rows, "channel_type"),
         "queue_policy_counts": _sorted_count_map(nics_rows, "queue_policy"),
         "flow_feature_counts": _sorted_count_map(traffic_rows, "feature_model"),
+        "fault_scenario": str(fault_metadata.get("selected_scenario", "normal")),
+        "fault_count": int(fault_metadata.get("fault_count", 0)),
     }
     if event_rows:
         generation["events"] = {
@@ -201,6 +221,8 @@ def _build_metadata(
     return {
         "scene_name": scene_dir.name,
         "scene_id": int(scene_index),
+        "topology_scene_index": int(topology_scene_index),
+        "scenes_per_topology": int(config.scenes_per_topology),
         "scene_duration": float(config.scene_duration),
         "seed": int(config.seed),
         "config": {
@@ -220,35 +242,51 @@ def _build_metadata(
     }
 
 
-def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path:
-    selected, parsed_graph = select_and_load_topology(config, rng)
+def _generate_single_scene(
+    config,
+    rng: RandomManager,
+    selected: SelectedTopology,
+    parsed_graph: nx.Graph,
+    scene_index: int,
+    topology_scene_index: int,
+    total_scene_count: int,
+) -> Path:
     working_graph = as_working_graph(parsed_graph, treat_as_undirected=bool(config.link_generation.get("treat_as_undirected", True)))
 
-    graph, internal_to_original, node_id_map = _build_internal_id_graph(working_graph)
+    graph = _build_internal_id_graph(working_graph)
 
     node_roles = infer_node_roles(graph, getattr(config, "nodes", {}), rng)
     nics_metadata = resolve_queue_policy_selection(config.nics, rng)
     channel_rows = generate_channels(graph, config, rng, node_roles=node_roles)
-    nodes_rows, node_id_map = generate_nodes(graph, internal_to_original, config, rng, node_roles=node_roles)
+    nodes_rows, node_id_map = generate_nodes(graph, config, rng, node_roles=node_roles)
     _, routing_map = generate_routing_matrix(graph, config, rng, node_id_map=node_id_map)
     nics_rows = generate_nics(channel_rows, config, rng, selection=nics_metadata, node_roles=node_roles)
+    fault_rng = rng.fork("fault_generation")
+    fault_metadata = apply_scene_faults(nodes_rows, channel_rows, nics_rows, config.fault_generation, fault_rng)
     traffic_rows, traffic_metadata = generate_traffic(graph, config, rng, include_metadata=True)
     traffic_rows, traffic_constraints = apply_hard_traffic_constraints(traffic_rows, routing_map, channel_rows)
     traffic_metadata["hard_constraints"] = traffic_constraints
-    event_rows = generate_events(
-        nodes_rows,
-        channel_rows,
-        nics_rows,
-        traffic_rows,
-        config,
-        rng,
-    )
+    event_rows: list[dict[str, object]] = []
+    if LEGACY_RUNTIME_EVENTS_ENABLED:
+        event_rows = generate_events(
+            nodes_rows,
+            channel_rows,
+            nics_rows,
+            traffic_rows,
+            config,
+            rng,
+        )
 
     routing_rows = _build_interface_routing_rows(graph, routing_map, channel_rows, nics_rows)
     channel_rows = _convert_rows_node_fields_to_public_ids(channel_rows, ["src", "dst"])
     nics_rows = _convert_rows_node_fields_to_public_ids(nics_rows, ["node"])
     traffic_rows = _convert_rows_node_fields_to_public_ids(traffic_rows, ["src", "dst"])
-    scene_dir = _build_scene_dir(config, selected, scene_index=scene_index)
+    scene_dir = _build_scene_dir(
+        config,
+        selected,
+        scene_index=scene_index,
+        total_scene_count=total_scene_count,
+    )
     scene_dir.mkdir(parents=True, exist_ok=True)
 
     # Cleanup legacy files from older versions.
@@ -271,11 +309,13 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
             selected=selected,
             scene_dir=scene_dir,
             scene_index=scene_index,
+            topology_scene_index=topology_scene_index,
             graph=graph,
             channel_rows=channel_rows,
             nodes_rows=nodes_rows,
             nics_rows=nics_rows,
             nics_metadata=nics_metadata,
+            fault_metadata=fault_metadata,
             traffic_rows=traffic_rows,
             traffic_metadata=traffic_metadata,
             event_rows=event_rows,
@@ -287,11 +327,39 @@ def _generate_single_scene(config, rng: RandomManager, scene_index: int) -> Path
 
 def run(config_path: str | Path) -> list[Path]:
     config = load_config(config_path)
+    eligible_topologies: list[tuple[SelectedTopology, nx.Graph]] = []
+    for selected in collect_topologies(config):
+        parsed_graph = load_topology(selected)
+        if parsed_graph.number_of_nodes() <= int(config.max_topology_nodes):
+            eligible_topologies.append((selected, parsed_graph))
+
+    if not eligible_topologies:
+        raise ValueError(
+            f"No topology has at most {config.max_topology_nodes} nodes"
+        )
+
+    total_scene_count = len(eligible_topologies) * int(config.scenes_per_topology)
     clean_output_root(config.output_root)
-    rng = RandomManager(config.seed)
+    root_rng = RandomManager(config.seed)
 
     generated: list[Path] = []
-    for index in range(1, int(config.num_scenes) + 1):
-        generated.append(_generate_single_scene(config, rng, scene_index=index))
+    scene_index = 0
+    for selected, parsed_graph in eligible_topologies:
+        for topology_scene_index in range(1, int(config.scenes_per_topology) + 1):
+            scene_index += 1
+            scene_rng = root_rng.fork(
+                f"topology:{selected.source_type}:{selected.file_path}:scene:{topology_scene_index}"
+            )
+            generated.append(
+                _generate_single_scene(
+                    config,
+                    scene_rng,
+                    selected,
+                    parsed_graph,
+                    scene_index=scene_index,
+                    topology_scene_index=topology_scene_index,
+                    total_scene_count=total_scene_count,
+                )
+            )
 
     return generated

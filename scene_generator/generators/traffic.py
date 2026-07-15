@@ -218,44 +218,41 @@ def _select_flow_pairs(nodes: list[str], tm_cfg: dict[str, Any], rng: RandomMana
     all_pairs = ordered_pairs(nodes, include_self=False)
     requested_range = tm_cfg.get("flow_count_range")
     total_pairs = len(all_pairs)
+    configured_max = tm_cfg.get("max_flow_count")
+    max_flow_count = None if configured_max is None else int(configured_max)
 
     if requested_range is None:
-        return all_pairs, {
-            "available_flow_pairs": int(total_pairs),
-            "requested_flow_ratio_range": None,
-            "selected_flow_ratio": 1.0,
-            "selected_flow_count": int(total_pairs),
-            "effective_flow_count": int(total_pairs),
-            "sampled": False,
-        }
+        ratio_range = None
+        selected_ratio = 1.0
+        selected_count = total_pairs
+    else:
+        min_ratio = max(0.0, min(1.0, float(requested_range[0])))
+        max_ratio = max(0.0, min(1.0, float(requested_range[1])))
+        if min_ratio > max_ratio:
+            min_ratio, max_ratio = max_ratio, min_ratio
+        ratio_range = [float(min_ratio), float(max_ratio)]
+        selected_ratio = rng.uniform(min_ratio, max_ratio)
+        selected_count = int(round(total_pairs * selected_ratio))
 
-    min_ratio = max(0.0, min(1.0, float(requested_range[0])))
-    max_ratio = max(0.0, min(1.0, float(requested_range[1])))
-    if min_ratio > max_ratio:
-        min_ratio, max_ratio = max_ratio, min_ratio
+    effective_count = min(selected_count, total_pairs)
+    if max_flow_count is not None:
+        effective_count = min(effective_count, max_flow_count)
+    capped_by_max_flow_count = max_flow_count is not None and selected_count > effective_count
 
-    selected_ratio = rng.uniform(min_ratio, max_ratio)
-    count = int(round(total_pairs * selected_ratio))
-    effective_count = min(count, total_pairs)
     if effective_count >= total_pairs:
-        return all_pairs, {
-            "available_flow_pairs": int(total_pairs),
-            "requested_flow_ratio_range": [float(min_ratio), float(max_ratio)],
-            "selected_flow_ratio": round(float(selected_ratio), 6),
-            "selected_flow_count": int(count),
-            "effective_flow_count": int(total_pairs),
-            "sampled": False,
-        }
-
-    selected = set(rng.sample(all_pairs, effective_count))
-    selected_pairs = [pair for pair in all_pairs if pair in selected]
+        selected_pairs = all_pairs
+    else:
+        selected = set(rng.sample(all_pairs, effective_count))
+        selected_pairs = [pair for pair in all_pairs if pair in selected]
     return selected_pairs, {
         "available_flow_pairs": int(total_pairs),
-        "requested_flow_ratio_range": [float(min_ratio), float(max_ratio)],
+        "requested_flow_ratio_range": ratio_range,
         "selected_flow_ratio": round(float(selected_ratio), 6),
-        "selected_flow_count": int(count),
+        "selected_flow_count": int(selected_count),
+        "max_flow_count": max_flow_count,
         "effective_flow_count": int(effective_count),
-        "sampled": True,
+        "capped_by_max_flow_count": bool(capped_by_max_flow_count),
+        "sampled": effective_count < total_pairs,
     }
 
 

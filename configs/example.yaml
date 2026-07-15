@@ -1,28 +1,39 @@
 output_root: ../generated_scenes
 seed: 20260331
-num_scenes: 20
-scene_duration: 10
+scenes_per_topology: 10
+max_topology_nodes: 50
+scene_duration: 2
 
 topology_sources:
   - name: brite_pool
     type: brite
-    weight: 0
+    enabled: false
     root_dir: ../topologies/brite
     glob_patterns: ["**/*.brite"]
   - name: topologyzoo_pool
     type: topologyzoo
-    weight: 1.0
+    enabled: true
     root_dir: ../topologies/topologyzoo
     glob_patterns: ["**/*.gml"]
+
+fault_generation:
+  scenario_probabilities:
+    normal: 0.5
+    single: 0.5
+    double: 0
+  channel_state_probabilities:
+    disabled: 0.5
+    degraded: 0.5
+  channel_degradation_multipliers: [0.5, 0.2, 0.1]
+  nic_state_probabilities:
+    disabled: 0.34
+    tx_failed: 0.33
+    rx_failed: 0.33
 
 link_generation:
   mode: role_based_random
   preserve_input_bandwidth: true
   treat_as_undirected: true
-  state_probabilities:
-    normal: 0.95
-    degraded: 0.03
-    disabled: 0.02
   pure_random:
     bandwidth_candidates_mbps: [100, 1000, 10000]
     uniform_range_mbps: [100.0, 10000.0]
@@ -53,9 +64,6 @@ link_generation:
       - type
 
 nics:
-  state_probabilities:
-    normal: 0.98
-    disabled: 0.02
   queue_policy_mode_probabilities:
     mixed: 0
     single: 1.0
@@ -89,9 +97,6 @@ nodes:
   assignment_mode: topology_role
   default_node_type: edge
   trust_input_node_roles: false
-  state_probabilities:
-    normal: 0.95
-    disabled: 0.05
   trusted_node_role_fields:
     - source_node_role
     - node_role
@@ -108,6 +113,7 @@ routing:
 
 traffic_matrix:
   flow_count_range: [0.1, 0.25]
+  max_flow_count: 1000
   mode_probabilities:
     uniform: 0.25
     exponential: 0.25
@@ -144,7 +150,7 @@ flow_feature:
   cbr: {}
 
 events:
-  enabled: true
+  enabled: false
   count: 100
   event_type_probabilities:
     node:

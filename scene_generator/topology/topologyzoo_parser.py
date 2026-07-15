@@ -48,7 +48,7 @@ def _extract_original_node_name(attrs: dict[str, object]) -> str | None:
 
 
 def _read_gml_with_stable_ids(path: Path) -> nx.Graph:
-    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    lines = path.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
     has_multigraph = any(line.strip().lower().startswith("multigraph") for line in lines)
 
     if not has_multigraph:

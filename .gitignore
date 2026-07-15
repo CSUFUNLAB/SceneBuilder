@@ -1,30 +1,9 @@
-# Ignore everything by default; keep only source code and example assets.
-/*
-
-# Keep repo metadata and top-level docs needed for usage.
-!/.gitignore
-!/README.md
-!/requirements.txt
-!/main.py
-
-# Keep source code.
-!/scene_generator/
-!/scene_generator/**
-!/tests/
-!/tests/**
-
-
-
-# Keep example configs and example topology assets.
-!/configs/
-!/configs/**
-!/topologies/
-!/topologies/topologyzoo/
-!/topologies/topologyzoo/**
-
 # Ignore generated outputs and caches anywhere in the repo.
 generated_scenes/
 .pytest_cache/
 __pycache__/
 *.py[cod]
 =
+
+scene_generator/__pycache__
+tests/__pycache__
