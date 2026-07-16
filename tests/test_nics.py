@@ -145,6 +145,23 @@ def test_generate_nics_records_per_channel_subnet_metadata() -> None:
     assert ipaddress.ip_interface(str(rows[0]["ip"])).network.prefixlen == 30
 
 
+class _GloballyAdministeredMacConfig:
+    nics = {
+        **_Config.nics,
+        "mac": {"locally_administered": False},
+    }
+
+
+def test_generate_nics_honors_globally_administered_mac_config() -> None:
+    channel_rows = [{"channel_id": "C0001", "src": "1", "dst": "2"}]
+
+    rows = generate_nics(channel_rows, _GloballyAdministeredMacConfig(), RandomManager(6))
+
+    first_octets = [int(str(row["mac"]).split(":", maxsplit=1)[0], 16) for row in rows]
+    assert all(first_octet & 0x01 == 0 for first_octet in first_octets)
+    assert all(first_octet & 0x02 == 0 for first_octet in first_octets)
+
+
 class _RandomSubnetConfig:
     nics = {
         "queue_policy_mode": "mixed",

@@ -1,0 +1,9 @@
+# Ignore everything by default; keep only source code and example assets.
+/*
+
+# Keep only the local ns-3 integration sources used by SceneBuilder.
+!/.gitignore
+!/scratch/
+!/scratch/**
+!/contrib/
+!/contrib/**

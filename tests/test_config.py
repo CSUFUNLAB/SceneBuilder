@@ -84,6 +84,7 @@ topology_sources:
     loaded = load_config(cfg)
     assert loaded.scenes_per_topology == 100
     assert loaded.max_topology_nodes == 50
+    assert loaded.traffic_matrix["flow_count_range"] == [0.1, 0.25]
     assert loaded.traffic_matrix["max_flow_count"] == 1000
 
 

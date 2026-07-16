@@ -30,6 +30,8 @@ _NODE_ROLE_ALIASES = {
     "leaf": "edge",
 }
 
+_DEFAULT_NODE_ROLES = ("core", "aggregation", "edge")
+
 
 def _node_sort_key(node: str) -> tuple[int, int | str]:
     text = str(node)
@@ -69,6 +71,18 @@ def _extract_trusted_node_role(attrs: dict[str, object], fields: list[str]) -> s
         if role is not None:
             return role
     return None
+
+
+def _configured_node_roles(nodes_cfg: dict[str, Any]) -> list[str]:
+    configured = nodes_cfg.get("type_candidates", _DEFAULT_NODE_ROLES)
+    roles: list[str] = []
+    for value in configured:
+        role = _normalize_node_role(value)
+        if role is not None and role not in roles:
+            roles.append(role)
+    if not roles:
+        raise ValueError("nodes.type_candidates must contain at least one supported node role")
+    return roles
 
 
 def _weighted_sample_without_replacement(
@@ -220,6 +234,18 @@ def infer_node_roles(graph: nx.Graph, nodes_cfg: dict[str, Any], rng: RandomMana
     nodes = ordered_nodes(graph)
     if not nodes:
         return {}
+
+    assignment_mode = str(nodes_cfg.get("assignment_mode", "topology_role"))
+    if assignment_mode == "fixed":
+        default_role = _normalize_node_role(nodes_cfg.get("default_node_type", "edge"))
+        if default_role is None:
+            raise ValueError(f"Unsupported nodes.default_node_type: {nodes_cfg.get('default_node_type')}")
+        return {node: default_role for node in nodes}
+    if assignment_mode == "random":
+        candidates = _configured_node_roles(nodes_cfg)
+        return {node: rng.choice(candidates) for node in nodes}
+    if assignment_mode != "topology_role":
+        raise ValueError(f"Unsupported nodes.assignment_mode: {assignment_mode}")
 
     trust_input = bool(nodes_cfg.get("trust_input_node_roles", False))
     trusted_fields = [str(item) for item in nodes_cfg.get("trusted_node_role_fields", _DEFAULT_TRUSTED_NODE_ROLE_FIELDS)]

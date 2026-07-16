@@ -1,0 +1,19 @@
+seed: 42
+scenes_root: ../generated_scenes
+
+categories:
+  analysis:
+    enabled: true
+    questions_per_question: 60
+    template_file: ../question_generator/templates/analysis.txt
+    output_file: ../analysis_questions.jsonl
+  evolution:
+    enabled: false
+    questions_per_question: 60
+    template_file: ../question_generator/templates/evolution.txt
+    output_file: ../evolution_questions.jsonl
+  optimization:
+    enabled: false
+    questions_per_question: 60
+    template_file: ../question_generator/templates/optimization.txt
+    output_file: ../optimization_questions.jsonl

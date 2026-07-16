@@ -62,6 +62,33 @@ def test_infer_node_roles_prefers_trusted_input_roles() -> None:
     assert roles["2"] == "core"
 
 
+def test_infer_node_roles_fixed_mode_uses_default_node_type() -> None:
+    graph = nx.path_graph(["1", "2", "3", "4"])
+    cfg = {
+        "assignment_mode": "fixed",
+        "default_node_type": "aggregation",
+        "type_candidates": ["core", "aggregation", "edge"],
+    }
+
+    roles = infer_node_roles(graph, cfg, RandomManager(3))
+
+    assert roles == {"1": "aggregation", "2": "aggregation", "3": "aggregation", "4": "aggregation"}
+
+
+def test_infer_node_roles_random_mode_uses_type_candidates() -> None:
+    graph = nx.path_graph(["1", "2", "3", "4", "5", "6"])
+    cfg = {
+        "assignment_mode": "random",
+        "default_node_type": "aggregation",
+        "type_candidates": ["core", "edge"],
+    }
+
+    roles = infer_node_roles(graph, cfg, RandomManager(4))
+
+    assert set(roles) == set(graph.nodes)
+    assert set(roles.values()) <= {"core", "edge"}
+
+
 class _LinkCfgDeterministic:
     nodes = {}
     link_generation = {

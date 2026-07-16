@@ -1,0 +1,20 @@
+build_lib(
+  LIBNAME network-scene
+  SOURCE_FILES
+    helper/network-scene-helper.cc
+    helper/network-scene-result-writer.cc
+    model/network-scene-reader.cc
+    model/network-scene-topology.cc
+    model/network-scene-traffic.cc
+  HEADER_FILES
+    helper/network-scene-helper.h
+    model/network-scene-reader.h
+    model/network-scene-topology.h
+    model/network-scene-traffic.h
+  LIBRARIES_TO_LINK
+    ${libapplications}
+    ${libflow-monitor}
+    ${libinternet}
+    ${libpoint-to-point}
+    ${libtraffic-control}
+)

@@ -106,6 +106,8 @@ def generate_nics(
         int(key): float(value)
         for key, value in dict(nics_cfg.get("link_subnet_prefix_probabilities", {})).items()
     }
+    mac_cfg = dict(nics_cfg.get("mac", {}))
+    locally_administered = bool(mac_cfg.get("locally_administered", True))
 
     queue_size_range = nics_cfg.get("queue_size_range_packets", [128, 2048])
     q_low, q_high = int(queue_size_range[0]), int(queue_size_range[1])
@@ -121,7 +123,7 @@ def generate_nics(
         ip_cidr_probabilities=ip_cidr_probabilities,
         channel_subnet_prefix_probabilities=link_subnet_prefix_probabilities,
     )
-    macs = generate_unique_macs(nic_count, rng)
+    macs = generate_unique_macs(nic_count, rng, locally_administered=locally_administered)
     queue_selection.setdefault("active_rule", {})
     queue_selection["active_rule"]["ip_assignment"] = "per_channel_random_subnet"
     queue_selection["active_rule"]["ip_cidr_counts"] = dict(ip_cidr_counts)

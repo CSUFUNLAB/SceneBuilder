@@ -40,11 +40,11 @@ link_generation:
   role_based_random:
     role_bandwidth_mbps:
       backbone:
-        bandwidth_candidates_mbps: [10000, 40000, 100000]
+        bandwidth_candidates_mbps: [10000]
       uplink:
         bandwidth_candidates_mbps: [1000, 10000]
       access:
-        bandwidth_candidates_mbps: [100, 1000]
+        bandwidth_candidates_mbps: [300, 500, 1000]
       lateral:
         bandwidth_candidates_mbps: [1000, 10000]
     derived_link_role:
@@ -112,20 +112,20 @@ routing:
   weight_range: [1.0, 10.0]
 
 traffic_matrix:
-  flow_count_range: [0.1, 0.25]
+  flow_count_range: [0.5, 3]
   max_flow_count: 1000
   mode_probabilities:
     uniform: 0.25
     exponential: 0.25
     gravity: 0.25
     spike: 0.25
-  uniform_range_mbps: [5.0, 80.0]
-  exponential_scale: 20.0
+  uniform_range_mbps: [5.0, 160.0]
+  exponential_scale: 50.0
   gravity:
     mass_range: [0.5, 2.0]
     scale: 200.0
   spike:
-    baseline_range_mbps: [1.0, 30.0]
+    baseline_range_mbps: [5.0, 160.0]
     spike_probability: 0.08
     spike_multiplier: 8.0
 

@@ -23,7 +23,7 @@ class _Config:
 
 def test_traffic_contains_parameter_values_without_summary_field() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B"])
+    graph.add_edge("A", "B")
 
     rows = generate_traffic(graph, _Config(), RandomManager(2))
     assert len(rows) == 2
@@ -51,7 +51,7 @@ class _CbrConfig:
 
 def test_traffic_cbr_rows_have_no_extra_rate_parameters() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B"])
+    graph.add_edge("A", "B")
 
     rows = generate_traffic(graph, _CbrConfig(), RandomManager(3))
     assert len(rows) == 2
@@ -66,7 +66,7 @@ def test_traffic_cbr_rows_have_no_extra_rate_parameters() -> None:
 
 def test_traffic_can_return_generation_metadata() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B"])
+    graph.add_edge("A", "B")
 
     rows, metadata = generate_traffic(graph, _Config(), RandomManager(4), include_metadata=True)
 
@@ -74,12 +74,14 @@ def test_traffic_can_return_generation_metadata() -> None:
     assert metadata["traffic_matrix"]["selected_mode"] == "uniform"
     assert metadata["traffic_matrix"]["active_rule"]["uniform_range_mbps"] == [5.0, 5.0]
     assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "node_count": 2,
         "available_flow_pairs": 2,
-        "requested_flow_ratio_range": None,
-        "selected_flow_ratio": 1.0,
+        "requested_flows_per_node_range": None,
+        "selected_flows_per_node": 1.0,
         "selected_flow_count": 2,
         "max_flow_count": None,
         "effective_flow_count": 2,
+        "capped_by_available_flow_pairs": False,
         "capped_by_max_flow_count": False,
         "sampled": False,
     }
@@ -96,22 +98,24 @@ class _SampledTrafficConfig:
     flow_feature = _Config.flow_feature
 
 
-def test_traffic_can_sample_a_configured_ratio_of_flow_pairs() -> None:
+def test_traffic_can_sample_a_configured_number_of_flows_per_node() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B", "C"])
+    graph.add_edges_from([("A", "B"), ("B", "C")])
 
     rows, metadata = generate_traffic(graph, _SampledTrafficConfig(), RandomManager(7), include_metadata=True)
 
-    assert len(rows) == 3
-    assert len({(row["src"], row["dst"]) for row in rows}) == 3
-    assert [row["flow_id"] for row in rows] == ["F000001", "F000002", "F000003"]
+    assert len(rows) == 2
+    assert len({(row["src"], row["dst"]) for row in rows}) == 2
+    assert [row["flow_id"] for row in rows] == ["F000001", "F000002"]
     assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "node_count": 3,
         "available_flow_pairs": 6,
-        "requested_flow_ratio_range": [0.5, 0.5],
-        "selected_flow_ratio": 0.5,
-        "selected_flow_count": 3,
+        "requested_flows_per_node_range": [0.5, 0.5],
+        "selected_flows_per_node": 0.5,
+        "selected_flow_count": 2,
         "max_flow_count": None,
-        "effective_flow_count": 3,
+        "effective_flow_count": 2,
+        "capped_by_available_flow_pairs": False,
         "capped_by_max_flow_count": False,
         "sampled": True,
     }
@@ -121,7 +125,7 @@ class _CappedTrafficConfig:
     traffic_matrix = {
         "mode_probabilities": {"uniform": 1.0},
         "uniform_range_mbps": [5.0, 5.0],
-        "flow_count_range": [1.0, 1.0],
+        "flow_count_range": [2.0, 2.0],
         "max_flow_count": 2,
     }
     flow_feature = _Config.flow_feature
@@ -129,18 +133,20 @@ class _CappedTrafficConfig:
 
 def test_traffic_caps_sampled_flow_count() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B", "C"])
+    graph.add_edges_from([("A", "B"), ("B", "C")])
 
     rows, metadata = generate_traffic(graph, _CappedTrafficConfig(), RandomManager(9), include_metadata=True)
 
     assert len(rows) == 2
     assert metadata["traffic_matrix"]["flow_sampling"] == {
+        "node_count": 3,
         "available_flow_pairs": 6,
-        "requested_flow_ratio_range": [1.0, 1.0],
-        "selected_flow_ratio": 1.0,
+        "requested_flows_per_node_range": [2.0, 2.0],
+        "selected_flows_per_node": 2.0,
         "selected_flow_count": 6,
         "max_flow_count": 2,
         "effective_flow_count": 2,
+        "capped_by_available_flow_pairs": False,
         "capped_by_max_flow_count": True,
         "sampled": True,
     }
@@ -155,17 +161,28 @@ class _SampledTrafficRangeConfig:
     flow_feature = _Config.flow_feature
 
 
-def test_traffic_randomizes_flow_ratio_within_configured_range() -> None:
-    graph = nx.Graph()
-    graph.add_nodes_from(["A", "B", "C"])
+def test_traffic_randomizes_flows_per_node_within_configured_range() -> None:
+    graph = nx.path_graph([f"N{index}" for index in range(10)])
 
     rows, metadata = generate_traffic(graph, _SampledTrafficRangeConfig(), RandomManager(8), include_metadata=True)
 
-    selected_ratio = metadata["traffic_matrix"]["flow_sampling"]["selected_flow_ratio"]
+    selected_flows_per_node = metadata["traffic_matrix"]["flow_sampling"]["selected_flows_per_node"]
     selected_count = metadata["traffic_matrix"]["flow_sampling"]["selected_flow_count"]
-    assert 0.3 <= selected_ratio <= 0.7
-    assert 2 <= selected_count <= 4
+    assert 0.3 <= selected_flows_per_node <= 0.7
+    assert 3 <= selected_count <= 7
     assert len(rows) == selected_count
+
+
+def test_traffic_only_generates_flows_between_reachable_nodes() -> None:
+    graph = nx.Graph()
+    graph.add_edges_from([("A", "B"), ("C", "D")])
+
+    rows, metadata = generate_traffic(graph, _Config(), RandomManager(10), include_metadata=True)
+
+    components = [{"A", "B"}, {"C", "D"}]
+    assert len(rows) == 4
+    assert all(any({row["src"], row["dst"]} <= component for component in components) for row in rows)
+    assert metadata["traffic_matrix"]["flow_sampling"]["available_flow_pairs"] == 4
 
 
 class _SingleFeatureConfig:
@@ -191,7 +208,7 @@ class _SingleFeatureConfig:
 
 def test_traffic_can_use_single_feature_mode() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B"])
+    graph.add_edge("A", "B")
 
     rows, metadata = generate_traffic(graph, _SingleFeatureConfig(), RandomManager(5), include_metadata=True)
 
@@ -224,7 +241,7 @@ class _SpikeTmConfig:
 
 def test_traffic_can_randomly_select_traffic_matrix_mode_per_scene() -> None:
     graph = nx.Graph()
-    graph.add_nodes_from(["A", "B"])
+    graph.add_edge("A", "B")
 
     rows, metadata = generate_traffic(graph, _SpikeTmConfig(), RandomManager(6), include_metadata=True)
 

@@ -7,3 +7,11 @@ __pycache__/
 
 scene_generator/__pycache__
 tests/__pycache__
+
+ns-3.44/*
+!ns-3.44/.gitignore
+!ns-3.44/scratch/
+!ns-3.44/scratch/**
+
+!ns-3.44/contrib/
+!ns-3.44/contrib/**

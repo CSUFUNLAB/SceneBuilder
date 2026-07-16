@@ -429,6 +429,5 @@ fault_generation:
     assert nics[0]["node"] == "N0001"
     assert nics[0]["interface_index"] == "1"
     assert nics[0]["channel_id"] == "C0001"
-    assert traffic_first["src"] == "N0001"
-    assert traffic_first["dst"] == "N0002"
+    assert {traffic_first["src"], traffic_first["dst"]} == {"N0001", "N0002"}
     assert routing_lines == ["0,1", "1,0"]

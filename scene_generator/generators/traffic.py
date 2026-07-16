@@ -6,7 +6,7 @@ import networkx as nx
 import numpy as np
 
 from ..rng import RandomManager
-from ..utils.graph_utils import ordered_nodes, ordered_pairs
+from ..utils.graph_utils import is_reachable, ordered_nodes, ordered_pairs
 from ..utils.routing import resolve_routed_path
 from ..utils.selection import weighted_pick
 
@@ -214,30 +214,44 @@ def _choose_feature_model(
     return str(rng.weighted_choice(models, weights))
 
 
-def _select_flow_pairs(nodes: list[str], tm_cfg: dict[str, Any], rng: RandomManager) -> tuple[list[tuple[str, str]], dict[str, Any]]:
-    all_pairs = ordered_pairs(nodes, include_self=False)
+def _select_flow_pairs(
+    graph: nx.Graph,
+    nodes: list[str],
+    tm_cfg: dict[str, Any],
+    rng: RandomManager,
+) -> tuple[list[tuple[str, str]], dict[str, Any]]:
+    all_pairs = [
+        (src, dst)
+        for src, dst in ordered_pairs(nodes, include_self=False)
+        if is_reachable(graph, src, dst)
+    ]
     requested_range = tm_cfg.get("flow_count_range")
+    node_count = len(nodes)
     total_pairs = len(all_pairs)
     configured_max = tm_cfg.get("max_flow_count")
     max_flow_count = None if configured_max is None else int(configured_max)
 
     if requested_range is None:
-        ratio_range = None
-        selected_ratio = 1.0
+        flows_per_node_range = None
+        selected_flows_per_node = float(total_pairs / node_count) if node_count else 0.0
         selected_count = total_pairs
     else:
-        min_ratio = max(0.0, min(1.0, float(requested_range[0])))
-        max_ratio = max(0.0, min(1.0, float(requested_range[1])))
-        if min_ratio > max_ratio:
-            min_ratio, max_ratio = max_ratio, min_ratio
-        ratio_range = [float(min_ratio), float(max_ratio)]
-        selected_ratio = rng.uniform(min_ratio, max_ratio)
-        selected_count = int(round(total_pairs * selected_ratio))
+        min_flows_per_node = max(0.0, float(requested_range[0]))
+        max_flows_per_node = max(0.0, float(requested_range[1]))
+        if min_flows_per_node > max_flows_per_node:
+            min_flows_per_node, max_flows_per_node = max_flows_per_node, min_flows_per_node
+        flows_per_node_range = [float(min_flows_per_node), float(max_flows_per_node)]
+        selected_flows_per_node = rng.uniform(min_flows_per_node, max_flows_per_node)
+        selected_count = int(round(node_count * selected_flows_per_node))
+        if selected_flows_per_node > 0.0 and total_pairs > 0:
+            selected_count = max(1, selected_count)
 
-    effective_count = min(selected_count, total_pairs)
+    count_after_pair_cap = min(selected_count, total_pairs)
+    effective_count = count_after_pair_cap
     if max_flow_count is not None:
         effective_count = min(effective_count, max_flow_count)
-    capped_by_max_flow_count = max_flow_count is not None and selected_count > effective_count
+    capped_by_available_pairs = selected_count > total_pairs
+    capped_by_max_flow_count = max_flow_count is not None and count_after_pair_cap > max_flow_count
 
     if effective_count >= total_pairs:
         selected_pairs = all_pairs
@@ -245,12 +259,14 @@ def _select_flow_pairs(nodes: list[str], tm_cfg: dict[str, Any], rng: RandomMana
         selected = set(rng.sample(all_pairs, effective_count))
         selected_pairs = [pair for pair in all_pairs if pair in selected]
     return selected_pairs, {
+        "node_count": int(node_count),
         "available_flow_pairs": int(total_pairs),
-        "requested_flow_ratio_range": ratio_range,
-        "selected_flow_ratio": round(float(selected_ratio), 6),
+        "requested_flows_per_node_range": flows_per_node_range,
+        "selected_flows_per_node": round(float(selected_flows_per_node), 6),
         "selected_flow_count": int(selected_count),
         "max_flow_count": max_flow_count,
         "effective_flow_count": int(effective_count),
+        "capped_by_available_flow_pairs": bool(capped_by_available_pairs),
         "capped_by_max_flow_count": bool(capped_by_max_flow_count),
         "sampled": effective_count < total_pairs,
     }
@@ -327,7 +343,7 @@ def generate_traffic(
     tm_demands, tm_metadata = _generate_tm_demands(nodes, config.traffic_matrix, rng)
     flow_feature_cfg = config.flow_feature
     flow_feature_selection = resolve_flow_feature_selection(flow_feature_cfg, rng)
-    flow_pairs, sampling_metadata = _select_flow_pairs(nodes, config.traffic_matrix, rng)
+    flow_pairs, sampling_metadata = _select_flow_pairs(graph, nodes, config.traffic_matrix, rng)
 
     rows: list[dict[str, Any]] = []
     flow_idx = 1

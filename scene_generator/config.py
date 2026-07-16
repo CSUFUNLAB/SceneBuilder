@@ -138,7 +138,7 @@ _DEFAULT_ROUTING_CONFIG = {
 
 _DEFAULT_TM_CONFIG = {
     "mode": "uniform",
-    "flow_count_range": None,
+    "flow_count_range": [0.1, 0.25],
     "max_flow_count": 1000,
     "mode_probabilities": {
         "uniform": 0.25,

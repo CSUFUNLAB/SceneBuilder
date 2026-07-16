@@ -175,7 +175,11 @@ def _format_mac(parts: list[int]) -> str:
     return ":".join(f"{part:02x}" for part in parts)
 
 
-def generate_unique_macs(count: int, rng: RandomManager) -> list[str]:
+def generate_unique_macs(
+    count: int,
+    rng: RandomManager,
+    locally_administered: bool = True,
+) -> list[str]:
     if count < 0:
         raise ValueError("count must be non-negative")
 
@@ -183,7 +187,7 @@ def generate_unique_macs(count: int, rng: RandomManager) -> list[str]:
     used: set[str] = set()
 
     while len(macs) < count:
-        first = 0x02
+        first = 0x02 if locally_administered else 0x00
         parts = [first] + [rng.randint(0, 255) for _ in range(5)]
         mac = _format_mac(parts)
         if mac in used:

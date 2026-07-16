@@ -275,13 +275,17 @@ def validate_scene_config(config: "SceneConfig") -> None:
         if not isinstance(flow_count_range, (list, tuple)) or len(flow_count_range) != 2:
             raise ValueError("traffic_matrix.flow_count_range must be [min, max]")
         try:
-            min_ratio = float(flow_count_range[0])
-            max_ratio = float(flow_count_range[1])
+            min_flows_per_node = float(flow_count_range[0])
+            max_flows_per_node = float(flow_count_range[1])
         except (TypeError, ValueError):
-            raise ValueError("traffic_matrix.flow_count_range values must be ratios between 0 and 1") from None
-        if min_ratio < 0.0 or max_ratio < 0.0 or min_ratio > 1.0 or max_ratio > 1.0:
-            raise ValueError("traffic_matrix.flow_count_range values must be ratios between 0 and 1")
-        if min_ratio > max_ratio:
+            raise ValueError(
+                "traffic_matrix.flow_count_range values must be non-negative flows-per-node multipliers"
+            ) from None
+        if min_flows_per_node < 0.0 or max_flows_per_node < 0.0:
+            raise ValueError(
+                "traffic_matrix.flow_count_range values must be non-negative flows-per-node multipliers"
+            )
+        if min_flows_per_node > max_flows_per_node:
             raise ValueError("traffic_matrix.flow_count_range min cannot be greater than max")
     max_flow_count = config.traffic_matrix.get("max_flow_count")
     if max_flow_count is not None:
