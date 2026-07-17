@@ -81,7 +81,7 @@ main(int argc, char* argv[])
     CommandLine cmd(__FILE__);
     cmd.AddValue("scene", "Scene directory path or scene name under ./scenes", scene);
     cmd.AddValue("events", "Event JSONL file. Empty means events are not loaded.", events);
-    cmd.AddValue("result", "Result JSONL output path. Empty means <scene>/twin/0.jsonl.", result);
+    cmd.AddValue("result", "Result JSONL output path. Empty means <scene>/twin.jsonl.", result);
     cmd.AddValue("stopTime", "Simulation stop time in seconds. 0 means scene duration.", stopTime);
     cmd.AddValue("progressInterval",
                  "Progress report interval in simulated seconds. 0 disables machine-readable progress.",
@@ -159,7 +159,7 @@ main(int argc, char* argv[])
     Simulator::Destroy();
 
     std::cout << "Result written"
-              << (result.empty() ? " to " + scene + "/twin/0.jsonl" : " to " + result)
+              << (result.empty() ? " to " + scene + "/twin.jsonl" : " to " + result)
               << std::endl;
     return 0;
 }

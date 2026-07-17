@@ -82,7 +82,7 @@ class SceneData:
                         relations=dict(relations),
                     )
                 )
-        scene_name = source_file.parent.parent.name
+        scene_name = source_file.parent.name
         return cls(scene_name, source_file, entities)
 
     def entities(self, entity_type: str) -> list[EntityRecord]:
@@ -127,10 +127,10 @@ def discover_scene_files(root: str | Path) -> list[Path]:
     if not scene_root.is_dir():
         raise ValueError(f"scenes_root is not a directory: {scene_root}")
 
-    files = list(scene_root.glob("*/twin/0.jsonl"))
-    if (scene_root / "twin" / "0.jsonl").is_file():
-        files.append(scene_root / "twin" / "0.jsonl")
-    files.sort(key=lambda path: (path.parent.parent.name, str(path)))
+    files = list(scene_root.glob("*/twin.jsonl"))
+    if (scene_root / "twin.jsonl").is_file():
+        files.append(scene_root / "twin.jsonl")
+    files.sort(key=lambda path: (path.parent.name, str(path)))
     if not files:
-        raise ValueError(f"No scene twin/0.jsonl files found under {scene_root}")
+        raise ValueError(f"No scene twin.jsonl files found under {scene_root}")
     return files

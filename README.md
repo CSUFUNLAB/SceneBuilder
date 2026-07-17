@@ -1,239 +1,227 @@
-# Network Scene Generator
+# SceneBuilder
 
-## 简介
+SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置转换为可供 ns-3 读取的网络场景，运行内置的 ns-3.44 仿真生成数字孪生体，并可进一步从孪生体生成带标签的问题数据。
 
-本项目是一个可复现的网络场景生成器，用来根据拓扑与配置批量生成网络实验场景。它会输出节点、信道、网卡、路由矩阵、流量与事件候选等结构化文件，但本身不是仿真器，不直接计算丢包率、时延、抖动、吞吐等运行态性能指标。
+整个流程分为三步：
 
-它的典型用途是作为上游场景生产工具，与 `ns-3` 等网络仿真器对接：先用本项目生成场景文件，再将这些文件转换或接入仿真器运行，从而获得性能数据。这样的工作流适合做数据集构建、协议评估sl、参数扫描、压力测试和批量自动化实验。
+1. **场景生成**：生成节点、信道、网卡、路由和流量等静态输入。
+2. **孪生体生成**：逐场景运行 ns-3，计算吞吐、时延、丢包、队列和实体状态等运行结果。
+3. **问题生成**：读取孪生体，根据问题模板生成问题、标签和对应场景 ID。
 
-## 支持配置
+所有步骤统一通过项目根目录的 `main.py` 执行。
 
-- 场景级配置：`output_root`、`seed`、`num_scenes`、`scene_duration`
-- 拓扑来源配置：支持 `brite` 和 `topologyzoo`，可配置来源权重、目录与匹配模式
-- 节点配置：节点类型推断、可信角色字段、位置信息继承
-- 信道配置：信道类型推断、带宽生成、是否保留输入带宽
-- 网卡配置：队列类型模式、队列大小、IP 地址池、子网前缀与 MAC 生成
-- 状态配置：节点、网卡、信道状态比例
-- 路由配置：信道随机权重范围，并基于加权最短路径生成路由矩阵
-- 流量矩阵配置：`uniform`、`exponential`、`gravity`、`spike`
-- 流量特征配置：`poisson`、`on_off`、`cbr`，支持 `mixed` 和 `single` 两种整体模式
+## 环境准备
 
-这是一个“网络场景生成器”，不是仿真器。它只负责按配置随机生成场景目录，不计算任何运行态指标（如丢包率、时延、抖动、吞吐）。
-
-## 安装
+安装 Python 依赖：
 
 ```bash
+cd /home/SceneBuilder
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 运行
+首次使用 ns-3 时进行配置和编译：
 
 ```bash
-python main.py -c configs/example.yaml
+cd /home/SceneBuilder/ns-3.44
+./ns3 configure -d debug --enable-examples --disable-tests
+./ns3 build TwinGenerate
 ```
 
-也支持显式写成：
+之后返回项目根目录运行 SceneBuilder：
+
+```bash
+cd /home/SceneBuilder
+```
+
+## 使用方法
+
+命令格式为：
+
+```bash
+python main.py <模式> [选项]
+```
+
+必须明确指定以下一种模式：
+
+- `generate`：生成网络场景。
+- `twins`：基于已有场景运行 ns-3 并生成孪生体。
+- `questions`：基于已有孪生体生成问题和标签。
+- `clean`：清理场景配置对应的已有场景目录。
+
+不指定模式或输入错误模式时，程序会列出全部可用模式并提示查看帮助。
+
+### 1. 生成场景
 
 ```bash
 python main.py generate -c configs/example.yaml
 ```
 
-## 清理输出
+场景会生成到配置文件的 `output_root`，当前示例配置对应：
 
-清除某个配置对应 `output_root` 下的所有已生成场景目录：
+```text
+/home/SceneBuilder/generated_scenes
+```
+
+一次生成的场景数量为：
+
+```text
+符合 max_topology_nodes 限制的拓扑数量 x scenes_per_topology
+```
+
+注意：重新执行场景生成时，会先清理 `output_root` 下已有的场景目录，再生成新场景。
+
+### 2. 生成孪生体
+
+默认对 `generated_scenes` 下的全部场景运行 ns-3：
+
+```bash
+python main.py twins
+```
+
+只运行其中一个场景时，在命令末尾提供该场景相对于项目根目录或 `generated_scenes` 的相对路径：
+
+```bash
+python main.py twins generated_scenes/SCENE_DIRECTORY_NAME
+```
+
+也可以只填写场景目录名：
+
+```bash
+python main.py twins SCENE_DIRECTORY_NAME
+```
+
+指定路径必须位于 `generated_scenes` 内，不能使用绝对路径或通过 `..` 访问其他目录。`main.py` 会先编译一次 `TwinGenerate`，再按顺序运行全部场景或指定场景。每个场景的孪生体保存在自身的 `twin` 子目录中，不再写入 `ns-3.44/result`。
+
+已经完成编译时，可以跳过显式编译步骤：
+
+```bash
+python main.py twins --no-build
+```
+
+### 3. 生成问题
+
+```bash
+python main.py questions -t analysis -c configs/question_generator.yaml
+```
+
+问题类型必须明确指定为以下一种：
+
+- `analysis`：分析类问题。
+- `evolution`：演化类问题。
+- `optimization`：优化类问题。
+
+运行时会显示本次生成的问题类型。`-c` 表示问题生成配置；不填写时默认使用 `configs/question_generator.yaml`。例如使用默认配置生成分析类问题：
+
+```bash
+python main.py questions -t analysis
+```
+
+也可以覆盖孪生体场景目录：
+
+```bash
+python main.py questions -t analysis \
+  -c configs/question_generator.yaml \
+  --scene-root generated_scenes
+```
+
+问题生成器按照模板逐项生成问题。对于枚举标签，会尽量在不同标签之间均分数量；如果现有场景无法满足某个标签，程序会保留已经生成的问题并报告缺少的数量。
+
+### 4. 清理场景
 
 ```bash
 python main.py clean -c configs/example.yaml
 ```
 
-`clean` 只会删除看起来像场景输出的目录，不会删除同目录下其它无关文件或文件夹。
+该命令只删除配置所对应 `output_root` 下可识别的场景目录，不删除其他普通文件或目录。
 
-## 批量样本
+## 输出结构
 
-- 使用 `num_scenes` 控制一次运行生成多少个场景目录。
-- `num_scenes: 1` 表示单样本（默认值）。
-- 使用 `scene_duration`（单位秒）表示场景时间维度，默认 `300`。
-- 场景目录名固定为：`<config_stem>_id<场景ID>_<topology_stem>_t<时长>s`。
-- `id` 字段固定零填充，最少4位（如 `id0001`），可稳定区分 100+ 场景。
+```text
+generated_scenes/
+└── <scene_id>/
+    ├── metadata.json
+    ├── nodes.csv
+    ├── channels.csv
+    ├── nics.csv
+    ├── routing_matrix.csv
+    ├── traffic.jsonl
+    └── twin/
+        └── 0.jsonl
+```
 
-## 输出文件
+场景输入文件的作用：
 
-当前场景目录输出以下文件：
+- `metadata.json`：场景来源、随机种子、生成规则和数量统计。
+- `nodes.csv`：节点及其基础状态。
+- `channels.csv`：节点之间的信道、原始容量和基础状态。
+- `nics.csv`：独立网卡实体、所属节点、信道、队列配置和基础状态。
+- `routing_matrix.csv`：节点对之间使用的出口接口索引。
+- `traffic.jsonl`：场景中的数据流及其需求和流量模型。
 
-- `metadata.json`
-- `channels.csv`
-- `nodes.csv`
-- `routing_matrix.csv`
-- `nics.csv`
-- `traffic.jsonl`
-- `events.jsonl`（仅在 `events.enabled: true` 且实际生成事件时出现）
+`twin/0.jsonl` 是 ns-3 输出的数字孪生体。每行表示一个实体，例如节点、网卡、信道或数据流，包含实体 ID、运行标签、属性和关系，可供 STN-Runtime 导入或供问题生成器读取。
 
-## 关键约定
+问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。默认分析问题输出到项目根目录的 `analysis_questions.jsonl`。
 
-- 内部计算统一使用节点索引（非负整数，0开始）；输出文件统一使用前缀ID：节点 `N0001`、信道 `C0001`、接口 `IF0001`、流 `F000001`。
-- 除 `nodes.csv` 外，其它文件不出现原始节点名。
-- `nodes.csv` 中保留拓扑文件里的原始节点名，仅用于映射展示，不参与索引和内部计算。
-- 节点角色仅使用 `core` / `aggregation` / `edge`，默认按拓扑结构做“简单推断+适度随机”生成。
-- 节点角色按连通分量生成；同一场景内角色固定不变。
-- 若输入拓扑提供可信角色字段，可通过配置开启优先使用。
-- 信道角色不独立随机，而是由两端节点角色映射（`backbone/uplink/access/lateral`）并用于带宽抽样。
-- 仅对 `aggregation-aggregation` 与 `core-edge` 两类信道施加轻微概率扰动（可配置）。
-- 队列类型支持两种整体模式：`mixed`（混合）或 `single`（单一类型），并可按概率随机选择本场景使用哪一种模式。
-- 网卡队列大小在同一场景内按节点角色统一抽样：相同角色节点的所有网卡使用相同 `queue_size_packets`。
-- 网卡 IP 按信道随机分配不重叠子网：每条信道使用一个独立子网，两端网卡地址都落在该信道子网内；基础地址池与子网前缀都可配置概率。
-- 路由固定使用 `weighted_shortest_path`：先为每条信道随机生成权重，再按权重计算最短路径；不再提供其它路由生成模式。
-- 流量矩阵模型在每个场景开始时按 `traffic_matrix.mode_probabilities` 随机选一种；默认随机池为 `uniform` / `exponential` / `gravity` / `spike`。
-- 可通过 `traffic_matrix.flow_count_range` 指定每个场景在全部有序节点对中随机采样的比例范围，例如 `[0.1, 0.25]` 表示随机选择 10% 到 25% 的节点对生成流量；不配置时生成所有有序节点对。
-- 流量特征模型支持两种整体模式：`mixed`（混合）或 `single`（单一类型），并可按概率随机选择本场景使用哪一种模式。
-- `nodes.csv` 额外输出节点位置信息：若拓扑中有经纬度则写入，无则留空。
-- `routing_matrix.csv` 不写表头和行索引。
-- `routing_matrix.csv` 中每个单元格写源节点到目的节点的出口接口号。
-- `routing_matrix.csv` 中不可达写 `-1`。
-- `routing_matrix.csv` 中 `src==dst` 时写 `0`，表示环回接口。
-- `traffic.jsonl` 使用 JSON Lines：每行一个 JSON 对象。
-- `traffic.jsonl` 采用按需字段输出：生成阶段只写必要字段，写文件阶段不做二次剔除。
-- 流量会自动施加硬约束：不可达的 OD 需求会被置零；可达流量允许大于信道或路径容量。
-- 对 `on_off` 流量，`demand_mbps` 也不会超过该流特征自身的峰值速率上限。
-- 多条流共享信道后产生拥塞仍然允许；这不属于“不可能配置”。
+## 配置说明
 
-## 文件字段
+### 场景配置
 
-### channels.csv
+场景配置示例为 `configs/example.yaml`，主要控制：
 
-- `channel_id`（如 `C0001`）
-- `src`（节点ID，如 `N0001`）
-- `dst`（节点ID，如 `N0002`）
-- `channel_type`（`backbone` / `uplink` / `access` / `lateral`）
-- `bandwidth_mbps`
-- `state`（`normal` / `degraded` / `disabled`）
+- `output_root`：场景输出目录。
+- `seed`：随机种子。
+- `scenes_per_topology`：每个符合条件的拓扑生成多少个场景。
+- `max_topology_nodes`：允许参与生成的最大拓扑节点数。
+- `scene_duration`：场景和默认仿真时长。
+- `topology_sources`：Topology Zoo 或 BRITE 拓扑来源。
+- `fault_generation`：全网正常、单故障和双故障的抽样概率。
+- `link_generation`、`nics`、`routing`：信道、网卡、队列和路由生成规则。
+- `traffic_matrix`、`flow_feature`：流数量、需求大小和流量模型。
 
-`link_generation` 配置支持：
+配置中的相对路径均相对于该 YAML 文件所在目录解析。
 
-- `state_probabilities`
+### 问题配置
 
-### metadata.json
+问题配置示例为 `configs/question_generator.yaml`，主要控制：
 
-- `scene_name`
-- `scene_id`
-- `scene_duration`
-- `seed`
-- `config`
-- `topology`
-- `generation`
-- `summary`
-- `output_files`
+- `scenes_root`：包含场景及孪生体的目录。
+- `seed`：问题实体选择的随机种子。
+- `questions_per_question`：每条问题模板期望生成的总数量。
+- `template_file`：该类问题使用的模板文件。
+- `output_file`：生成问题的 JSONL 输出位置。
+- `enabled`：是否启用对应的问题类别。
 
-其中 `generation.traffic_matrix` 会明确记录：
+当前已经实现分析类问题生成；演化类和优化类保留入口，但尚未启用完整生成逻辑。
 
-- 当前场景实际选中的流量矩阵模型，如 `uniform` / `exponential` / `gravity` / `spike`
-- 该模型对应的实际规则参数 `active_rule`
-- `flow_sampling`，记录可选 OD 对数量、请求比例范围、本场景抽到的比例、折算出的目标数量和实际生成数量
+## 常用选项
 
-其中 `generation.nics` 与 `generation.flow_feature` 只记录当前场景实际选中的模式，以及该模式对应的 `active_rule`。
+- `--stop-time <秒>`：覆盖场景元数据中的默认仿真时长。
+- `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
+- `--no-build`：跳过运行前的显式编译步骤。
+- `--continue-on-error`：单个场景失败后继续处理其他场景。
+- `--dry-run`：只打印将执行的 ns-3 命令，不启动仿真或创建孪生体目录。
+- `twins [场景相对路径]`：省略路径时处理全部场景，提供路径时只处理一个场景。
+- `questions --scene-root <路径>`：覆盖问题配置中的孪生体场景目录。
 
-### nodes.csv
+查看全部命令参数：
 
-- `node_id`（如 `N0001`）
-- `original_node_name`（拓扑文件原始节点名）
-- `state`（`normal` / `disabled`）
-- `latitude`（来自拓扑，若无则空）
-- `longitude`（来自拓扑，若无则空）
+```bash
+python main.py --help
+python main.py twins --help
+```
 
-`nodes` 配置支持：
+## 当前约定
 
-- `state_probabilities`
+- 运行时事件功能当前处于禁用状态。场景表示一个固定网络状态，ns-3 不会在仿真途中注入事件。
+- 演化实验应构造变更前和变更后的两个独立场景，并比较两个孪生体。
+- 每个场景当前只生成一个基础孪生体文件 `twin/0.jsonl`。
+- 场景生成和 ns-3 仿真均串行执行，避免同时运行多个大规模仿真任务。
 
-### routing_matrix.csv
+## 测试
 
-- 不写表头
-- 不写行索引
-- 第 `i` 行第 `j` 列表示节点 `N{i+1:04d} -> N{j+1:04d}` 的出口接口号
-- `0` 表示环回接口，`-1` 表示不可达
-
-`routing` 配置当前只支持：
-
-- `weight_range`
-
-### nics.csv
-
-每行表示一个信道端点网卡；一条信道会对应两行网卡记录。
-
-- `nic_id`（如 `IF0001`）
-- `node`（节点ID，如 `N0001`）
-- `interface_index`（节点内接口号，从 `1` 开始）
-- `channel_id`（如 `C0001`）
-- `ip`
-- `mac`
-- `queue_policy`
-- `queue_size_packets`
-- `state`（`normal` / `disabled`）
-
-`nics` 配置支持：
-
-- `state_probabilities`
-- `queue_policy_mode_probabilities`
-- `queue_policy_candidates`
-- `queue_policy_probabilities`
-- `single_queue_policy_probabilities`
-- `ip_cidr`
-- `ip_cidr_candidates`
-- `ip_cidr_probabilities`
-- `link_subnet_prefix`
-- `link_subnet_prefix_probabilities`
-
-### traffic.jsonl
-
-每行一个流量对象。基础字段总是存在：
-
-- `flow_id`
-- `src`（节点ID，如 `N0001`）
-- `dst`（节点ID，如 `N0002`）
-- `demand_mbps`
-- `feature_model`
-
-其余参数字段按 `feature_model` 按需出现：
-
-- `param_lambda`
-- `param_on_mean`
-- `param_off_mean`
-- `param_peak_rate_mbps`
-- `param_extra_1`
-- `param_extra_2`
-
-`flow_feature` 配置支持：
-
-- `selection_mode_probabilities`
-- `mode_probabilities`
-- `single_model_probabilities`
-
-`traffic_matrix` 配置支持：
-
-- `mode_probabilities`
-- `flow_count_range`
-- `uniform_range_mbps`
-- `exponential_scale`
-- `gravity`
-- `spike`
-
-### events.jsonl
-
-每行一个事件候选对象。ns-3 运行脚本可以从该候选列表中抽取事件组；没有事件组时使用无事件结果。
-
-生成事件候选不会改写 `nodes.csv`、`channels.csv` 或 `nics.csv` 的基础状态。无事件运行直接使用这些基础状态；只有 ns-3 显式读取事件文件时，才在内存中为故障/恢复事件设置所需初态。
-
-- `event_id`
-- `time`（仿真时间，秒）
-- `entity_type`（`node` / `channel` / `nic` / `data_flow`）
-- `entity_id`
-- `event_type`（节点、信道、网卡为 `fault` / `recovery`；流为 `increase` / `decrease`）
-- `rate_multiplier`（仅流量增减事件出现）
-
-`events` 配置支持：
-
-- `enabled`
-- `count`
-- `event_type_probabilities`
-- `data_flow.increase_multiplier_range`
-- `data_flow.decrease_multiplier_range`
+```bash
+cd /home/SceneBuilder
+PYTHONPATH=. pytest -q
+```

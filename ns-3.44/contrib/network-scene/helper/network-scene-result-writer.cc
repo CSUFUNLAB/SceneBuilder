@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace ns3
@@ -130,7 +131,7 @@ void
 NetworkSceneHelper::WriteResults() const
 {
     std::filesystem::path outputPath =
-        m_resultPath.empty() ? std::filesystem::path(m_sceneDirectory) / "twin" / "0.jsonl"
+        m_resultPath.empty() ? std::filesystem::path(m_sceneDirectory) / "twin.jsonl"
                              : std::filesystem::path(m_resultPath);
     if (outputPath.has_parent_path())
     {
@@ -169,6 +170,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, ChannelRecord> channelById;
     std::map<std::string, std::string> peerInterfaceById;
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
+    std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
     std::map<std::string, std::vector<std::string>> routesByNode;
     std::map<std::string, std::vector<std::string>> actionsByNode;
     std::map<std::string, std::vector<std::string>> actionsByChannel;
@@ -177,6 +179,8 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::tuple<std::string, std::string, std::string>, std::vector<std::string>>
         routeDestinationsByKey;
     std::map<std::string, std::vector<std::string>> originatedFlowsByNode;
+    std::map<std::string, std::vector<std::string>> pathNodesByFlow;
+    std::map<std::string, std::vector<std::string>> carriedFlowsByChannel;
 
     auto eventActionJson = [](const EventRecord& event) {
         std::ostringstream action;
@@ -225,6 +229,7 @@ NetworkSceneHelper::WriteResults() const
         outputInterfaceIdById[iface.id] =
             ScopedLocalId(iface.node, "IF", iface.interfaceIndex);
         interfacesByNode[iface.node].push_back(outputInterfaceIdById[iface.id]);
+        channelIdByNodeInterface[{iface.node, iface.interfaceIndex}] = iface.channelId;
         auto channelIt = channelById.find(iface.channelId);
         if (channelIt != channelById.end())
         {
@@ -311,12 +316,13 @@ NetworkSceneHelper::WriteResults() const
     {
         originatedFlowsByNode[flow.src].push_back(flow.id);
     }
-    auto buildPathNodes = [&](const std::string& src, const std::string& dst) {
-        std::vector<std::string> path;
-        path.push_back(src);
+    auto buildFlowPath = [&](const std::string& src, const std::string& dst) {
+        std::vector<std::string> pathNodes;
+        std::vector<std::string> pathChannels;
+        pathNodes.push_back(src);
         if (src == dst)
         {
-            return path;
+            return std::make_pair(pathNodes, pathChannels);
         }
 
         std::string current = src;
@@ -343,19 +349,35 @@ NetworkSceneHelper::WriteResults() const
             }
 
             const std::string& nextNode = nextIt->second;
-            if (std::find(path.begin(), path.end(), nextNode) != path.end())
+            if (std::find(pathNodes.begin(), pathNodes.end(), nextNode) != pathNodes.end())
             {
                 break;
             }
-            path.push_back(nextNode);
+            auto channelIt =
+                channelIdByNodeInterface.find({current, static_cast<uint32_t>(outInterface)});
+            if (channelIt != channelIdByNodeInterface.end())
+            {
+                pathChannels.push_back(channelIt->second);
+            }
+            pathNodes.push_back(nextNode);
             if (nextNode == dst)
             {
                 break;
             }
             current = nextNode;
         }
-        return path;
+        return std::make_pair(pathNodes, pathChannels);
     };
+
+    for (const auto& flow : m_flowRecords)
+    {
+        auto [pathNodes, pathChannels] = buildFlowPath(flow.src, flow.dst);
+        pathNodesByFlow[flow.id] = std::move(pathNodes);
+        for (const auto& channelId : pathChannels)
+        {
+            carriedFlowsByChannel[channelId].push_back(flow.id);
+        }
+    }
 
     for (const auto& iface : m_interfaceRecords)
     {
@@ -479,7 +501,8 @@ NetworkSceneHelper::WriteResults() const
                << ",\"properties\":{\"capacity_mbps\":" << channel.nominalCapacityMbps
                << ",\"available_bandwidth_mbps\":" << available
                << ",\"delay_ms\":" << m_defaultChannelDelay.GetMilliSeconds() << "}"
-               << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds) << "}";
+               << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds)
+               << ",\"carries\":" << JsonStringArray(carriedFlowsByChannel[channel.id]) << "}";
         auto actionIt = actionsByChannel.find(channel.id);
         if (actionIt != actionsByChannel.end())
         {
@@ -522,7 +545,7 @@ NetworkSceneHelper::WriteResults() const
         {
             state = "degraded";
         }
-        const auto pathNodes = buildPathNodes(flow.src, flow.dst);
+        const auto& pathNodes = pathNodesByFlow[flow.id];
         output << "{\"entity_type\":\"data_flow\",\"entity_id\":" << JsonString(flow.id)
                << ",\"label\":" << JsonString(state)
                << ",\"properties\":{\"demand_mbps\":" << flow.nominalDemandMbps

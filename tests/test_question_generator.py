@@ -8,7 +8,7 @@ import pytest
 
 from question_generator.generators.analysis import AnalysisQuestionGenerator
 from question_generator.models import QuestionTemplate
-from question_generator.runner import _target_counts, run
+from question_generator.runner import _target_counts, clean_question_outputs, run
 from question_generator.scene import SceneData
 from question_generator.templates import load_templates
 
@@ -32,9 +32,8 @@ def _entity(
 
 def _write_scene(root: Path, scene_name: str, entities: list[dict[str, object]]) -> Path:
     scene_dir = root / scene_name
-    twin_dir = scene_dir / "twin"
-    twin_dir.mkdir(parents=True)
-    path = twin_dir / "0.jsonl"
+    scene_dir.mkdir(parents=True)
+    path = scene_dir / "twin.jsonl"
     path.write_text(
         "".join(f"{json.dumps(entity, separators=(',', ':'))}\n" for entity in entities),
         encoding="utf-8",
@@ -71,7 +70,7 @@ def test_all_analysis_templates_have_generation_logic() -> None:
     project_root = Path(__file__).resolve().parents[1]
     templates = load_templates(project_root / "question_generator/templates/analysis.txt", "analysis")
     generator = AnalysisQuestionGenerator()
-    empty_scene = SceneData("empty", Path("empty/twin/0.jsonl"), [])
+    empty_scene = SceneData("empty", Path("empty/twin.jsonl"), [])
 
     assert len(templates) == 9
     for template in templates:
@@ -79,10 +78,19 @@ def test_all_analysis_templates_have_generation_logic() -> None:
             generator.generate_candidate(empty_scene, template, target_label, random.Random(1))
 
 
-def test_run_scans_scenes_in_order_and_uses_entity_labels(tmp_path: Path) -> None:
+def test_run_randomizes_scene_order_reproducibly_and_uses_entity_labels(tmp_path: Path) -> None:
     scenes_root = tmp_path / "scenes"
     _write_scene(scenes_root, "scene_001", [_entity("node", "N0001", "normal")])
     _write_scene(scenes_root, "scene_002", [_entity("node", "N0002", "disabled")])
+    _write_scene(scenes_root, "scene_003", [_entity("node", "N0003", "normal")])
+    for scene_name in ("scene_001", "scene_002", "scene_003"):
+        scene_dir = scenes_root / scene_name
+        (scene_dir / "analysis_questions.jsonl").write_text("stale\n", encoding="utf-8")
+        (scene_dir / "evolution_questions.jsonl").write_text("stale\n", encoding="utf-8")
+    scene_without_twin = scenes_root / "scene_004"
+    scene_without_twin.mkdir()
+    (scene_without_twin / "metadata.json").write_text("{}\n", encoding="utf-8")
+    (scene_without_twin / "analysis_questions.jsonl").write_text("stale\n", encoding="utf-8")
 
     template_path = tmp_path / "analysis.txt"
     template_path.write_text(
@@ -109,13 +117,89 @@ def test_run_scans_scenes_in_order_and_uses_entity_labels(tmp_path: Path) -> Non
     result = run(config_path)
 
     assert result.complete is True
-    output_rows = [json.loads(line) for line in (tmp_path / "questions.jsonl").read_text(encoding="utf-8").splitlines()]
+    output_text = (tmp_path / "questions.jsonl").read_text(encoding="utf-8")
+    output_rows = [json.loads(line) for line in output_text.splitlines()]
     assert [(row["label"], row["scene_name"]) for row in output_rows] == [
-        ("normal", "scene_001"),
+        ("normal", "scene_003"),
         ("disabled", "scene_002"),
     ]
-    assert output_rows[0]["question"] == "What is the current status of node N0001 (normal or disabled)?"
+    assert output_rows[0]["question"] == "What is the current status of node N0003 (normal or disabled)?"
     assert "$node_id$" not in output_rows[1]["question"]
+
+    run(config_path)
+    assert (tmp_path / "questions.jsonl").read_text(encoding="utf-8") == output_text
+
+    category_result = result.categories[0]
+    assert category_result.scene_output_files == (
+        scenes_root / "scene_001" / "analysis_questions.jsonl",
+        scenes_root / "scene_002" / "analysis_questions.jsonl",
+        scenes_root / "scene_003" / "analysis_questions.jsonl",
+    )
+    for scene_name in ("scene_001", "scene_002", "scene_003"):
+        scene_file = scenes_root / scene_name / "analysis_questions.jsonl"
+        scene_rows = [
+            json.loads(line)
+            for line in scene_file.read_text(encoding="utf-8").splitlines()
+        ]
+        expected_rows = [row for row in output_rows if row["scene_name"] == scene_name]
+        assert scene_rows == expected_rows
+        assert not (scenes_root / scene_name / "evolution_questions.jsonl").exists()
+
+    assert (scenes_root / "scene_001" / "analysis_questions.jsonl").read_text(encoding="utf-8") == ""
+    assert not (scene_without_twin / "analysis_questions.jsonl").exists()
+
+
+def test_clean_question_outputs_removes_only_question_files(tmp_path: Path) -> None:
+    scenes_root = tmp_path / "scenes"
+    for scene_name in ("scene_001", "scene_002"):
+        _write_scene(scenes_root, scene_name, [_entity("node", "N0001", "normal")])
+        scene_dir = scenes_root / scene_name
+        (scene_dir / "traffic.jsonl").write_text("keep\n", encoding="utf-8")
+        for question_type in ("analysis", "evolution", "optimization"):
+            (scene_dir / f"{question_type}_questions.jsonl").write_text(
+                "remove\n",
+                encoding="utf-8",
+            )
+
+    template_path = tmp_path / "analysis.txt"
+    template_path.write_text("Question? ||| [normal]\n", encoding="utf-8")
+    config_path = tmp_path / "questions.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "seed: 1",
+                "scenes_root: scenes",
+                "categories:",
+                "  analysis:",
+                "    enabled: true",
+                "    questions_per_question: 1",
+                "    template_file: analysis.txt",
+                "    output_file: total_analysis.jsonl",
+                "  evolution:",
+                "    enabled: false",
+                "    output_file: total_evolution.jsonl",
+                "  optimization:",
+                "    enabled: false",
+                "    output_file: total_optimization.jsonl",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    for question_type in ("analysis", "evolution", "optimization"):
+        (tmp_path / f"total_{question_type}.jsonl").write_text("remove\n", encoding="utf-8")
+
+    result = clean_question_outputs(config_path)
+
+    assert result.scene_count == 2
+    assert len(result.removed_files) == 9
+    for scene_name in ("scene_001", "scene_002"):
+        scene_dir = scenes_root / scene_name
+        assert (scene_dir / "twin.jsonl").is_file()
+        assert (scene_dir / "traffic.jsonl").read_text(encoding="utf-8") == "keep\n"
+        for question_type in ("analysis", "evolution", "optimization"):
+            assert not (scene_dir / f"{question_type}_questions.jsonl").exists()
+    for question_type in ("analysis", "evolution", "optimization"):
+        assert not (tmp_path / f"total_{question_type}.jsonl").exists()
 
 
 def test_analysis_compound_questions_use_labels_properties_and_relations(tmp_path: Path) -> None:

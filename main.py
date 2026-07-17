@@ -17,7 +17,12 @@ import tempfile
 import time
 from typing import Sequence
 
-from question_generator.runner import QuestionGenerationResult, run as generate_questions
+from question_generator.config import QUESTION_CATEGORIES
+from question_generator.runner import (
+    QuestionGenerationResult,
+    clean_question_outputs,
+    run as generate_questions,
+)
 from scene_generator.cleaner import clean
 from scene_generator.config import load_config as load_scene_config
 from scene_generator.runner import run as generate_scenes
@@ -27,8 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
 DEFAULT_SCENE_ROOT = PROJECT_ROOT / "generated_scenes"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
-TWIN_DIRECTORY_NAME = "twin"
-TWIN_FILE_NAME = "0.jsonl"
+TWIN_FILE_NAME = "twin.jsonl"
 REQUIRED_BASE_SCENE_FILES = {
     "nodes.csv",
     "nics.csv",
@@ -41,6 +45,18 @@ PROGRESS_RE = re.compile(
 )
 DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
+COMMANDS = ("generate", "twins", "questions", "clean")
+
+
+class SceneBuilderArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        modes = ", ".join(COMMANDS)
+        self.exit(
+            2,
+            f"error: {message}\n可用模式: {modes}\n"
+            "运行 'python main.py --help' 查看完整帮助。\n",
+        )
 
 
 @dataclass(frozen=True)
@@ -54,29 +70,61 @@ class TwinGenerationResult:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = SceneBuilderArgumentParser(
         prog="SceneBuilder",
         description="Generate scenes, simulate digital twins with ns-3, and generate labeled questions.",
         allow_abbrev=False,
     )
-    parser.add_argument(
-        "command",
-        nargs="?",
-        choices=("generate", "clean", "twins", "questions", "all"),
-        default="generate",
-        help="Pipeline stage to run. The default is generate.",
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="{" + ",".join(COMMANDS) + "}",
     )
-    parser.add_argument("-c", "--config", dest="scene_config", help="Scene generator YAML config")
-    parser.add_argument(
-        "-q",
-        "--question-config",
+
+    generate_parser = subparsers.add_parser("generate", help="Generate network scenes")
+    generate_parser.add_argument("-c", "--config", dest="scene_config", required=True)
+
+    twins_parser = subparsers.add_parser("twins", help="Generate twins from existing scenes")
+    twins_parser.add_argument(
+        "scene",
+        nargs="?",
+        help="Relative path of one scene under generated_scenes. Omit it to process all scenes.",
+    )
+    _add_twin_arguments(twins_parser)
+
+    questions_parser = subparsers.add_parser("questions", help="Generate questions from scene twins")
+    question_action = questions_parser.add_mutually_exclusive_group(required=True)
+    question_action.add_argument(
+        "-t",
+        "--type",
+        dest="question_type",
+        choices=QUESTION_CATEGORIES,
+        help="Question type to generate.",
+    )
+    question_action.add_argument(
+        "--clean",
+        dest="clean_questions",
+        action="store_true",
+        help="Remove global and per-scene question JSONL files, then exit.",
+    )
+    questions_parser.add_argument(
+        "-c",
+        "--config",
+        dest="question_config",
         default=str(DEFAULT_QUESTION_CONFIG),
         help="Question generator YAML config",
     )
-    parser.add_argument(
+    questions_parser.add_argument(
         "--scene-root",
-        help="Generated scene directory. For twins, this overrides the output_root in --config.",
+        help="Override the scenes_root in the question configuration.",
     )
+
+    clean_parser = subparsers.add_parser("clean", help="Remove generated scene directories")
+    clean_parser.add_argument("-c", "--config", dest="scene_config", required=True)
+    return parser
+
+
+def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--ns3-root",
         default=str(DEFAULT_NS3_ROOT),
@@ -108,7 +156,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--events-per-group", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--event-seed", type=int, default=1, help=argparse.SUPPRESS)
     parser.add_argument("--event-list", default="events.jsonl", help=argparse.SUPPRESS)
-    return parser
 
 
 def _resolve_project_path(value: str | Path) -> Path:
@@ -118,12 +165,25 @@ def _resolve_project_path(value: str | Path) -> Path:
     return path.resolve()
 
 
-def _scene_root_from_args(args: argparse.Namespace) -> Path:
-    if args.scene_root:
-        return _resolve_project_path(args.scene_root)
-    if args.scene_config:
-        return load_scene_config(args.scene_config).output_root
-    return DEFAULT_SCENE_ROOT
+def _resolve_twin_scene_path(value: str | None) -> Path:
+    scene_root = DEFAULT_SCENE_ROOT.resolve()
+    if value is None:
+        return scene_root
+
+    relative_path = Path(value).expanduser()
+    if relative_path.is_absolute():
+        raise ValueError("twins scene path must be relative to generated_scenes")
+
+    if relative_path.parts and relative_path.parts[0] == DEFAULT_SCENE_ROOT.name:
+        candidate = (PROJECT_ROOT / relative_path).resolve()
+    else:
+        candidate = (scene_root / relative_path).resolve()
+
+    try:
+        candidate.relative_to(scene_root)
+    except ValueError as exc:
+        raise ValueError("twins scene path must stay inside generated_scenes") from exc
+    return candidate
 
 
 def resolve_event_sampling(event_groups: int, events_per_group: int) -> tuple[int, int]:
@@ -318,15 +378,7 @@ def build_twin_jobs(
     event_list: str,
     dry_run: bool,
 ) -> list[tuple[int, Path | None, Path]]:
-    twin_dir = scene / TWIN_DIRECTORY_NAME
-    if not dry_run:
-        twin_dir.mkdir(parents=True, exist_ok=True)
-        for stale_file in twin_dir.glob("[1-9]*.jsonl"):
-            stale_file.unlink()
-        for stale_event_file in twin_dir.glob("*_events.jsonl"):
-            stale_event_file.unlink()
-
-    jobs: list[tuple[int, Path | None, Path]] = [(0, None, twin_dir / TWIN_FILE_NAME)]
+    jobs: list[tuple[int, Path | None, Path]] = [(0, None, scene / TWIN_FILE_NAME)]
     if event_groups == 0:
         return jobs
     if not LEGACY_RUNTIME_EVENTS_ENABLED:
@@ -348,8 +400,35 @@ def build_twin_jobs(
         event_file = scene_event_work_dir / f"{group_id}.jsonl"
         if not dry_run:
             write_event_group(event_file, sampled_events)
-        jobs.append((group_id, event_file, twin_dir / f"{group_id}.jsonl"))
+        jobs.append((group_id, event_file, scene / f"twin_{group_id}.jsonl"))
     return jobs
+
+
+def clear_twin_outputs(scene_paths: Sequence[Path], dry_run: bool) -> tuple[Path, ...]:
+    if dry_run:
+        return ()
+
+    removed: list[Path] = []
+    for scene in scene_paths:
+        twin_file = scene / TWIN_FILE_NAME
+        if twin_file.is_file():
+            twin_file.unlink()
+            removed.append(twin_file)
+
+        legacy_directory = scene / "twin"
+        if not legacy_directory.is_dir():
+            continue
+        legacy_files = [legacy_directory / "0.jsonl"]
+        legacy_files.extend(legacy_directory.glob("[1-9]*.jsonl"))
+        legacy_files.extend(legacy_directory.glob("*_events.jsonl"))
+        for legacy_file in dict.fromkeys(legacy_files):
+            if legacy_file.is_file():
+                legacy_file.unlink()
+                removed.append(legacy_file)
+        if not any(legacy_directory.iterdir()):
+            legacy_directory.rmdir()
+
+    return tuple(removed)
 
 
 def ns3_run_argument(
@@ -402,6 +481,10 @@ def run_twins(
     if not scene_paths:
         raise ValueError("No generated scenes were provided for twin generation")
 
+    removed_twin_files = clear_twin_outputs(scene_paths, dry_run)
+    if not dry_run:
+        print(f"Removed {len(removed_twin_files)} existing twin file(s).", flush=True)
+
     if not no_build:
         rc = run_command(
             [str(ns3_executable), "build", program],
@@ -445,8 +528,6 @@ def run_twins(
                 completed_jobs += 1
                 scene_label = f"[{completed_jobs}/{total_jobs}] {scene.name} group={group_id}"
                 print(f"{scene_label} generating", flush=True)
-                if not dry_run:
-                    result_file.unlink(missing_ok=True)
                 rc = run_command(
                     [
                         str(ns3_executable),
@@ -491,6 +572,7 @@ def _print_question_result(result: QuestionGenerationResult) -> None:
     print(f"Twin scenes scanned: {result.scene_count}")
     for category in result.categories:
         print(f"{category.category}: {category.generated_count} questions -> {category.output_file}")
+        print(f"{category.category}: distributed to {len(category.scene_output_files)} scene file(s)")
         for count in category.counts:
             if count.complete:
                 continue
@@ -522,9 +604,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.command in {"generate", "clean", "all"} and not args.scene_config:
-        parser.error(f"--config is required for the {args.command} command")
-
     try:
         if args.command == "clean":
             output_root, removed = clean(args.scene_config)
@@ -539,23 +618,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if args.command == "twins":
-            result = _run_twin_stage(args, _scene_root_from_args(args))
+            result = _run_twin_stage(args, _resolve_twin_scene_path(args.scene))
             return 0 if result.complete else 1
 
         if args.command == "questions":
-            result = generate_questions(args.question_config, scenes_root=_scene_root_from_args(args))
+            scenes_root = _resolve_project_path(args.scene_root) if args.scene_root else None
+            if args.clean_questions:
+                result = clean_question_outputs(args.question_config, scenes_root=scenes_root)
+                print(
+                    f"Removed {len(result.removed_files)} question file(s) "
+                    f"from {result.scene_count} scene(s)"
+                )
+                return 0
+            print(f"Question type: {args.question_type}")
+            result = generate_questions(
+                args.question_config,
+                scenes_root=scenes_root,
+                question_type=args.question_type,
+            )
             _print_question_result(result)
             return 0
-
-        scene_dirs = generate_scenes(args.scene_config)
-        scene_root = load_scene_config(args.scene_config).output_root
-        print(f"Generated {len(scene_dirs)} scene(s); starting ns-3 twin generation.")
-        twin_result = _run_twin_stage(args, scene_root, scenes=scene_dirs)
-        if not twin_result.complete:
-            return 1
-        question_result = generate_questions(args.question_config, scenes_root=scene_root)
-        _print_question_result(question_result)
-        return 0
+        raise AssertionError(f"Unhandled command: {args.command}")
     except (OSError, ValueError, NotImplementedError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
