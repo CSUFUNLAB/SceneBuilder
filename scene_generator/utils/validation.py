@@ -15,9 +15,10 @@ ALLOWED_TM_MODES = {"uniform", "exponential", "gravity", "spike"}
 ALLOWED_FLOW_MODELS = {"poisson", "on_off", "cbr"}
 ALLOWED_FLOW_SELECTION_MODES = {"mixed", "single"}
 ALLOWED_FAULT_SCENARIOS = {"normal", "single", "double"}
+ALLOWED_NODE_FAULT_STATES = {"disabled", "routing_failed"}
 ALLOWED_CHANNEL_FAULT_STATES = {"disabled", "degraded"}
 ALLOWED_CHANNEL_DEGRADATION_MULTIPLIERS = {0.5, 0.2, 0.1}
-ALLOWED_NIC_FAULT_STATES = {"disabled", "tx_failed", "rx_failed"}
+ALLOWED_NIC_FAULT_STATES = {"disabled"}
 ALLOWED_EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
 ALLOWED_EVENT_TYPES = {
     "node": {"fault", "recovery"},
@@ -87,6 +88,23 @@ def _ensure_channel_fault_config(config: dict[str, object]) -> None:
         )
 
 
+def _ensure_node_fault_config(config: dict[str, object]) -> None:
+    probabilities_name = "fault_generation.node_state_probabilities"
+    probabilities = config.get("node_state_probabilities")
+    if not isinstance(probabilities, dict) or not probabilities:
+        raise ValueError(f"{probabilities_name} must be a non-empty mapping")
+
+    unknown_states = set(str(state) for state in probabilities.keys()) - ALLOWED_NODE_FAULT_STATES
+    if unknown_states:
+        raise ValueError(f"Unsupported {probabilities_name} states: {sorted(unknown_states)}")
+
+    probability_values = [float(probability) for probability in probabilities.values()]
+    if any(probability < 0.0 or probability > 1.0 for probability in probability_values):
+        raise ValueError(f"{probabilities_name} values must be in [0, 1]")
+    if abs(sum(probability_values) - 1.0) > 1e-9:
+        raise ValueError(f"{probabilities_name} values must sum to 1")
+
+
 def _ensure_nic_fault_config(config: dict[str, object]) -> None:
     probabilities_name = "fault_generation.nic_state_probabilities"
     probabilities = config.get("nic_state_probabilities")
@@ -153,6 +171,7 @@ def validate_scene_config(config: "SceneConfig") -> None:
             )
 
     _ensure_fault_scenario_probabilities(config.fault_generation.get("scenario_probabilities"))
+    _ensure_node_fault_config(config.fault_generation)
     _ensure_channel_fault_config(config.fault_generation)
     _ensure_nic_fault_config(config.fault_generation)
 

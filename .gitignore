@@ -15,3 +15,5 @@ ns-3.44/*
 
 !ns-3.44/contrib/
 !ns-3.44/contrib/**
+
+analysis_questions.jsonl

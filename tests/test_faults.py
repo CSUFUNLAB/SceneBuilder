@@ -118,8 +118,7 @@ def test_apply_scene_faults_keeps_full_capacity_for_disabled_channel() -> None:
     }
 
 
-@pytest.mark.parametrize("state", ["disabled", "tx_failed", "rx_failed"])
-def test_apply_scene_faults_can_select_nic_failure_mode(state: str) -> None:
+def test_apply_scene_faults_disables_selected_nic() -> None:
     nic = {"nic_id": "IF0001", "state": "normal"}
 
     metadata = apply_scene_faults(
@@ -128,16 +127,68 @@ def test_apply_scene_faults_can_select_nic_failure_mode(state: str) -> None:
         [nic],
         {
             "scenario_probabilities": {"single": 1.0},
-            "nic_state_probabilities": {state: 1.0},
+            "nic_state_probabilities": {"disabled": 1.0},
         },
         RandomManager(17),
     )
 
-    assert nic["state"] == state
+    assert nic["state"] == "disabled"
     assert metadata["faulted_entities"] == [
         {
             "entity_type": "nic",
             "entity_id": "IF0001",
-            "state": state,
+            "state": "disabled",
+        }
+    ]
+
+
+def test_apply_scene_faults_can_remove_random_subset_of_node_routes() -> None:
+    nodes = [
+        {"node_id": "N0001", "state": "normal"},
+        {"node_id": "N0002", "state": "normal"},
+        {"node_id": "N0003", "state": "normal"},
+    ]
+    routing_rows = [
+        [0, 1, 2],
+        [1, 0, 2],
+        [1, 2, 0],
+    ]
+
+    metadata = apply_scene_faults(
+        nodes,
+        [],
+        [],
+        {
+            "scenario_probabilities": {"single": 1.0},
+            "node_state_probabilities": {"routing_failed": 1.0},
+        },
+        RandomManager(19),
+        routing_rows=routing_rows,
+    )
+
+    failed_node_index = next(
+        index for index, node in enumerate(nodes) if node["state"] == "routing_failed"
+    )
+    failed_destinations = [
+        index
+        for index, value in enumerate(routing_rows[failed_node_index])
+        if index != failed_node_index and value == -1
+    ]
+    remaining_destinations = [
+        index
+        for index, value in enumerate(routing_rows[failed_node_index])
+        if index != failed_node_index and value > 0
+    ]
+
+    assert failed_destinations
+    assert remaining_destinations
+    assert metadata["faulted_entities"] == [
+        {
+            "entity_type": "node",
+            "entity_id": nodes[failed_node_index]["node_id"],
+            "state": "routing_failed",
+            "unreachable_destination_nodes": [
+                nodes[index]["node_id"] for index in failed_destinations
+            ],
         }
     ]

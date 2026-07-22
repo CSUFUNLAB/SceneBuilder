@@ -10,10 +10,10 @@ from .cleaner import clean_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
-from .generators.faults import apply_scene_faults
+from .generators.faults import apply_routing_failures, apply_scene_faults
 from .generators.nics import NIC_FIELDS, generate_nics, resolve_queue_policy_selection
 from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
-from .generators.routing import generate_routing_matrix
+from .generators.routing import build_operational_graph, generate_routing_matrix
 from .generators.traffic import apply_hard_traffic_constraints, generate_traffic
 from .rng import RandomManager
 from .topology.selector import SelectedTopology, collect_topologies, load_topology
@@ -180,6 +180,9 @@ def _build_metadata(
         },
         "fault_generation": {
             "scenario_probabilities": dict(config.fault_generation.get("scenario_probabilities", {})),
+            "node_state_probabilities": dict(
+                config.fault_generation.get("node_state_probabilities", {})
+            ),
             "channel_state_probabilities": dict(
                 config.fault_generation.get("channel_state_probabilities", {})
             ),
@@ -259,12 +262,45 @@ def _generate_single_scene(
     nics_metadata = resolve_queue_policy_selection(config.nics, rng)
     channel_rows = generate_channels(graph, config, rng, node_roles=node_roles)
     nodes_rows, node_id_map = generate_nodes(graph, config, rng, node_roles=node_roles)
-    _, routing_map = generate_routing_matrix(graph, config, rng, node_id_map=node_id_map)
+    _, baseline_routing_map = generate_routing_matrix(graph, config, rng, node_id_map=node_id_map)
     nics_rows = generate_nics(channel_rows, config, rng, selection=nics_metadata, node_roles=node_roles)
     fault_rng = rng.fork("fault_generation")
-    fault_metadata = apply_scene_faults(nodes_rows, channel_rows, nics_rows, config.fault_generation, fault_rng)
+    fault_metadata = apply_scene_faults(
+        nodes_rows,
+        channel_rows,
+        nics_rows,
+        config.fault_generation,
+        fault_rng,
+    )
+    routing_rng = rng.fork("fault_aware_routing")
+    while True:
+        operational_graph = build_operational_graph(
+            graph,
+            nodes_rows,
+            channel_rows,
+            nics_rows,
+        )
+        _, routing_map = generate_routing_matrix(
+            operational_graph,
+            config,
+            routing_rng,
+            node_id_map=node_id_map,
+        )
+        routing_rows = _build_interface_routing_rows(
+            operational_graph,
+            routing_map,
+            channel_rows,
+            nics_rows,
+        )
+        if apply_routing_failures(nodes_rows, routing_rows, fault_metadata, fault_rng):
+            break
+
     traffic_rows, traffic_metadata = generate_traffic(graph, config, rng, include_metadata=True)
-    traffic_rows, traffic_constraints = apply_hard_traffic_constraints(traffic_rows, routing_map, channel_rows)
+    traffic_rows, traffic_constraints = apply_hard_traffic_constraints(
+        traffic_rows,
+        baseline_routing_map,
+        channel_rows,
+    )
     traffic_metadata["hard_constraints"] = traffic_constraints
     event_rows: list[dict[str, object]] = []
     if LEGACY_RUNTIME_EVENTS_ENABLED:
@@ -277,7 +313,6 @@ def _generate_single_scene(
             rng,
         )
 
-    routing_rows = _build_interface_routing_rows(graph, routing_map, channel_rows, nics_rows)
     channel_rows = _convert_rows_node_fields_to_public_ids(channel_rows, ["src", "dst"])
     nics_rows = _convert_rows_node_fields_to_public_ids(nics_rows, ["node"])
     traffic_rows = _convert_rows_node_fields_to_public_ids(traffic_rows, ["src", "dst"])

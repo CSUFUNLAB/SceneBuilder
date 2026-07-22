@@ -58,6 +58,17 @@ def test_run_twins_writes_result_inside_each_scene(tmp_path: Path, monkeypatch) 
         result_file = Path(result_value)
         result_file.parent.mkdir(parents=True, exist_ok=True)
         result_file.write_text("{}\n", encoding="utf-8")
+        scene_builder_main.label_path_for_twin(result_file).write_text(
+            '{"label_type":"node_state","label":[]}\n'
+            '{"label_type":"nic_state","label":[]}\n'
+            '{"label_type":"channel_state","label":[]}\n'
+            '{"label_type":"data_flow_state","label":[]}\n'
+            '{"label_type":"network_state","label":"normal"}\n'
+            '{"label_type":"data_flow_bandwidth_constraint","label":[]}\n'
+            '{"label_type":"data_flow_failure_cause","label":[]}\n'
+            '{"label_type":"data_flow_failure_type","label":[]}\n',
+            encoding="utf-8",
+        )
         return 0
 
     monkeypatch.setattr(scene_builder_main, "run_command", fake_run_command)
@@ -69,9 +80,11 @@ def test_run_twins_writes_result_inside_each_scene(tmp_path: Path, monkeypatch) 
     )
 
     expected = scene / "twin.jsonl"
+    expected_labels = scene / "labels.jsonl"
     assert result.complete is True
     assert result.generated_files == (expected,)
     assert expected.read_text(encoding="utf-8") == "{}\n"
+    assert expected_labels.is_file()
     assert not twin_dir.exists()
     assert commands[0][0] == str(ns3_root / "ns3")
     assert f"--scene={scene}" in commands[0][2]

@@ -120,15 +120,17 @@ _DEFAULT_FAULT_GENERATION_CONFIG = {
         "single": 0.3,
         "double": 0.2,
     },
+    "node_state_probabilities": {
+        "disabled": 0.5,
+        "routing_failed": 0.5,
+    },
     "channel_state_probabilities": {
         "disabled": 0.5,
         "degraded": 0.5,
     },
     "channel_degradation_multipliers": [0.5, 0.2, 0.1],
     "nic_state_probabilities": {
-        "disabled": 0.34,
-        "tx_failed": 0.33,
-        "rx_failed": 0.33,
+        "disabled": 1.0,
     },
 }
 
@@ -350,7 +352,12 @@ def load_config(config_path: str | Path) -> SceneConfig:
     fault_generation = _replace_explicit_mapping_overrides(
         fault_generation,
         raw_fault_generation,
-        ("scenario_probabilities", "channel_state_probabilities", "nic_state_probabilities"),
+        (
+            "scenario_probabilities",
+            "node_state_probabilities",
+            "channel_state_probabilities",
+            "nic_state_probabilities",
+        ),
     )
     routing = _deep_merge(_DEFAULT_ROUTING_CONFIG, raw_routing)
     raw_traffic_matrix = raw.get("traffic_matrix")

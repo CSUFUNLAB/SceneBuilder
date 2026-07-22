@@ -48,15 +48,17 @@ topology_sources:
         "single": 0.3,
         "double": 0.2,
     }
+    assert loaded.fault_generation["node_state_probabilities"] == {
+        "disabled": 0.5,
+        "routing_failed": 0.5,
+    }
     assert loaded.fault_generation["channel_state_probabilities"] == {
         "disabled": 0.5,
         "degraded": 0.5,
     }
     assert loaded.fault_generation["channel_degradation_multipliers"] == [0.5, 0.2, 0.1]
     assert loaded.fault_generation["nic_state_probabilities"] == {
-        "disabled": 0.34,
-        "tx_failed": 0.33,
-        "rx_failed": 0.33,
+        "disabled": 1.0,
     }
 
 
@@ -317,7 +319,37 @@ fault_generation:
     assert loaded.fault_generation["channel_degradation_multipliers"] == [0.1]
 
 
-def test_load_config_replaces_default_nic_state_probabilities(tmp_path: Path) -> None:
+def test_load_config_replaces_default_node_state_probabilities(tmp_path: Path) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 123
+scenes_per_topology: 1
+scene_duration: 60
+topology_sources:
+  - name: s
+    type: brite
+    enabled: true
+    root_dir: ./topologies
+    glob_patterns: ["**/*.brite"]
+fault_generation:
+  node_state_probabilities:
+    routing_failed: 1.0
+""",
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg)
+
+    assert loaded.fault_generation["node_state_probabilities"] == {"routing_failed": 1.0}
+
+
+def test_load_config_rejects_directional_nic_failure_state(tmp_path: Path) -> None:
     topo_dir = tmp_path / "topologies"
     topo_dir.mkdir(parents=True)
     (topo_dir / "sample.brite").write_text(_BRITE_SAMPLE, encoding="utf-8")
@@ -342,9 +374,8 @@ fault_generation:
         encoding="utf-8",
     )
 
-    loaded = load_config(cfg)
-
-    assert loaded.fault_generation["nic_state_probabilities"] == {"tx_failed": 1.0}
+    with pytest.raises(ValueError, match="Unsupported fault_generation.nic_state_probabilities states"):
+        load_config(cfg)
 
 
 @pytest.mark.parametrize("section_name", ["nodes", "nics", "link_generation"])

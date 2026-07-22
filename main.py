@@ -33,6 +33,7 @@ DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
 DEFAULT_SCENE_ROOT = PROJECT_ROOT / "generated_scenes"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 TWIN_FILE_NAME = "twin.jsonl"
+LABEL_FILE_NAME = "labels.jsonl"
 REQUIRED_BASE_SCENE_FILES = {
     "nodes.csv",
     "nics.csv",
@@ -404,6 +405,13 @@ def build_twin_jobs(
     return jobs
 
 
+def label_path_for_twin(twin_file: Path) -> Path:
+    if twin_file.name == TWIN_FILE_NAME:
+        return twin_file.with_name(LABEL_FILE_NAME)
+    suffix = twin_file.stem.removeprefix("twin_")
+    return twin_file.with_name(f"labels_{suffix}.jsonl")
+
+
 def clear_twin_outputs(scene_paths: Sequence[Path], dry_run: bool) -> tuple[Path, ...]:
     if dry_run:
         return ()
@@ -411,9 +419,10 @@ def clear_twin_outputs(scene_paths: Sequence[Path], dry_run: bool) -> tuple[Path
     removed: list[Path] = []
     for scene in scene_paths:
         twin_file = scene / TWIN_FILE_NAME
-        if twin_file.is_file():
-            twin_file.unlink()
-            removed.append(twin_file)
+        for output_file in (twin_file, scene / LABEL_FILE_NAME):
+            if output_file.is_file():
+                output_file.unlink()
+                removed.append(output_file)
 
         legacy_directory = scene / "twin"
         if not legacy_directory.is_dir():
@@ -545,9 +554,12 @@ def run_twins(
                     scene_label,
                     cwd=resolved_ns3_root,
                 )
-                if rc == 0 and not dry_run and not result_file.is_file():
-                    print(f"ns-3 did not create the expected twin file: {result_file}", file=sys.stderr)
-                    rc = 1
+                if rc == 0 and not dry_run:
+                    expected_files = (result_file, label_path_for_twin(result_file))
+                    missing_file = next((path for path in expected_files if not path.is_file()), None)
+                    if missing_file is not None:
+                        print(f"ns-3 did not create the expected output file: {missing_file}", file=sys.stderr)
+                        rc = 1
                 if rc != 0:
                     failures.append((f"{scene.name} group={group_id}", rc))
                     if not continue_on_error:

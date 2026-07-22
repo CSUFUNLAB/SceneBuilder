@@ -2,6 +2,8 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from scene_generator.runner import run
 
 
@@ -110,12 +112,14 @@ fault_generation:
         assert metadata["generation"]["traffic_constraints"]["cap_per_flow_to_feature_limit"] is True
         assert metadata["generation"]["fault_generation"] == {
             "scenario_probabilities": {"normal": 1.0},
+            "node_state_probabilities": {
+                "disabled": 0.5,
+                "routing_failed": 0.5,
+            },
             "channel_state_probabilities": {"disabled": 0.5, "degraded": 0.5},
             "channel_degradation_multipliers": [0.5, 0.2, 0.1],
             "nic_state_probabilities": {
-                "disabled": 0.34,
-                "tx_failed": 0.33,
-                "rx_failed": 0.33,
+                "disabled": 1.0,
             },
             "selected_scenario": "normal",
             "fault_count": 0,
@@ -431,3 +435,71 @@ fault_generation:
     assert nics[0]["channel_id"] == "C0001"
     assert {traffic_first["src"], traffic_first["dst"]} == {"N0001", "N0002"}
     assert routing_lines == ["0,1", "1,0"]
+
+
+@pytest.mark.parametrize("fault_entity_type", ["node", "channel"])
+def test_run_builds_routes_from_post_fault_reachability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_entity_type: str,
+) -> None:
+    topo_dir = tmp_path / "topologies"
+    topo_dir.mkdir(parents=True)
+    (topo_dir / "line.brite").write_text(_THREE_NODE_BRITE_SAMPLE, encoding="utf-8")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        """
+output_root: ./out
+seed: 41
+scenes_per_topology: 1
+scene_duration: 10
+topology_sources:
+  - name: s
+    type: brite
+    enabled: true
+    root_dir: ./topologies
+    glob_patterns: ["line.brite"]
+fault_generation:
+  scenario_probabilities:
+    single: 1.0
+""",
+        encoding="utf-8",
+    )
+
+    def force_fault(nodes, channels, nics, fault_config, rng, routing_rows=None):
+        del fault_config, rng, routing_rows
+        for node in nodes:
+            node["state"] = "normal"
+        for channel in channels:
+            channel["state"] = "normal"
+            channel["capacity_multiplier"] = 1.0
+        for nic in nics:
+            nic["state"] = "normal"
+
+        if fault_entity_type == "node":
+            nodes[1]["state"] = "disabled"
+            entity_id = nodes[1]["node_id"]
+        else:
+            channels[1]["state"] = "disabled"
+            entity_id = channels[1]["channel_id"]
+        return {
+            "selected_scenario": "single",
+            "fault_count": 1,
+            "faulted_entities": [
+                {
+                    "entity_type": fault_entity_type,
+                    "entity_id": entity_id,
+                    "state": "disabled",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("scene_generator.runner.apply_scene_faults", force_fault)
+
+    scene_dir = run(cfg)[0]
+    with (scene_dir / "routing_matrix.csv").open("r", encoding="utf-8", newline="") as handle:
+        routing_rows = [[int(value) for value in row] for row in csv.reader(handle)]
+
+    assert routing_rows[0][2] == -1
+    assert routing_rows[2][0] == -1

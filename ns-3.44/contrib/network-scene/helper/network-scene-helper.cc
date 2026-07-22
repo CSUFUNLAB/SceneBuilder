@@ -5,7 +5,6 @@
 #include "ns3/network-scene-traffic.h"
 
 #include "ns3/data-rate.h"
-#include "ns3/error-model.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/inet-socket-address.h"
 #include "ns3/internet-stack-helper.h"
@@ -400,28 +399,6 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
                                 m_nodes.Get(m_nodeIndexById.at(channelNics[1].node)));
         NetDeviceContainer devices = p2p.Install(endpoints);
         m_devices.Add(devices);
-
-        for (uint32_t receiver = 0; receiver < 2; ++receiver)
-        {
-            const uint32_t sender = 1 - receiver;
-            if (channelNics[receiver].state != "rx_failed" &&
-                channelNics[sender].state != "tx_failed")
-            {
-                continue;
-            }
-
-            Ptr<PointToPointNetDevice> device =
-                DynamicCast<PointToPointNetDevice>(devices.Get(receiver));
-            if (device == nullptr)
-            {
-                throw std::runtime_error("Expected point-to-point device for " +
-                                         channelNics[receiver].id);
-            }
-            Ptr<RateErrorModel> errorModel = CreateObject<RateErrorModel>();
-            errorModel->SetUnit(RateErrorModel::ERROR_UNIT_PACKET);
-            errorModel->SetRate(1.0);
-            device->SetReceiveErrorModel(errorModel);
-        }
 
         for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
         {
@@ -893,23 +870,6 @@ void
 NetworkSceneHelper::TraceDeviceRxDrop(std::string interfaceId, Ptr<const Packet> packet)
 {
     (void)packet;
-    auto interfaceIt = m_interfaceIndexById.find(interfaceId);
-    if (interfaceIt != m_interfaceIndexById.end() &&
-        m_interfaceRecords[interfaceIt->second].state != "rx_failed")
-    {
-        auto peerIt = m_peerInterfaceById.find(interfaceId);
-        if (peerIt != m_peerInterfaceById.end())
-        {
-            auto peerIndexIt = m_interfaceIndexById.find(peerIt->second);
-            if (peerIndexIt != m_interfaceIndexById.end() &&
-                m_interfaceRecords[peerIndexIt->second].state == "tx_failed")
-            {
-                m_interfaceCounters[peerIt->second].txDropPackets++;
-                return;
-            }
-        }
-    }
-
     m_interfaceCounters[interfaceId].rxDropPackets++;
 }
 

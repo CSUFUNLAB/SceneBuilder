@@ -1,6 +1,6 @@
 import networkx as nx
 
-from scene_generator.generators.routing import generate_routing_matrix
+from scene_generator.generators.routing import build_operational_graph, generate_routing_matrix
 from scene_generator.rng import RandomManager
 
 
@@ -68,3 +68,49 @@ def test_weighted_shortest_path_routes_reach_destination_without_loops() -> None
             path = _follow_route(route_map, src, dst)
             assert path[0] == src
             assert path[-1] == dst
+
+
+def test_operational_graph_excludes_disabled_nodes_channels_and_nics() -> None:
+    graph = nx.Graph()
+    graph.add_edges_from([("0", "1"), ("1", "2"), ("0", "2")])
+    nodes = [
+        {"node_id": "N0001", "state": "normal"},
+        {"node_id": "N0002", "state": "disabled"},
+        {"node_id": "N0003", "state": "normal"},
+    ]
+    channels = [
+        {"channel_id": "C0001", "src": "0", "dst": "1", "state": "normal"},
+        {"channel_id": "C0002", "src": "0", "dst": "2", "state": "disabled"},
+        {"channel_id": "C0003", "src": "1", "dst": "2", "state": "degraded"},
+    ]
+    nics = [
+        {"channel_id": "C0001", "state": "normal"},
+        {"channel_id": "C0002", "state": "normal"},
+        {"channel_id": "C0003", "state": "disabled"},
+    ]
+
+    operational = build_operational_graph(graph, nodes, channels, nics)
+
+    assert list(operational.edges()) == []
+    assert sorted(operational.nodes()) == ["0", "1", "2"]
+
+
+def test_routing_uses_an_available_alternate_path_after_channel_failure() -> None:
+    graph = nx.Graph()
+    graph.add_edges_from([("0", "1"), ("0", "2"), ("2", "1")])
+    nodes = [
+        {"node_id": "N0001", "state": "normal"},
+        {"node_id": "N0002", "state": "normal"},
+        {"node_id": "N0003", "state": "normal"},
+    ]
+    channels = [
+        {"channel_id": "C0001", "src": "0", "dst": "1", "state": "disabled"},
+        {"channel_id": "C0002", "src": "0", "dst": "2", "state": "normal"},
+        {"channel_id": "C0003", "src": "1", "dst": "2", "state": "degraded"},
+    ]
+
+    operational = build_operational_graph(graph, nodes, channels, [])
+    _, route_map = generate_routing_matrix(operational, _Config(), RandomManager(9))
+
+    assert route_map[("0", "1")] == "2"
+    assert route_map[("2", "1")] == "1"

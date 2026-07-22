@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -133,6 +134,13 @@ NetworkSceneHelper::WriteResults() const
     std::filesystem::path outputPath =
         m_resultPath.empty() ? std::filesystem::path(m_sceneDirectory) / "twin.jsonl"
                              : std::filesystem::path(m_resultPath);
+    const std::string outputStem = outputPath.stem().string();
+    const std::string labelFileName =
+        outputStem == "twin"
+            ? "labels.jsonl"
+            : (outputStem.rfind("twin_", 0) == 0 ? "labels_" + outputStem.substr(5) + ".jsonl"
+                                                  : outputStem + "_labels.jsonl");
+    std::filesystem::path labelPath = outputPath.parent_path() / labelFileName;
     if (outputPath.has_parent_path())
     {
         std::filesystem::create_directories(outputPath.parent_path());
@@ -142,6 +150,19 @@ NetworkSceneHelper::WriteResults() const
     {
         throw std::runtime_error("Cannot open result output file: " + outputPath.string());
     }
+    std::ofstream labelOutput(labelPath);
+    if (!labelOutput)
+    {
+        throw std::runtime_error("Cannot open label output file: " + labelPath.string());
+    }
+    std::vector<std::string> nicStateLabels;
+    std::vector<std::string> nodeStateLabels;
+    std::vector<std::string> channelStateLabels;
+    std::vector<std::string> dataFlowStateLabels;
+    std::map<std::string, std::string> channelStateById;
+    std::map<std::string, std::string> flowStateById;
+    bool hasFaultState = false;
+    bool hasCongestedState = false;
 
     const double duration = std::max(0.000001, (m_applicationStopTime - m_applicationStartTime).GetSeconds());
     std::map<uint16_t, FlowMonitor::FlowStats> statsByPort;
@@ -178,6 +199,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::vector<std::string>> actionsByFlow;
     std::map<std::tuple<std::string, std::string, std::string>, std::vector<std::string>>
         routeDestinationsByKey;
+    std::map<std::string, std::vector<std::string>> pathChannelsByFlow;
     std::map<std::string, std::vector<std::string>> originatedFlowsByNode;
     std::map<std::string, std::vector<std::string>> pathNodesByFlow;
     std::map<std::string, std::vector<std::string>> carriedFlowsByChannel;
@@ -373,6 +395,7 @@ NetworkSceneHelper::WriteResults() const
     {
         auto [pathNodes, pathChannels] = buildFlowPath(flow.src, flow.dst);
         pathNodesByFlow[flow.id] = std::move(pathNodes);
+        pathChannelsByFlow[flow.id] = pathChannels;
         for (const auto& channelId : pathChannels)
         {
             carriedFlowsByChannel[channelId].push_back(flow.id);
@@ -404,17 +427,12 @@ NetworkSceneHelper::WriteResults() const
         {
             state = "disabled";
         }
-        else if (iface.state == "tx_failed" || iface.state == "rx_failed")
-        {
-            state = iface.state;
-        }
         else if (queueUtilization >= SATURATION_THRESHOLD)
         {
             state = "saturated";
         }
         output << "{\"entity_type\":\"nic\",\"entity_id\":"
                << JsonString(outputInterfaceIdById[iface.id])
-               << ",\"label\":" << JsonString(state)
                << ",\"properties\":{\"interface_index\":" << iface.interfaceIndex
                << ",\"rx_rate_mbps\":" << rxRateMbps
                << ",\"tx_rate_mbps\":" << txRateMbps
@@ -433,6 +451,11 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
+        nicStateLabels.push_back(
+            "{\"entity_id\":" + JsonString(outputInterfaceIdById[iface.id]) +
+            ",\"label\":" + JsonString(state) + "}");
+        hasFaultState = hasFaultState || state == "disabled";
+        hasCongestedState = hasCongestedState || state == "saturated";
     }
 
     for (const auto& node : m_nodeRecords)
@@ -441,7 +464,6 @@ NetworkSceneHelper::WriteResults() const
                             ? PacketCounters{}
                             : m_nodeCounters.at(node.id);
         output << "{\"entity_type\":\"node\",\"entity_id\":" << JsonString(node.id)
-               << ",\"label\":" << JsonString(node.state)
                << ",\"properties\":{\"rx_packets\":" << counters.rxPackets
                << ",\"tx_packets\":" << counters.txPackets << "}"
                << ",\"relations\":{\"interfaces\":" << JsonStringArray(interfacesByNode[node.id])
@@ -453,6 +475,10 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
+        nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
+                                  ",\"label\":" + JsonString(node.state) + "}");
+        hasFaultState = hasFaultState || node.state == "disabled" ||
+                        node.state == "routing_failed";
     }
 
     for (const auto& channel : m_channelRecords)
@@ -497,9 +523,10 @@ NetworkSceneHelper::WriteResults() const
         utilizationSquareSum += utilization * utilization;
         utilizationCount++;
         output << "{\"entity_type\":\"channel\",\"entity_id\":" << JsonString(channel.id)
-               << ",\"label\":" << JsonString(state)
                << ",\"properties\":{\"capacity_mbps\":" << channel.nominalCapacityMbps
+               << ",\"effective_capacity_mbps\":" << channel.effectiveCapacityMbps
                << ",\"available_bandwidth_mbps\":" << available
+               << ",\"utilization\":" << utilization
                << ",\"delay_ms\":" << m_defaultChannelDelay.GetMilliSeconds() << "}"
                << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds)
                << ",\"carries\":" << JsonStringArray(carriedFlowsByChannel[channel.id]) << "}";
@@ -509,6 +536,11 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
+        channelStateLabels.push_back("{\"entity_id\":" + JsonString(channel.id) +
+                                     ",\"label\":" + JsonString(state) + "}");
+        channelStateById[channel.id] = state;
+        hasFaultState = hasFaultState || state == "disabled" || state == "degraded";
+        hasCongestedState = hasCongestedState || state == "saturated";
     }
 
     for (const auto& flow : m_flowRecords)
@@ -531,7 +563,6 @@ NetworkSceneHelper::WriteResults() const
         double avgDelayMs = hasStats && stats.rxPackets > 0
                                 ? stats.delaySum.GetMilliSeconds() / static_cast<double>(stats.rxPackets)
                                 : 0.0;
-        double lossRate = hasStats ? SafeRatio(stats.lostPackets, stats.txPackets) : 0.0;
         if (hasStats && stats.rxPackets > 0)
         {
             successfulFlows++;
@@ -541,13 +572,16 @@ NetworkSceneHelper::WriteResults() const
         {
             state = "failed";
         }
-        else if (lossRate > 0.0 || throughputMbps < flow.nominalDemandMbps * 0.8)
+        else if (stats.lostPackets > 0)
+        {
+            state = "unstable";
+        }
+        else if (throughputMbps < flow.nominalDemandMbps * 0.95)
         {
             state = "degraded";
         }
         const auto& pathNodes = pathNodesByFlow[flow.id];
         output << "{\"entity_type\":\"data_flow\",\"entity_id\":" << JsonString(flow.id)
-               << ",\"label\":" << JsonString(state)
                << ",\"properties\":{\"demand_mbps\":" << flow.nominalDemandMbps
                << ",\"tx_packets\":" << (hasStats ? stats.txPackets : 0)
                << ",\"rx_packets\":" << (hasStats ? stats.rxPackets : 0)
@@ -556,13 +590,18 @@ NetworkSceneHelper::WriteResults() const
                << ",\"average_delay_ms\":" << avgDelayMs << "}"
                << ",\"relations\":{\"source_node\":" << JsonString(flow.src)
                << ",\"destination_node\":" << JsonString(flow.dst)
-               << ",\"path_nodes\":" << JsonStringArray(pathNodes) << "}";
+               << ",\"path_nodes\":" << JsonStringArray(pathNodes)
+               << ",\"path_channels\":" << JsonStringArray(pathChannelsByFlow[flow.id]) << "}";
         auto actionIt = actionsByFlow.find(flow.id);
         if (actionIt != actionsByFlow.end())
         {
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
+        dataFlowStateLabels.push_back("{\"entity_id\":" + JsonString(flow.id) +
+                                      ",\"label\":" + JsonString(state) + "}");
+        flowStateById[flow.id] = state;
+        hasFaultState = hasFaultState || state == "failed";
     }
 
     const double totalThroughputMbps = totalRxBytes * 8.0 / duration / 1000000.0;
@@ -572,14 +611,327 @@ NetworkSceneHelper::WriteResults() const
     const double meanUtilization = utilizationCount > 0 ? utilizationSum / utilizationCount : 0.0;
     const double loadVariance =
         utilizationCount > 0 ? utilizationSquareSum / utilizationCount - meanUtilization * meanUtilization : 0.0;
-    const std::string networkState = averageLoss > 0.05 || reachabilityRatio < 0.95 ? "degraded" : "normal";
+    const std::string networkState =
+        hasFaultState ? "faulty" : (hasCongestedState ? "congested" : "normal");
+
+    std::vector<std::string> bottleneckLabels;
+    std::vector<std::string> congestionPatternLabels;
+    std::vector<std::string> channelSaturationCauseLabels;
+    std::vector<std::string> bandwidthConstraintLabels;
+    std::vector<std::string> flowFailureCauseLabels;
+    std::vector<std::string> flowFailureTypeLabels;
+    auto isPhysicallyReachable = [&](const std::string& sourceNode,
+                                     const std::string& destinationNode,
+                                     const std::string& restoredNode,
+                                     const std::string& restoredChannel) {
+        std::map<std::string, std::vector<std::string>> adjacency;
+        for (const auto& channel : m_channelRecords)
+        {
+            if (channel.state == "disabled" && channel.id != restoredChannel)
+            {
+                continue;
+            }
+            if (channel.interfaceIds.size() != 2)
+            {
+                continue;
+            }
+
+            bool operational = true;
+            for (const auto& interfaceId : channel.interfaceIds)
+            {
+                auto interfaceIt = m_interfaceIndexById.find(interfaceId);
+                if (interfaceIt == m_interfaceIndexById.end())
+                {
+                    operational = false;
+                    break;
+                }
+                const auto& iface = m_interfaceRecords[interfaceIt->second];
+                if (iface.state == "disabled" && channel.id != restoredChannel)
+                {
+                    operational = false;
+                    break;
+                }
+                auto nodeIt = m_nodeIndexById.find(iface.node);
+                if (nodeIt == m_nodeIndexById.end() ||
+                    (m_nodeRecords[nodeIt->second].state == "disabled" &&
+                     iface.node != restoredNode))
+                {
+                    operational = false;
+                    break;
+                }
+            }
+            if (!operational)
+            {
+                continue;
+            }
+            adjacency[channel.src].push_back(channel.dst);
+            adjacency[channel.dst].push_back(channel.src);
+        }
+
+        std::set<std::string> visited{sourceNode};
+        std::vector<std::string> pending{sourceNode};
+        while (!pending.empty())
+        {
+            const std::string current = pending.back();
+            pending.pop_back();
+            if (current == destinationNode)
+            {
+                return true;
+            }
+            for (const auto& neighbor : adjacency[current])
+            {
+                if (visited.insert(neighbor).second)
+                {
+                    pending.push_back(neighbor);
+                }
+            }
+        }
+        return false;
+    };
+    for (const auto& channel : m_channelRecords)
+    {
+        auto stateIt = channelStateById.find(channel.id);
+        auto carriedIt = carriedFlowsByChannel.find(channel.id);
+        if (stateIt == channelStateById.end() || stateIt->second != "saturated" ||
+            carriedIt == carriedFlowsByChannel.end() || carriedIt->second.empty())
+        {
+            continue;
+        }
+
+        double totalDemandMbps = 0.0;
+        double largestDemandMbps = 0.0;
+        bool completeEvidence = true;
+        for (const auto& flowId : carriedIt->second)
+        {
+            auto flowIndexIt = m_flowIndexById.find(flowId);
+            if (flowIndexIt == m_flowIndexById.end())
+            {
+                completeEvidence = false;
+                break;
+            }
+            const double demandMbps = m_flowRecords[flowIndexIt->second].nominalDemandMbps;
+            totalDemandMbps += demandMbps;
+            largestDemandMbps = std::max(largestDemandMbps, demandMbps);
+        }
+        if (!completeEvidence || largestDemandMbps <= 0.0)
+        {
+            continue;
+        }
+
+        const double otherDemandMbps = totalDemandMbps - largestDemandMbps;
+        const std::string cause = largestDemandMbps > otherDemandMbps
+                                      ? "single_large_flow"
+                                      : "multiple_flow_aggregation";
+        channelSaturationCauseLabels.push_back(
+            "{\"channel_id\":" + JsonString(channel.id) +
+            ",\"label\":" + JsonString(cause) + "}");
+    }
+    for (const auto& flow : m_flowRecords)
+    {
+        const auto& pathChannels = pathChannelsByFlow[flow.id];
+        std::vector<std::string> saturatedChannelIds;
+        bool validPath = !pathChannels.empty();
+        bool hasInsufficientCapacity = false;
+        bool hasTrafficCongestion = false;
+        for (const auto& channelId : pathChannels)
+        {
+            auto stateIt = channelStateById.find(channelId);
+            auto channelIt = channelById.find(channelId);
+            if (stateIt == channelStateById.end() || channelIt == channelById.end() ||
+                stateIt->second == "disabled")
+            {
+                validPath = false;
+                break;
+            }
+            if (flow.nominalDemandMbps >= channelIt->second.effectiveCapacityMbps)
+            {
+                hasInsufficientCapacity = true;
+            }
+            if (stateIt->second == "saturated")
+            {
+                hasTrafficCongestion = true;
+                saturatedChannelIds.push_back(channelId);
+            }
+            else if (stateIt->second != "normal")
+            {
+                validPath = false;
+                break;
+            }
+        }
+        if (validPath && !saturatedChannelIds.empty())
+        {
+            const std::string congestionPattern = saturatedChannelIds.size() == 1
+                                                      ? "single_channel_bottleneck"
+                                                      : "multi_channel_saturation";
+            congestionPatternLabels.push_back(
+                "{\"data_flow_id\":" + JsonString(flow.id) +
+                ",\"label\":" + JsonString(congestionPattern) + "}");
+            if (saturatedChannelIds.size() == 1)
+            {
+                bottleneckLabels.push_back(
+                    "{\"data_flow_id\":" + JsonString(flow.id) +
+                    ",\"channel_id\":" + JsonString(saturatedChannelIds.front()) + "}");
+            }
+        }
+        if (validPath && (hasTrafficCongestion || hasInsufficientCapacity))
+        {
+            const std::string constraint = hasTrafficCongestion && hasInsufficientCapacity
+                                               ? "both"
+                                           : hasTrafficCongestion ? "traffic_congestion"
+                                                                  : "insufficient_channel_capacity";
+            bandwidthConstraintLabels.push_back("{\"data_flow_id\":" + JsonString(flow.id) +
+                                                ",\"label\":" + JsonString(constraint) + "}");
+        }
+
+        if (flowStateById[flow.id] == "failed")
+        {
+            std::vector<std::string> faultEntityIds;
+            auto addFaultEntity = [&faultEntityIds](const std::string& entityId) {
+                if (std::find(faultEntityIds.begin(), faultEntityIds.end(), entityId) ==
+                    faultEntityIds.end())
+                {
+                    faultEntityIds.push_back(entityId);
+                }
+            };
+            if (!isPhysicallyReachable(flow.src, flow.dst, "", ""))
+            {
+                for (const auto& node : m_nodeRecords)
+                {
+                    if (node.state == "disabled" &&
+                        isPhysicallyReachable(flow.src, flow.dst, node.id, ""))
+                    {
+                        addFaultEntity(node.id);
+                    }
+                }
+                for (const auto& channel : m_channelRecords)
+                {
+                    bool hasChannelFailure = channel.state == "disabled";
+                    for (const auto& interfaceId : channel.interfaceIds)
+                    {
+                        auto interfaceIt = m_interfaceIndexById.find(interfaceId);
+                        if (interfaceIt != m_interfaceIndexById.end() &&
+                            m_interfaceRecords[interfaceIt->second].state == "disabled")
+                        {
+                            hasChannelFailure = true;
+                        }
+                    }
+                    if (hasChannelFailure &&
+                        isPhysicallyReachable(flow.src, flow.dst, "", channel.id))
+                    {
+                        addFaultEntity(channel.id);
+                    }
+                }
+            }
+            for (const auto& nodeId : pathNodesByFlow[flow.id])
+            {
+                auto nodeIt = m_nodeIndexById.find(nodeId);
+                if (nodeIt == m_nodeIndexById.end())
+                {
+                    continue;
+                }
+                const auto& node = m_nodeRecords[nodeIt->second];
+                if (node.state == "disabled")
+                {
+                    addFaultEntity(nodeId);
+                }
+                else if (node.state == "routing_failed")
+                {
+                    const uint32_t srcIndex = NetworkSceneNodeNumber(nodeId) - 1;
+                    const uint32_t dstIndex = NetworkSceneNodeNumber(flow.dst) - 1;
+                    if (srcIndex < m_routingMatrix.size() &&
+                        dstIndex < m_routingMatrix[srcIndex].size() &&
+                        m_routingMatrix[srcIndex][dstIndex] <= 0)
+                    {
+                        addFaultEntity(nodeId);
+                    }
+                }
+            }
+            for (const auto& channelId : pathChannels)
+            {
+                auto channelIt = channelById.find(channelId);
+                if (channelIt != channelById.end() && channelIt->second.state == "disabled")
+                {
+                    addFaultEntity(channelId);
+                }
+                if (channelIt != channelById.end())
+                {
+                    for (const auto& interfaceId : channelIt->second.interfaceIds)
+                    {
+                        auto interfaceIt = m_interfaceIndexById.find(interfaceId);
+                        if (interfaceIt != m_interfaceIndexById.end() &&
+                            m_interfaceRecords[interfaceIt->second].state == "disabled")
+                        {
+                            addFaultEntity(channelId);
+                        }
+                    }
+                }
+            }
+            if (faultEntityIds.size() == 1)
+            {
+                const std::string& faultEntityId = faultEntityIds[0];
+                flowFailureCauseLabels.push_back(
+                    "{\"data_flow_id\":" + JsonString(flow.id) +
+                    ",\"entity_id\":" + JsonString(faultEntityId) + "}");
+
+                std::string failureType;
+                if (channelById.find(faultEntityId) != channelById.end())
+                {
+                    failureType = "channel_failure";
+                }
+                else
+                {
+                    auto nodeIt = m_nodeIndexById.find(faultEntityId);
+                    if (nodeIt != m_nodeIndexById.end())
+                    {
+                        const std::string& nodeState = m_nodeRecords[nodeIt->second].state;
+                        if (nodeState == "disabled")
+                        {
+                            failureType = "node_crash";
+                        }
+                        else if (nodeState == "routing_failed")
+                        {
+                            failureType = "routing_failure";
+                        }
+                    }
+                }
+                if (!failureType.empty())
+                {
+                    flowFailureTypeLabels.push_back(
+                        "{\"data_flow_id\":" + JsonString(flow.id) +
+                        ",\"label\":" + JsonString(failureType) + "}");
+                }
+            }
+        }
+    }
+
+    labelOutput << "{\"label_type\":\"node_state\",\"label\":"
+                << JsonRawArray(nodeStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"nic_state\",\"label\":"
+                << JsonRawArray(nicStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"channel_state\",\"label\":"
+                << JsonRawArray(channelStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"data_flow_state\",\"label\":"
+                << JsonRawArray(dataFlowStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"network_state\",\"label\":"
+                << JsonString(networkState) << "}\n";
+    labelOutput << "{\"label_type\":\"bottleneck\",\"label\":"
+                << JsonRawArray(bottleneckLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"data_flow_congestion_pattern\",\"label\":"
+                << JsonRawArray(congestionPatternLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"channel_saturation_cause\",\"label\":"
+                << JsonRawArray(channelSaturationCauseLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"data_flow_bandwidth_constraint\",\"label\":"
+                << JsonRawArray(bandwidthConstraintLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"data_flow_failure_cause\",\"label\":"
+                << JsonRawArray(flowFailureCauseLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"data_flow_failure_type\",\"label\":"
+                << JsonRawArray(flowFailureTypeLabels) << "}\n";
 
     (void)totalThroughputMbps;
     (void)averageDelayMs;
     (void)averageLoss;
     (void)reachabilityRatio;
     (void)loadVariance;
-    (void)networkState;
 }
 
 } // namespace ns3

@@ -11,6 +11,49 @@ _UNREACHABLE_NEXT_HOP = "-1"
 _UNREACHABLE_VALUE = -1
 
 
+def build_operational_graph(
+    graph: nx.Graph,
+    node_rows: list[dict[str, Any]],
+    channel_rows: list[dict[str, Any]],
+    nic_rows: list[dict[str, Any]],
+) -> nx.Graph:
+    """Return the physical adjacency that remains usable after scene faults."""
+
+    nodes = ordered_nodes(graph)
+    if len(nodes) != len(node_rows):
+        raise ValueError("Node rows do not match routing graph nodes")
+
+    operational = graph.copy()
+    disabled_nodes = {
+        node
+        for node, row in zip(nodes, node_rows)
+        if str(row.get("state", "normal")) == "disabled"
+    }
+    disabled_channel_ids = {
+        str(row.get("channel_id", ""))
+        for row in channel_rows
+        if str(row.get("state", "normal")) == "disabled"
+    }
+    disabled_channel_ids.update(
+        str(row.get("channel_id", ""))
+        for row in nic_rows
+        if str(row.get("state", "normal")) == "disabled"
+    )
+
+    for channel in channel_rows:
+        src = str(channel["src"])
+        dst = str(channel["dst"])
+        channel_id = str(channel["channel_id"])
+        if (
+            src in disabled_nodes
+            or dst in disabled_nodes
+            or channel_id in disabled_channel_ids
+        ) and operational.has_edge(src, dst):
+            operational.remove_edge(src, dst)
+
+    return operational
+
+
 def _weighted_graph(graph: nx.Graph, weight_range: list[float], rng: RandomManager) -> nx.Graph:
     low, high = float(weight_range[0]), float(weight_range[1])
     weighted = nx.DiGraph() if graph.is_directed() else nx.Graph()

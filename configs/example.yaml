@@ -21,14 +21,15 @@ fault_generation:
     normal: 0.5
     single: 0.5
     double: 0
+  node_state_probabilities:
+    disabled: 0.5
+    routing_failed: 0.5
   channel_state_probabilities:
     disabled: 0.5
     degraded: 0.5
   channel_degradation_multipliers: [0.5, 0.2, 0.1]
   nic_state_probabilities:
-    disabled: 0.34
-    tx_failed: 0.33
-    rx_failed: 0.33
+    disabled: 1.0
 
 link_generation:
   mode: role_based_random
