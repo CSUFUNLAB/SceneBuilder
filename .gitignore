@@ -6,6 +6,7 @@ __pycache__/
 =
 
 scene_generator/__pycache__
+tests/*
 tests/__pycache__
 
 ns-3.44/*
