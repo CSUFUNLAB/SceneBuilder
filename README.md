@@ -170,9 +170,13 @@ generated_scenes/
 
 `channel_saturation_cause` 行保存饱和信道的流量构成原因，格式为 `{channel_id, label}`。对经过该信道的全部数据流按 `demand_mbps` 求和；若最大流的需求严格大于其余流需求之和，标记为 `single_large_flow`，否则标记为 `multiple_flow_aggregation`。非饱和信道或没有可确认经过流的信道不生成该标签。
 
-`data_flow_bandwidth_constraint` 行保存流路径的带宽约束。路径存在 `saturated` 链路时存在 `traffic_congestion`；流需求达到或超过任一路径链路的有效容量时存在 `insufficient_channel_capacity`；两个条件独立判断，同时存在时标记为 `both`。两种条件都不存在时不生成该标签。链路实体通过 `effective_capacity_mbps` 暴露当前有效容量。
+`data_flow_bandwidth_constraint` 行仍可保存仿真内部计算得到的流路径带宽约束，但 Twin
+不公开有效容量，因此问题生成器不会据此生成需要从公开证据判断能力不足的问题。
 
-链路实体通过 `properties.utilization` 直接输出统计窗口内的利用率，范围为 `[0,1]`；`utilization >= 0.95` 时满足链路饱和阈值。该字段与链路状态及带宽约束标签使用相同的 ns-3 计算结果。
+链路实体只公开 `properties.original_capacity_mbps`、
+`properties.current_throughput_mbps` 和 `properties.delay_ms`。前两者分别表示配置中的原始
+容量和统计窗口内的当前实际吞吐量。Twin 不公开有效容量、可用带宽或利用率；问题生成器
+会结合经过链路的数据流需求判断状态。
 
 `data_flow_failure_cause` 行保存导致数据流 `failed` 的唯一故障实体，格式为 `{data_flow_id, entity_id}`，其中 `entity_id` 只能是节点 ID 或链路 ID。路径链路的网卡为 `disabled` 时，根因统一归并为所属链路 ID，不输出网卡 ID；流在某个 `routing_failed` 节点处因缺少到其目的节点的路由而中断时，根因记录为该节点 ID。去重后恰好只有一个故障节点或链路时才写入；多故障或没有明确根因时不生成该标签和对应问题。
 
@@ -185,13 +189,13 @@ generated_scenes/
 | 问题 | 公开证据门槛 |
 | --- | --- |
 | 节点状态 | 节点位于流路径中；将公开 `routes` 与 twin 拓扑可达节点比较，拓扑可达但路由表缺项时判为 `routing_failed`；否则，有收发包或至少一条相邻链路可用时判为 `normal`，至少两条相邻链路且全部停用时才能在单故障假设下判为 `disabled`。 |
-| 链路状态 | 链路位于流路径中，并同时具有名义容量、有效容量、可用带宽和利用率；按停用、降级、饱和、正常的优先级可唯一重算状态。 |
-| 网卡状态 | 网卡属于流路径链路；链路可确认停用时判为 `disabled`；链路可用且队列字段完整时，按队列占用率判为 `normal` 或 `saturated`。网卡仅使用这三种状态。 |
+| 链路状态 | 链路位于流路径中并具有原始容量和当前吞吐量。当前吞吐量达到原始容量的 95% 时判为 `saturated`。否则只使用以该链路为第一跳、公开 `tx_packets` 合计不少于 10 的数据流作为直接发送证据，按方向汇总其需求并令预期吞吐量为 `min(发送需求, 原始容量)`；实际吞吐量为零时可判为 `disabled`，大于零但低于预期值 95% 时可判为 `degraded`。没有足够直接发送证据时不出题。低负载达到预期吞吐量仍不能排除未显现的能力下降，因此不据此生成 `normal` 状态题。 |
+| 网卡状态 | 网卡属于流路径链路；链路当前吞吐量为正且队列字段完整时，按队列占用率判为 `normal` 或 `saturated`。当前吞吐量为零时无法仅凭公开证据确认链路及网卡是否停用，因此不生成对应候选。网卡仅使用 `normal`、`disabled`、`saturated` 三种私有状态。 |
 | 数据流状态 | `tx_packets`、`rx_packets`、`lost_packets`、`throughput_mbps` 和 `demand_mbps` 完整，并能按状态优先级唯一重算。 |
-| 路径带宽约束 | 流需求、完整路径以及每条路径链路的容量和利用率证据完整；分别重算是否拥塞和是否能力不足，结果必须唯一落入三种答案之一。 |
-| 路径拥塞模式 | 完整路径上的链路均能判为 `normal` 或 `saturated`；一条饱和链路为 `single_channel_bottleneck`，至少两条为 `multi_channel_saturation`，没有饱和链路时不出题。 |
-| 信道饱和原因 | 信道可由公开利用率判为 `saturated`，`carries` 与各流的完整路径一致且所有流需求完整；最大流需求严格大于其余流之和时为 `single_large_flow`，否则为 `multiple_flow_aggregation`。 |
-| 瓶颈链路 | 完整路径上的链路均能判为 `normal` 或 `saturated`，且恰好只有一条 `saturated` 链路。 |
+| 路径带宽约束 | Twin 不公开有效容量，无法从公开证据判断 `insufficient_channel_capacity`，因此当前不生成此类问题。 |
+| 路径拥塞模式 | 每条路径链路都必须能由原始容量、当前吞吐量和直接发送证据确认状态；存在无法唯一判断的低负载链路时不生成。 |
+| 信道饱和原因 | 信道当前吞吐量达到原始容量的 95%，`carries` 与各流的完整路径一致且所有流需求完整；最大流需求严格大于其余流之和时为 `single_large_flow`，否则为 `multiple_flow_aggregation`。 |
+| 瓶颈链路 | 每条路径链路状态都必须能从公开证据唯一判断且恰好只有一条 `saturated` 链路；低吞吐链路存在状态歧义时不生成。 |
 | 流失败根因 | 流可由公开统计判为 `failed`，路径和全网链路状态完整；在配置的单故障假设下，公开故障现象只能对应一个路径节点或路径链路。流在缺少目的路由的 `routing_failed` 节点处中断时可定位到该节点；叶节点崩溃与其唯一相邻链路故障无法区分时不会出题。 |
 | 流故障类型 | 必须先满足流失败根因的全部门槛并唯一定位实体；实体为停用链路时标记 `channel_failure`，节点公开状态为 `disabled` 时标记 `node_crash`，节点公开状态为 `routing_failed` 时标记 `routing_failure`。 |
 

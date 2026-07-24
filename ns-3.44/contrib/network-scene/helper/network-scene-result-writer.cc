@@ -502,10 +502,8 @@ NetworkSceneHelper::WriteResults() const
             }
         }
         bool operational = IsChannelOperational(channel);
-        double available = operational
-                               ? std::max(0.0,
-                                          channel.effectiveCapacityMbps * (1.0 - utilization))
-                               : 0.0;
+        const double currentThroughputMbps =
+            operational ? channel.effectiveCapacityMbps * utilization : 0.0;
         std::string state = "normal";
         if (!operational)
         {
@@ -523,10 +521,9 @@ NetworkSceneHelper::WriteResults() const
         utilizationSquareSum += utilization * utilization;
         utilizationCount++;
         output << "{\"entity_type\":\"channel\",\"entity_id\":" << JsonString(channel.id)
-               << ",\"properties\":{\"capacity_mbps\":" << channel.nominalCapacityMbps
-               << ",\"effective_capacity_mbps\":" << channel.effectiveCapacityMbps
-               << ",\"available_bandwidth_mbps\":" << available
-               << ",\"utilization\":" << utilization
+               << ",\"properties\":{\"original_capacity_mbps\":"
+               << channel.nominalCapacityMbps
+               << ",\"current_throughput_mbps\":" << currentThroughputMbps
                << ",\"delay_ms\":" << m_defaultChannelDelay.GetMilliSeconds() << "}"
                << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds)
                << ",\"carries\":" << JsonStringArray(carriedFlowsByChannel[channel.id]) << "}";
