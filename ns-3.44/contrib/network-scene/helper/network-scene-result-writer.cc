@@ -189,9 +189,9 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::vector<std::string>> interfacesByNode;
     std::map<std::string, std::string> outputInterfaceIdById;
     std::map<std::string, ChannelRecord> channelById;
-    std::map<std::string, std::string> peerInterfaceById;
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
     std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
+    std::map<std::pair<std::string, std::string>, std::string> interfaceIdByChannelNode;
     std::map<std::string, std::vector<std::string>> routesByNode;
     std::map<std::string, std::vector<std::string>> actionsByNode;
     std::map<std::string, std::vector<std::string>> actionsByChannel;
@@ -240,11 +240,6 @@ NetworkSceneHelper::WriteResults() const
     for (const auto& channel : m_channelRecords)
     {
         channelById[channel.id] = channel;
-        if (channel.interfaceIds.size() == 2)
-        {
-            peerInterfaceById[channel.interfaceIds[0]] = channel.interfaceIds[1];
-            peerInterfaceById[channel.interfaceIds[1]] = channel.interfaceIds[0];
-        }
     }
     for (const auto& iface : m_interfaceRecords)
     {
@@ -252,6 +247,7 @@ NetworkSceneHelper::WriteResults() const
             ScopedLocalId(iface.node, "IF", iface.interfaceIndex);
         interfacesByNode[iface.node].push_back(outputInterfaceIdById[iface.id]);
         channelIdByNodeInterface[{iface.node, iface.interfaceIndex}] = iface.channelId;
+        interfaceIdByChannelNode[{iface.channelId, iface.node}] = iface.id;
         auto channelIt = channelById.find(iface.channelId);
         if (channelIt != channelById.end())
         {
@@ -407,18 +403,8 @@ NetworkSceneHelper::WriteResults() const
         auto counters = m_interfaceCounters.find(iface.id) == m_interfaceCounters.end()
                             ? PacketCounters{}
                             : m_interfaceCounters.at(iface.id);
-        PacketCounters peerCounters;
-        auto peerIt = peerInterfaceById.find(iface.id);
-        if (peerIt != peerInterfaceById.end())
-        {
-            auto peerCountersIt = m_interfaceCounters.find(peerIt->second);
-            if (peerCountersIt != m_interfaceCounters.end())
-            {
-                peerCounters = peerCountersIt->second;
-            }
-        }
         double txRateMbps =
-            peerCounters.rxBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
+            counters.txBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         double rxRateMbps = counters.rxBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         uint32_t currentQueuePackets = GetCurrentQueuePackets(iface.id);
         double queueUtilization = BoundedRatio(currentQueuePackets, iface.queueSizePackets);
@@ -440,7 +426,7 @@ NetworkSceneHelper::WriteResults() const
                << ",\"queue_size_packets\":" << iface.queueSizePackets
                << ",\"queue_current_packets\":" << currentQueuePackets
                << ",\"rx_packets\":" << counters.rxPackets
-               << ",\"tx_packets\":" << peerCounters.rxPackets
+               << ",\"tx_packets\":" << counters.txPackets
                << ",\"rx_drop_packets\":" << counters.rxDropPackets
                << ",\"tx_drop_packets\":" << counters.txDropPackets << "}"
                << ",\"relations\":{\"node\":" << JsonString(iface.node)
@@ -483,27 +469,70 @@ NetworkSceneHelper::WriteResults() const
 
     for (const auto& channel : m_channelRecords)
     {
-        double utilization = 0.0;
+        double sourceToDestinationThroughputMbps = 0.0;
+        double destinationToSourceThroughputMbps = 0.0;
         std::vector<std::string> outputInterfaceIds;
+        std::vector<std::string> carriedFlowRelations;
         for (const auto& ifaceId : channel.interfaceIds)
         {
             auto outputIfaceIt = outputInterfaceIdById.find(ifaceId);
             outputInterfaceIds.push_back(outputIfaceIt == outputInterfaceIdById.end()
                                              ? ifaceId
                                              : outputIfaceIt->second);
-            auto countersIt = m_interfaceCounters.find(ifaceId);
-            if (countersIt != m_interfaceCounters.end())
+        }
+        for (const auto& flowId : carriedFlowsByChannel[channel.id])
+        {
+            const auto& pathChannels = pathChannelsByFlow[flowId];
+            const auto& pathNodes = pathNodesByFlow[flowId];
+            auto channelPosition = std::find(pathChannels.begin(), pathChannels.end(), channel.id);
+            if (channelPosition == pathChannels.end())
             {
-                double simulationRxRateMbps =
-                    countersIt->second.rxBytes * 8.0 / duration / 1000000.0;
-                utilization = std::max(
-                    utilization,
-                    BoundedRatio(simulationRxRateMbps, channel.simulationCapacityMbps));
+                continue;
             }
+            std::size_t pathIndex =
+                static_cast<std::size_t>(std::distance(pathChannels.begin(), channelPosition));
+            if (pathIndex + 1 >= pathNodes.size())
+            {
+                continue;
+            }
+
+            const std::string& fromNode = pathNodes[pathIndex];
+            uint64_t transmittedBytes = 0;
+            auto interfaceIt = interfaceIdByChannelNode.find({channel.id, fromNode});
+            if (interfaceIt != interfaceIdByChannelNode.end())
+            {
+                auto countersIt =
+                    m_interfaceFlowCounters.find({interfaceIt->second, flowId});
+                if (countersIt != m_interfaceFlowCounters.end())
+                {
+                    transmittedBytes = countersIt->second.txBytes;
+                }
+            }
+            const double bandwidthMbps =
+                transmittedBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
+            if (fromNode == channel.src)
+            {
+                sourceToDestinationThroughputMbps += bandwidthMbps;
+            }
+            else if (fromNode == channel.dst)
+            {
+                destinationToSourceThroughputMbps += bandwidthMbps;
+            }
+            std::ostringstream relation;
+            relation << std::setprecision(12);
+            relation << "{\"data_flow_id\":" << JsonString(flowId)
+                     << ",\"bandwidth_mbps\":" << bandwidthMbps << "}";
+            carriedFlowRelations.push_back(relation.str());
         }
         bool operational = IsChannelOperational(channel);
-        const double currentThroughputMbps =
-            operational ? channel.effectiveCapacityMbps * utilization : 0.0;
+        const double maximumDirectionalThroughputMbps =
+            std::max(sourceToDestinationThroughputMbps,
+                     destinationToSourceThroughputMbps);
+        const double utilization =
+            operational
+                ? BoundedRatio(maximumDirectionalThroughputMbps,
+                               channel.effectiveCapacityMbps)
+                : 0.0;
         std::string state = "normal";
         if (!operational)
         {
@@ -523,10 +552,9 @@ NetworkSceneHelper::WriteResults() const
         output << "{\"entity_type\":\"channel\",\"entity_id\":" << JsonString(channel.id)
                << ",\"properties\":{\"original_capacity_mbps\":"
                << channel.nominalCapacityMbps
-               << ",\"current_throughput_mbps\":" << currentThroughputMbps
                << ",\"delay_ms\":" << m_defaultChannelDelay.GetMilliSeconds() << "}"
                << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds)
-               << ",\"carries\":" << JsonStringArray(carriedFlowsByChannel[channel.id]) << "}";
+               << ",\"carries\":" << JsonRawArray(carriedFlowRelations) << "}";
         auto actionIt = actionsByChannel.find(channel.id);
         if (actionIt != actionsByChannel.end())
         {
@@ -616,7 +644,6 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> channelSaturationCauseLabels;
     std::vector<std::string> bandwidthConstraintLabels;
     std::vector<std::string> flowFailureCauseLabels;
-    std::vector<std::string> flowFailureTypeLabels;
     auto isPhysicallyReachable = [&](const std::string& sourceNode,
                                      const std::string& destinationNode,
                                      const std::string& restoredNode,
@@ -728,8 +755,7 @@ NetworkSceneHelper::WriteResults() const
         const auto& pathChannels = pathChannelsByFlow[flow.id];
         std::vector<std::string> saturatedChannelIds;
         bool validPath = !pathChannels.empty();
-        bool hasInsufficientCapacity = false;
-        bool hasTrafficCongestion = false;
+        bool validConstraintPath = !pathChannels.empty();
         for (const auto& channelId : pathChannels)
         {
             auto stateIt = channelStateById.find(channelId);
@@ -738,21 +764,16 @@ NetworkSceneHelper::WriteResults() const
                 stateIt->second == "disabled")
             {
                 validPath = false;
+                validConstraintPath = false;
                 break;
-            }
-            if (flow.nominalDemandMbps >= channelIt->second.effectiveCapacityMbps)
-            {
-                hasInsufficientCapacity = true;
             }
             if (stateIt->second == "saturated")
             {
-                hasTrafficCongestion = true;
                 saturatedChannelIds.push_back(channelId);
             }
             else if (stateIt->second != "normal")
             {
                 validPath = false;
-                break;
             }
         }
         if (validPath && !saturatedChannelIds.empty())
@@ -770,12 +791,20 @@ NetworkSceneHelper::WriteResults() const
                     ",\"channel_id\":" + JsonString(saturatedChannelIds.front()) + "}");
             }
         }
-        if (validPath && (hasTrafficCongestion || hasInsufficientCapacity))
+        if (validConstraintPath && !saturatedChannelIds.empty())
         {
-            const std::string constraint = hasTrafficCongestion && hasInsufficientCapacity
-                                               ? "both"
-                                           : hasTrafficCongestion ? "traffic_congestion"
-                                                                  : "insufficient_channel_capacity";
+            double bottleneckCapacityMbps =
+                channelById.at(saturatedChannelIds.front()).nominalCapacityMbps;
+            for (const auto& channelId : saturatedChannelIds)
+            {
+                bottleneckCapacityMbps =
+                    std::min(bottleneckCapacityMbps,
+                             channelById.at(channelId).nominalCapacityMbps);
+            }
+            const std::string constraint =
+                bottleneckCapacityMbps < flow.nominalDemandMbps
+                    ? "insufficient_channel_capacity"
+                    : "traffic_congestion";
             bandwidthConstraintLabels.push_back("{\"data_flow_id\":" + JsonString(flow.id) +
                                                 ",\"label\":" + JsonString(constraint) + "}");
         }
@@ -831,17 +860,6 @@ NetworkSceneHelper::WriteResults() const
                 {
                     addFaultEntity(nodeId);
                 }
-                else if (node.state == "routing_failed")
-                {
-                    const uint32_t srcIndex = NetworkSceneNodeNumber(nodeId) - 1;
-                    const uint32_t dstIndex = NetworkSceneNodeNumber(flow.dst) - 1;
-                    if (srcIndex < m_routingMatrix.size() &&
-                        dstIndex < m_routingMatrix[srcIndex].size() &&
-                        m_routingMatrix[srcIndex][dstIndex] <= 0)
-                    {
-                        addFaultEntity(nodeId);
-                    }
-                }
             }
             for (const auto& channelId : pathChannels)
             {
@@ -869,34 +887,6 @@ NetworkSceneHelper::WriteResults() const
                 flowFailureCauseLabels.push_back(
                     "{\"data_flow_id\":" + JsonString(flow.id) +
                     ",\"entity_id\":" + JsonString(faultEntityId) + "}");
-
-                std::string failureType;
-                if (channelById.find(faultEntityId) != channelById.end())
-                {
-                    failureType = "channel_failure";
-                }
-                else
-                {
-                    auto nodeIt = m_nodeIndexById.find(faultEntityId);
-                    if (nodeIt != m_nodeIndexById.end())
-                    {
-                        const std::string& nodeState = m_nodeRecords[nodeIt->second].state;
-                        if (nodeState == "disabled")
-                        {
-                            failureType = "node_crash";
-                        }
-                        else if (nodeState == "routing_failed")
-                        {
-                            failureType = "routing_failure";
-                        }
-                    }
-                }
-                if (!failureType.empty())
-                {
-                    flowFailureTypeLabels.push_back(
-                        "{\"data_flow_id\":" + JsonString(flow.id) +
-                        ",\"label\":" + JsonString(failureType) + "}");
-                }
             }
         }
     }
@@ -921,8 +911,6 @@ NetworkSceneHelper::WriteResults() const
                 << JsonRawArray(bandwidthConstraintLabels) << "}\n";
     labelOutput << "{\"label_type\":\"data_flow_failure_cause\",\"label\":"
                 << JsonRawArray(flowFailureCauseLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"data_flow_failure_type\",\"label\":"
-                << JsonRawArray(flowFailureTypeLabels) << "}\n";
 
     (void)totalThroughputMbps;
     (void)averageDelayMs;

@@ -15,10 +15,6 @@ _DEFAULT_CHANNEL_STATE_PROBABILITIES = {
     "disabled": 0.5,
     "degraded": 0.5,
 }
-_DEFAULT_NODE_STATE_PROBABILITIES = {
-    "disabled": 0.5,
-    "routing_failed": 0.5,
-}
 _DEFAULT_CHANNEL_DEGRADATION_MULTIPLIERS = [0.5, 0.2, 0.1]
 _DEFAULT_NIC_STATE_PROBABILITIES = {
     "disabled": 1.0,
@@ -31,7 +27,6 @@ def apply_scene_faults(
     nic_rows: list[dict[str, Any]],
     fault_config: dict[str, Any],
     rng: RandomManager,
-    routing_rows: list[list[int]] | None = None,
 ) -> dict[str, Any]:
     entity_groups = (
         ("node", "node_id", node_rows),
@@ -59,9 +54,6 @@ def apply_scene_faults(
     channel_state_probabilities = dict(
         fault_config.get("channel_state_probabilities", _DEFAULT_CHANNEL_STATE_PROBABILITIES)
     )
-    node_state_probabilities = dict(
-        fault_config.get("node_state_probabilities", _DEFAULT_NODE_STATE_PROBABILITIES)
-    )
     channel_degradation_multipliers = [
         float(value)
         for value in fault_config.get(
@@ -82,7 +74,7 @@ def apply_scene_faults(
         elif entity_type == "nic":
             row["state"] = weighted_pick(nic_state_probabilities, "disabled", rng)
         else:
-            row["state"] = weighted_pick(node_state_probabilities, "disabled", rng)
+            row["state"] = "disabled"
 
         fault_entry: dict[str, Any] = {
             "entity_type": entity_type,
@@ -98,69 +90,72 @@ def apply_scene_faults(
         "fault_count": fault_count,
         "faulted_entities": faulted_entities,
     }
-    if routing_rows is not None:
-        apply_routing_failures(node_rows, routing_rows, metadata, rng)
     return metadata
 
 
-def apply_routing_failures(
+def derive_routing_failed_nodes(
     node_rows: list[dict[str, Any]],
-    routing_rows: list[list[int]],
-    fault_metadata: dict[str, Any],
-    rng: RandomManager,
-) -> bool:
-    """Apply routing-table faults after physical-topology routing is computed.
+    channel_rows: list[dict[str, Any]],
+    nic_rows: list[dict[str, Any]],
+    route_map: dict[tuple[str, str], str],
+    ordered_graph_nodes: list[str],
+) -> list[str]:
+    """Derive stale-route failures after physical faults without editing routes."""
 
-    Returns ``False`` when a selected routing-failure node has no physically
-    reachable destination. Such a node is converted to ``disabled`` so the
-    caller can rebuild routing against the updated operational topology.
-    """
+    if len(node_rows) != len(ordered_graph_nodes):
+        raise ValueError("Node rows do not match the routing graph")
 
-    routing_failure_indices = [
-        index
-        for index, node in enumerate(node_rows)
-        if str(node.get("state", "normal")) == "routing_failed"
-    ]
-    reachable_by_node: dict[int, list[int]] = {}
-    for node_index in routing_failure_indices:
-        reachable_destinations = [
-            destination_index
-            for destination_index, out_interface in enumerate(routing_rows[node_index])
-            if destination_index != node_index and int(out_interface) > 0
-        ]
-        if reachable_destinations:
-            reachable_by_node[node_index] = reachable_destinations
+    row_by_graph_node = {
+        str(graph_node): row
+        for graph_node, row in zip(ordered_graph_nodes, node_rows)
+    }
+    disabled_nodes = {
+        graph_node
+        for graph_node, row in row_by_graph_node.items()
+        if str(row.get("state", "normal")) == "disabled"
+    }
+    disabled_channel_ids = {
+        str(row.get("channel_id", ""))
+        for row in channel_rows
+        if str(row.get("state", "normal")) == "disabled"
+    }
+    disabled_channel_ids.update(
+        str(row.get("channel_id", ""))
+        for row in nic_rows
+        if str(row.get("state", "normal")) == "disabled"
+    )
+
+    channels_by_pair: dict[frozenset[str], set[str]] = {}
+    for channel in channel_rows:
+        pair = frozenset((str(channel["src"]), str(channel["dst"])))
+        channels_by_pair.setdefault(pair, set()).add(str(channel["channel_id"]))
+
+    routing_failed_nodes: set[str] = set()
+    for (source, destination), next_hop in route_map.items():
+        source = str(source)
+        destination = str(destination)
+        next_hop = str(next_hop)
+        if (
+            source == destination
+            or source in disabled_nodes
+            or next_hop == "-1"
+        ):
+            continue
+        if next_hop in disabled_nodes:
+            routing_failed_nodes.add(source)
             continue
 
-        node_rows[node_index]["state"] = "disabled"
-        node_id = str(node_rows[node_index]["node_id"])
-        for entry in fault_metadata.get("faulted_entities", []):
-            if entry.get("entity_type") == "node" and str(entry.get("entity_id")) == node_id:
-                entry["state"] = "disabled"
-                entry.pop("unreachable_destination_nodes", None)
-                break
-
-    if len(reachable_by_node) != len(routing_failure_indices):
-        return False
-
-    for node_index in routing_failure_indices:
-        reachable_destinations = reachable_by_node[node_index]
-        failure_count = (
-            1
-            if len(reachable_destinations) == 1
-            else rng.randint(1, len(reachable_destinations) - 1)
+        pair_channel_ids = channels_by_pair.get(
+            frozenset((source, next_hop)),
+            set(),
         )
-        failed_destinations = sorted(rng.sample(reachable_destinations, failure_count))
-        for destination_index in failed_destinations:
-            routing_rows[node_index][destination_index] = -1
+        if pair_channel_ids and pair_channel_ids.issubset(disabled_channel_ids):
+            routing_failed_nodes.add(source)
 
-        node_id = str(node_rows[node_index]["node_id"])
-        for entry in fault_metadata.get("faulted_entities", []):
-            if entry.get("entity_type") == "node" and str(entry.get("entity_id")) == node_id:
-                entry["unreachable_destination_nodes"] = [
-                    str(node_rows[destination_index]["node_id"])
-                    for destination_index in failed_destinations
-                ]
-                break
+    for graph_node in sorted(routing_failed_nodes):
+        row_by_graph_node[graph_node]["state"] = "routing_failed"
 
-    return True
+    return [
+        str(row_by_graph_node[graph_node]["node_id"])
+        for graph_node in sorted(routing_failed_nodes)
+    ]

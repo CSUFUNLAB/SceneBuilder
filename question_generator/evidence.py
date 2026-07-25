@@ -6,9 +6,12 @@ from .scene import EntityRecord, SceneData
 
 
 SATURATION_THRESHOLD = 0.95
+NORMAL_EVIDENCE_MIN_RATIO = 0.70
+NORMAL_EVIDENCE_MAX_RATIO = 0.90
 DEGRADATION_EVIDENCE_THRESHOLD = 0.95
 MIN_OFFERED_PACKET_SAMPLE = 10
 FLOAT_TOLERANCE = 1e-9
+_CACHE_MISS = object()
 
 
 def _number(properties: dict[str, object], name: str) -> float | None:
@@ -20,6 +23,73 @@ def _number(properties: dict[str, object], name: str) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _channel_throughputs(
+    scene: SceneData,
+    channel: EntityRecord,
+) -> tuple[float, float] | None:
+    """Reconstruct both directional throughputs from carries and flow paths."""
+
+    endpoint_nodes = scene.channel_endpoint_nodes(channel)
+    if len(endpoint_nodes) != 2 or endpoint_nodes[0] == endpoint_nodes[1]:
+        return None
+    forward = (endpoint_nodes[0], endpoint_nodes[1])
+    reverse = (endpoint_nodes[1], endpoint_nodes[0])
+    totals = {forward: 0.0, reverse: 0.0}
+
+    expected_directions: dict[str, tuple[str, str]] = {}
+    for flow in scene.entities("data_flow"):
+        path = _complete_flow_path(scene, flow)
+        if path is None:
+            return None
+        path_nodes, path_channels = path
+        matching_positions = [
+            index
+            for index, path_channel in enumerate(path_channels)
+            if path_channel.entity_id == channel.entity_id
+        ]
+        if not matching_positions:
+            continue
+        if len(matching_positions) != 1:
+            return None
+        path_index = matching_positions[0]
+        direction = (path_nodes[path_index], path_nodes[path_index + 1])
+        if direction not in totals:
+            return None
+        expected_directions[flow.entity_id] = direction
+
+    raw_carries = channel.relations.get("carries")
+    if not isinstance(raw_carries, list):
+        return None
+    observed_flow_ids: set[str] = set()
+    for item in raw_carries:
+        if not isinstance(item, dict):
+            return None
+        flow_id = str(item.get("data_flow_id", ""))
+        bandwidth = _number(item, "bandwidth_mbps")
+        if (
+            not flow_id
+            or flow_id in observed_flow_ids
+            or flow_id not in expected_directions
+            or bandwidth is None
+            or bandwidth < -FLOAT_TOLERANCE
+        ):
+            return None
+        observed_flow_ids.add(flow_id)
+        totals[expected_directions[flow_id]] += max(0.0, bandwidth)
+
+    if observed_flow_ids != set(expected_directions):
+        return None
+    return totals[forward], totals[reverse]
+
+
+def _maximum_channel_throughput(
+    scene: SceneData,
+    channel: EntityRecord,
+) -> float | None:
+    throughputs = _channel_throughputs(scene, channel)
+    return max(throughputs) if throughputs is not None else None
 
 
 def infer_flow_state(flow: EntityRecord) -> str | None:
@@ -39,55 +109,59 @@ def infer_flow_state(flow: EntityRecord) -> str | None:
     return "normal"
 
 
-def _first_hop_offered_load(
+def _channel_directional_measurements(
     scene: SceneData,
     channel: EntityRecord,
-) -> float | None:
-    """Return the strongest directly sourced directional load on a channel.
+) -> tuple[tuple[float, float], ...] | None:
+    """Return sampled (offered, delivered) rates for both channel directions.
 
-    Only flows whose first hop is this channel are used. Their public transmit
-    statistics establish that traffic was offered before any other network
-    channel could have limited it.
+    A point-to-point channel exposes exactly two NICs.  For each direction, the
+    sender NIC's local IPv4 transmit counters measure traffic offered to this
+    channel, while the peer NIC's receive counters measure traffic delivered by
+    it.  This remains direct evidence when the channel is an intermediate hop.
     """
 
-    directional_loads: dict[tuple[str, str], float] = {}
-    directional_packets: dict[tuple[str, str], float] = {}
-    for flow in scene.entities("data_flow"):
-        path_channels = flow.relations.get("path_channels")
-        path_nodes = flow.relations.get("path_nodes")
+    connected = channel.relations.get("connects")
+    if not isinstance(connected, list) or len(connected) != 2:
+        return None
+    nic_ids = [str(nic_id) for nic_id in connected]
+    if not all(nic_ids) or nic_ids[0] == nic_ids[1]:
+        return None
+
+    nics = [scene.entity("nic", nic_id) for nic_id in nic_ids]
+    if any(nic is None for nic in nics):
+        return None
+    if any(
+        str(nic.relations.get("channel", "")) != channel.entity_id
+        for nic in nics
+        if nic is not None
+    ):
+        return None
+
+    measurements: list[tuple[float, float]] = []
+    for sender, receiver in ((nics[0], nics[1]), (nics[1], nics[0])):
+        if sender is None or receiver is None:
+            continue
+        offered = _number(sender.properties, "tx_rate_mbps")
+        delivered = _number(receiver.properties, "rx_rate_mbps")
+        offered_packets = _number(sender.properties, "tx_packets")
         if (
-            not isinstance(path_channels, list)
-            or not path_channels
-            or str(path_channels[0]) != channel.entity_id
-            or not isinstance(path_nodes, list)
-            or len(path_nodes) != len(path_channels) + 1
+            offered is None
+            or delivered is None
+            or offered_packets is None
+            or offered <= FLOAT_TOLERANCE
+            or delivered < -FLOAT_TOLERANCE
+            or offered_packets < MIN_OFFERED_PACKET_SAMPLE
         ):
             continue
+        measurements.append((offered, max(0.0, delivered)))
 
-        demand = _number(flow.properties, "demand_mbps")
-        tx_packets = _number(flow.properties, "tx_packets")
-        if demand is None or demand <= 0 or tx_packets is None or tx_packets <= 0:
-            continue
-
-        direction = (str(path_nodes[0]), str(path_nodes[1]))
-        if not all(direction):
-            continue
-        directional_loads[direction] = directional_loads.get(direction, 0.0) + demand
-        directional_packets[direction] = (
-            directional_packets.get(direction, 0.0) + tx_packets
-        )
-
-    sampled_loads = [
-        load
-        for direction, load in directional_loads.items()
-        if directional_packets.get(direction, 0.0) >= MIN_OFFERED_PACKET_SAMPLE
-    ]
-    return max(sampled_loads) if sampled_loads else None
+    return tuple(measurements) if measurements else None
 
 
 def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     original_capacity = _number(channel.properties, "original_capacity_mbps")
-    current_throughput = _number(channel.properties, "current_throughput_mbps")
+    current_throughput = _maximum_channel_throughput(scene, channel)
     if (
         None in (original_capacity, current_throughput)
         or original_capacity <= 0
@@ -95,24 +169,45 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
         or current_throughput > original_capacity + FLOAT_TOLERANCE
     ):
         return None
-    if current_throughput / original_capacity >= SATURATION_THRESHOLD:
-        return "saturated"
 
-    offered_load = _first_hop_offered_load(scene, channel)
-    if offered_load is None:
-        return None
-    expected_throughput = min(original_capacity, offered_load)
-    if current_throughput <= FLOAT_TOLERANCE:
+    physical_fault_id = _infer_unique_physical_fault(scene)
+    if physical_fault_id == channel.entity_id:
         return "disabled"
+    failed_node = scene.entity("node", physical_fault_id or "")
     if (
-        current_throughput
-        < expected_throughput * DEGRADATION_EVIDENCE_THRESHOLD
+        failed_node is not None
+        and failed_node.entity_id in scene.channel_endpoint_nodes(channel)
+    ):
+        return "disabled"
+
+    throughput_ratio = current_throughput / original_capacity
+    if throughput_ratio >= SATURATION_THRESHOLD:
+        return "saturated"
+    if (
+        NORMAL_EVIDENCE_MIN_RATIO - FLOAT_TOLERANCE
+        <= throughput_ratio
+        <= NORMAL_EVIDENCE_MAX_RATIO + FLOAT_TOLERANCE
+    ):
+        # Configured degradation multipliers are at most 0.5, so a channel
+        # carrying 70%-90% of its original capacity cannot be degraded,
+        # disabled, or saturated.
+        return "normal"
+
+    measurements = _channel_directional_measurements(scene, channel)
+    if measurements is None:
+        return None
+    if any(delivered <= FLOAT_TOLERANCE for _, delivered in measurements):
+        return "disabled"
+    if any(
+        delivered
+        < min(original_capacity, offered) * DEGRADATION_EVIDENCE_THRESHOLD
+        for offered, delivered in measurements
     ):
         return "degraded"
 
-    # A low observed rate is not enough to prove normality. The conservative
-    # degraded rule requires directly sourced offered load, a sufficient packet
-    # sample, and a throughput deficit, which excludes upstream channel causes.
+    # Outside the explicit 70%-90% normal-evidence band, a low observed rate is
+    # not enough to prove normality. The degraded rule requires a sufficient
+    # sender-side packet sample and an observed per-hop delivery deficit.
     return None
 
 
@@ -160,73 +255,179 @@ def _complete_path_channels(
     return ordered
 
 
-def _topologically_reachable_nodes(
+def _complete_flow_path(
     scene: SceneData,
-    source_node_id: str,
-) -> set[str] | None:
-    nodes = {node.entity_id for node in scene.entities("node")}
-    if source_node_id not in nodes:
+    flow: EntityRecord,
+) -> tuple[list[str], list[EntityRecord]] | None:
+    raw_path_nodes = flow.relations.get("path_nodes")
+    if not isinstance(raw_path_nodes, list):
         return None
-    adjacency: dict[str, set[str]] = {node_id: set() for node_id in nodes}
+    path_node_ids = [str(node_id) for node_id in raw_path_nodes]
+    if (
+        len(path_node_ids) < 2
+        or any(not node_id for node_id in path_node_ids)
+        or len(set(path_node_ids)) != len(path_node_ids)
+    ):
+        return None
+    source_node_id = str(flow.relations.get("source_node", ""))
+    destination_node_id = str(flow.relations.get("destination_node", ""))
+    if (
+        path_node_ids[0] != source_node_id
+        or path_node_ids[-1] != destination_node_id
+        or any(scene.entity("node", node_id) is None for node_id in path_node_ids)
+    ):
+        return None
+
+    channels = _complete_path_channels(scene, flow)
+    if channels is None or len(channels) + 1 != len(path_node_ids):
+        return None
+    for index, channel in enumerate(channels):
+        if set(scene.channel_endpoint_nodes(channel)) != {
+            path_node_ids[index],
+            path_node_ids[index + 1],
+        }:
+            return None
+    return path_node_ids, channels
+
+
+def _infer_unique_physical_fault(scene: SceneData) -> str | None:
+    cached = scene._evidence_cache.get("unique_physical_fault", _CACHE_MISS)
+    if cached is not _CACHE_MISS:
+        return cached if isinstance(cached, str) else None
+
+    result = _compute_unique_physical_fault(scene)
+    scene._evidence_cache["unique_physical_fault"] = result
+    return result
+
+
+def _compute_unique_physical_fault(scene: SceneData) -> str | None:
+    """Infer one physical fault from complete static paths and flow outcomes."""
+
+    flow_paths: dict[str, tuple[list[str], list[EntityRecord]]] = {}
+    failed_flow_ids: set[str] = set()
+    for flow in scene.entities("data_flow"):
+        state = infer_flow_state(flow)
+        path = _complete_flow_path(scene, flow)
+        if state is None or path is None:
+            return None
+        flow_paths[flow.entity_id] = path
+        if state == "failed":
+            failed_flow_ids.add(flow.entity_id)
+    if not failed_flow_ids:
+        return None
+
+    possible_causes: set[str] = set()
     for channel in scene.entities("channel"):
-        endpoints = scene.channel_endpoint_nodes(channel)
-        if len(endpoints) != 2 or any(endpoint not in nodes for endpoint in endpoints):
-            return None
-        channel_state = infer_channel_state(scene, channel)
-        if channel_state is None:
-            return None
-        if channel_state == "disabled":
+        original_capacity = _number(
+            channel.properties,
+            "original_capacity_mbps",
+        )
+        current_throughput = _maximum_channel_throughput(scene, channel)
+        if (
+            original_capacity is None
+            or original_capacity <= 0
+            or current_throughput is None
+            or abs(current_throughput) > FLOAT_TOLERANCE
+            or len(scene.channel_endpoint_nodes(channel)) != 2
+        ):
             continue
-        left, right = endpoints
-        adjacency[left].add(right)
-        adjacency[right].add(left)
+        predicted_failed = {
+            flow_id
+            for flow_id, (_, channels) in flow_paths.items()
+            if any(
+                path_channel.entity_id == channel.entity_id
+                for path_channel in channels
+            )
+        }
+        if predicted_failed == failed_flow_ids:
+            possible_causes.add(channel.entity_id)
 
-    visited = {source_node_id}
-    pending = [source_node_id]
-    while pending:
-        current = pending.pop()
-        for neighbor in adjacency[current]:
-            if neighbor in visited:
-                continue
-            visited.add(neighbor)
-            pending.append(neighbor)
-    visited.remove(source_node_id)
-    return visited
+    for node in scene.entities("node"):
+        rx_packets = _number(node.properties, "rx_packets")
+        tx_packets = _number(node.properties, "tx_packets")
+        incident_channels = _incident_channels(scene, node.entity_id)
+        if (
+            rx_packets is None
+            or tx_packets is None
+            or abs(rx_packets) > FLOAT_TOLERANCE
+            or abs(tx_packets) > FLOAT_TOLERANCE
+            or len(incident_channels) < 2
+        ):
+            continue
+        incident_throughputs = [
+            _maximum_channel_throughput(scene, channel)
+            for channel in incident_channels
+        ]
+        if (
+            any(value is None for value in incident_throughputs)
+            or any(
+                abs(float(value)) > FLOAT_TOLERANCE
+                for value in incident_throughputs
+                if value is not None
+            )
+        ):
+            continue
+        predicted_failed = {
+            flow_id
+            for flow_id, (node_ids, _) in flow_paths.items()
+            if node.entity_id in node_ids
+        }
+        if predicted_failed == failed_flow_ids:
+            possible_causes.add(node.entity_id)
+
+    return next(iter(possible_causes)) if len(possible_causes) == 1 else None
 
 
-def _missing_route_destinations(
+def _node_routes_through_fault(
     scene: SceneData,
     node: EntityRecord,
-) -> set[str] | None:
-    if "routes" not in node.relations:
-        return None
+    physical_fault_id: str,
+) -> bool | None:
     routes = node.relations.get("routes")
     if not isinstance(routes, list):
         return None
-    expected = _topologically_reachable_nodes(scene, node.entity_id)
-    if expected is None:
+
+    failed_channel = scene.entity("channel", physical_fault_id)
+    failed_node = scene.entity("node", physical_fault_id)
+    if failed_channel is None and failed_node is None:
         return None
 
-    advertised: set[str] = set()
     for route in routes:
         if not isinstance(route, dict):
             return None
         destinations = route.get("destination_nodes")
-        if not isinstance(destinations, list):
+        if not isinstance(destinations, list) or not destinations:
             return None
-        destination_ids = {str(destination_id) for destination_id in destinations}
-        if any(not destination_id for destination_id in destination_ids):
-            return None
-        advertised.update(destination_ids)
-    if not advertised.issubset(expected):
-        return None
-    return expected - advertised
+        if failed_node is not None:
+            next_hop = route.get("next_hop")
+            if next_hop is not None and str(next_hop) == physical_fault_id:
+                return True
+            continue
+
+        egress_interface = route.get("egress_interface")
+        if egress_interface is None:
+            continue
+        nic = scene.entity("nic", str(egress_interface))
+        if (
+            nic is not None
+            and str(nic.relations.get("channel", "")) == physical_fault_id
+        ):
+            return True
+    return False
 
 
 def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
-    missing_routes = _missing_route_destinations(scene, node)
-    if missing_routes:
-        return "routing_failed"
+    physical_fault_id = _infer_unique_physical_fault(scene)
+    if physical_fault_id == node.entity_id:
+        return "disabled"
+    if physical_fault_id is not None:
+        routes_through_fault = _node_routes_through_fault(
+            scene,
+            node,
+            physical_fault_id,
+        )
+        if routes_through_fault:
+            return "routing_failed"
 
     rx_packets = _number(node.properties, "rx_packets")
     tx_packets = _number(node.properties, "tx_packets")
@@ -239,22 +440,23 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
     ]
     if any(state in {"normal", "degraded", "saturated"} for state in channel_states):
         return "normal"
-    if (
-        len(incident_channels) >= 2
-        and all(state == "disabled" for state in channel_states)
-    ):
-        return "disabled"
     return None
 
 
 def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
     channel_id = str(nic.relations.get("channel", ""))
     channel = scene.entity("channel", channel_id)
-    current_throughput = (
-        _number(channel.properties, "current_throughput_mbps")
-        if channel is not None
-        else None
-    )
+    if channel is None:
+        return None
+
+    channel_state = infer_channel_state(scene, channel)
+    if channel_state == "disabled":
+        # NIC state is operational, not a physical-root label. An interface
+        # attached to a disabled channel is itself unavailable regardless of
+        # whether the channel, an endpoint node, or one NIC caused the fault.
+        return "disabled"
+
+    current_throughput = _maximum_channel_throughput(scene, channel)
     if current_throughput is None or current_throughput <= FLOAT_TOLERANCE:
         return None
 
@@ -280,10 +482,35 @@ def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
 
 
 def infer_bandwidth_constraint(scene: SceneData, flow: EntityRecord) -> str | None:
-    # The effective channel capacity is intentionally not exposed by the Twin.
-    # Therefore insufficient capacity (and consequently the three-way answer)
-    # cannot be established from public evidence.
-    return None
+    channels = _complete_path_channels(scene, flow)
+    demand = _number(flow.properties, "demand_mbps")
+    if channels is None or demand is None or demand <= 0:
+        return None
+
+    saturated_capacities: list[float] = []
+    for channel in channels:
+        original_capacity = _number(
+            channel.properties,
+            "original_capacity_mbps",
+        )
+        current_throughput = _maximum_channel_throughput(scene, channel)
+        if (
+            None in (original_capacity, current_throughput)
+            or original_capacity <= 0
+            or current_throughput < -FLOAT_TOLERANCE
+            or current_throughput > original_capacity + FLOAT_TOLERANCE
+        ):
+            return None
+
+        if current_throughput / original_capacity >= SATURATION_THRESHOLD:
+            saturated_capacities.append(original_capacity)
+
+    if not saturated_capacities:
+        return None
+    bottleneck_capacity = min(saturated_capacities)
+    if bottleneck_capacity < demand:
+        return "insufficient_channel_capacity"
+    return "traffic_congestion"
 
 
 def infer_congestion_pattern(scene: SceneData, flow: EntityRecord) -> str | None:
@@ -308,10 +535,20 @@ def infer_channel_saturation_cause(
     if infer_channel_state(scene, channel) != "saturated":
         return None
 
-    raw_carried_flow_ids = channel.relations.get("carries")
-    if not isinstance(raw_carried_flow_ids, list) or not raw_carried_flow_ids:
+    raw_carried_flows = channel.relations.get("carries")
+    if not isinstance(raw_carried_flows, list) or not raw_carried_flows:
         return None
-    carried_flow_ids = [str(flow_id) for flow_id in raw_carried_flow_ids]
+    carried_flow_ids: list[str] = []
+    for raw_carried_flow in raw_carried_flows:
+        if isinstance(raw_carried_flow, dict):
+            flow_id = str(raw_carried_flow.get("data_flow_id", ""))
+            bandwidth = _number(raw_carried_flow, "bandwidth_mbps")
+            if not flow_id or bandwidth is None or bandwidth < -FLOAT_TOLERANCE:
+                return None
+            carried_flow_ids.append(flow_id)
+        else:
+            # Keep existing Twin files readable until they are regenerated.
+            carried_flow_ids.append(str(raw_carried_flow))
     if any(not flow_id for flow_id in carried_flow_ids):
         return None
     if len(set(carried_flow_ids)) != len(carried_flow_ids):
@@ -351,7 +588,7 @@ def infer_channel_saturation_cause(
 
 def infer_bottleneck(scene: SceneData, flow: EntityRecord) -> str | None:
     channels = _complete_path_channels(scene, flow)
-    if channels is None:
+    if channels is None or len(channels) < 2:
         return None
     states = [infer_channel_state(scene, channel) for channel in channels]
     if any(state not in {"normal", "saturated"} for state in states):
@@ -364,193 +601,21 @@ def infer_bottleneck(scene: SceneData, flow: EntityRecord) -> str | None:
     return saturated[0] if len(saturated) == 1 else None
 
 
-def _is_reachable_with_restored_channels(
-    scene: SceneData,
-    source_node_id: str,
-    destination_node_id: str,
-    restored_channel_ids: set[str] | None = None,
-) -> bool | None:
-    nodes = {node.entity_id for node in scene.entities("node")}
-    if source_node_id not in nodes or destination_node_id not in nodes:
-        return None
-    restored = restored_channel_ids or set()
-    adjacency: dict[str, set[str]] = {node_id: set() for node_id in nodes}
-    for channel in scene.entities("channel"):
-        endpoints = scene.channel_endpoint_nodes(channel)
-        if len(endpoints) != 2 or any(endpoint not in nodes for endpoint in endpoints):
-            return None
-        state = infer_channel_state(scene, channel)
-        if state is None:
-            return None
-        if state == "disabled" and channel.entity_id not in restored:
-            continue
-        left, right = endpoints
-        adjacency[left].add(right)
-        adjacency[right].add(left)
-
-    visited = {source_node_id}
-    pending = [source_node_id]
-    while pending:
-        current = pending.pop()
-        if current == destination_node_id:
-            return True
-        for neighbor in adjacency[current]:
-            if neighbor not in visited:
-                visited.add(neighbor)
-                pending.append(neighbor)
-    return False
-
-
 def infer_flow_failure_cause(scene: SceneData, flow: EntityRecord) -> str | None:
     if infer_flow_state(flow) != "failed":
         return None
-
-    all_channels = scene.entities("channel")
-    if any(len(scene.channel_endpoint_nodes(channel)) != 2 for channel in all_channels):
+    path = _complete_flow_path(scene, flow)
+    physical_fault_id = _infer_unique_physical_fault(scene)
+    if path is None or physical_fault_id is None:
         return None
-    channel_states = {
-        channel.entity_id: infer_channel_state(scene, channel)
-        for channel in all_channels
-    }
-    if not channel_states or any(state is None for state in channel_states.values()):
+    path_node_ids, path_channels = path
+    if len(path_channels) < 2:
         return None
-    raw_path_nodes = flow.relations.get("path_nodes")
-    if not isinstance(raw_path_nodes, list) or not raw_path_nodes:
-        return None
-    ordered_path_node_ids = [str(node_id) for node_id in raw_path_nodes]
-    path_node_ids = set(ordered_path_node_ids)
-    if any(scene.entity("node", node_id) is None for node_id in path_node_ids):
-        return None
-    for node_id in path_node_ids:
-        node = scene.entity("node", node_id)
-        if node is None or None in (
-            _number(node.properties, "rx_packets"),
-            _number(node.properties, "tx_packets"),
-        ):
-            return None
-
-    raw_path_channels = flow.relations.get("path_channels")
-    if raw_path_channels == []:
-        path_channels: list[EntityRecord] = []
-    else:
-        complete_path_channels = _complete_path_channels(scene, flow)
-        if complete_path_channels is None:
-            return None
-        path_channels = complete_path_channels
-
-    disabled_channels = {
-        channel_id for channel_id, state in channel_states.items() if state == "disabled"
-    }
-    path_channel_ids = {channel.entity_id for channel in path_channels}
-    possible_causes: set[str] = set()
-
-    destination_node_id = str(flow.relations.get("destination_node", ""))
-    last_path_node = scene.entity("node", ordered_path_node_ids[-1])
-    if destination_node_id and last_path_node is not None:
-        missing_destinations = _missing_route_destinations(scene, last_path_node)
-        if (
-            missing_destinations is not None
-            and destination_node_id in missing_destinations
-            and infer_node_state(scene, last_path_node) == "routing_failed"
-        ):
-            possible_causes.add(last_path_node.entity_id)
-
-    # Under the configured single-fault model, one disabled channel can be
-    # caused by that channel or one of its degree-one endpoint nodes.
-    if len(disabled_channels) == 1:
-        channel_id = next(iter(disabled_channels))
-        if channel_id in path_channel_ids:
-            possible_causes.add(channel_id)
-
-    for node_id in path_node_ids:
-        node = scene.entity("node", node_id)
-        if node is None:
-            continue
-        incident_ids = {channel.entity_id for channel in _incident_channels(scene, node_id)}
-        rx_packets = _number(node.properties, "rx_packets")
-        tx_packets = _number(node.properties, "tx_packets")
-        if (
-            incident_ids
-            and incident_ids == disabled_channels
-            and rx_packets is not None
-            and tx_packets is not None
-            and rx_packets + tx_packets == 0
-        ):
-            possible_causes.add(node_id)
-
-    source_node_id = str(flow.relations.get("source_node", ""))
-    destination_node_id = str(flow.relations.get("destination_node", ""))
-    if not source_node_id:
-        source_node_id = ordered_path_node_ids[0]
-    if source_node_id and destination_node_id:
-        currently_reachable = _is_reachable_with_restored_channels(
-            scene,
-            source_node_id,
-            destination_node_id,
-        )
-        if currently_reachable is False:
-            disabled_node_candidates: dict[str, set[str]] = {}
-            for node in scene.entities("node"):
-                incident_ids = {
-                    channel.entity_id
-                    for channel in _incident_channels(scene, node.entity_id)
-                }
-                rx_packets = _number(node.properties, "rx_packets")
-                tx_packets = _number(node.properties, "tx_packets")
-                if (
-                    len(incident_ids) >= 2
-                    and incident_ids.issubset(disabled_channels)
-                    and rx_packets is not None
-                    and tx_packets is not None
-                    and rx_packets + tx_packets == 0
-                ):
-                    disabled_node_candidates[node.entity_id] = incident_ids
-
-            channels_at_disabled_nodes = {
-                channel_id
-                for incident_ids in disabled_node_candidates.values()
-                for channel_id in incident_ids
-            }
-            for channel_id in disabled_channels - channels_at_disabled_nodes:
-                if _is_reachable_with_restored_channels(
-                    scene,
-                    source_node_id,
-                    destination_node_id,
-                    {channel_id},
-                ) is True:
-                    possible_causes.add(channel_id)
-
-            for node_id, incident_ids in disabled_node_candidates.items():
-                if _is_reachable_with_restored_channels(
-                    scene,
-                    source_node_id,
-                    destination_node_id,
-                    incident_ids,
-                ) is True:
-                    possible_causes.add(node_id)
-
-    return next(iter(possible_causes)) if len(possible_causes) == 1 else None
-
-
-def infer_flow_failure_type(scene: SceneData, flow: EntityRecord) -> str | None:
-    entity_id = infer_flow_failure_cause(scene, flow)
-    if entity_id is None:
-        return None
-
-    channel = scene.entity("channel", entity_id)
-    if channel is not None:
-        return (
-            "channel_failure"
-            if infer_channel_state(scene, channel) == "disabled"
-            else None
-        )
-
-    node = scene.entity("node", entity_id)
-    if node is None:
-        return None
-    node_state = infer_node_state(scene, node)
-    if node_state == "disabled":
-        return "node_crash"
-    if node_state == "routing_failed":
-        return "routing_failure"
+    if physical_fault_id in path_node_ids:
+        return physical_fault_id
+    if any(
+        channel.entity_id == physical_fault_id
+        for channel in path_channels
+    ):
+        return physical_fault_id
     return None

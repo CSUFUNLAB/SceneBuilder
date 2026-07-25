@@ -8,12 +8,12 @@ topology_sources:
   - name: brite_pool
     type: brite
     enabled: false
-    root_dir: ../topologies/brite
+    root_dir: ../scene_generator/topologies/brite
     glob_patterns: ["**/*.brite"]
   - name: topologyzoo_pool
     type: topologyzoo
     enabled: true
-    root_dir: ../topologies/topologyzoo
+    root_dir: ../scene_generator/topologies/topologyzoo
     glob_patterns: ["**/*.gml"]
 
 fault_generation:
@@ -21,9 +21,6 @@ fault_generation:
     normal: 0.5
     single: 0.5
     double: 0
-  node_state_probabilities:
-    disabled: 0.5
-    routing_failed: 0.5
   channel_state_probabilities:
     disabled: 0.5
     degraded: 0.5

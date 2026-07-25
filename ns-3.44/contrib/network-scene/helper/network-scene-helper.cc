@@ -21,11 +21,13 @@
 #include "ns3/packet-sink-helper.h"
 #include "ns3/point-to-point-helper.h"
 #include "ns3/point-to-point-net-device.h"
+#include "ns3/ppp-header.h"
 #include "ns3/queue-disc.h"
 #include "ns3/simulator.h"
 #include "ns3/string.h"
 #include "ns3/traffic-control-helper.h"
 #include "ns3/uinteger.h"
+#include "ns3/udp-header.h"
 #include "ns3/udp-socket-factory.h"
 
 #include <algorithm>
@@ -279,12 +281,14 @@ NetworkSceneHelper::ResetForScene(const NetworkSceneData& scene)
     m_channelIndexById.clear();
     m_interfaceIndexById.clear();
     m_flowIndexById.clear();
+    m_flowIdByPort.clear();
     m_ipv4InterfaceById.clear();
     m_nodeIdByNs3Node.clear();
     m_interfaceIdByNodeInterface.clear();
     m_peerInterfaceById.clear();
     m_nodeCounters.clear();
     m_interfaceCounters.clear();
+    m_interfaceFlowCounters.clear();
     m_queueDiscs.clear();
     m_flowRuntimeById.clear();
     m_flowMonitorHelper.reset();
@@ -409,6 +413,9 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
             {
                 throw std::runtime_error("Expected point-to-point device for " + nic.id);
             }
+            device->TraceConnectWithoutContext(
+                "PhyTxBegin",
+                MakeCallback(&NetworkSceneHelper::TracePhyTxBegin, this).Bind(nic.id));
             device->TraceConnectWithoutContext(
                 "MacTxDrop",
                 MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(nic.id));
@@ -598,6 +605,7 @@ NetworkSceneHelper::InstallSceneTraffic(const std::vector<NetworkSceneTrafficPat
             m_flowRuntimeById[flow.id] = {pattern, source.Get(0), 1.0};
         }
         m_flowIndexById[flow.id] = static_cast<uint32_t>(m_flowRecords.size());
+        m_flowIdByPort[port] = flow.id;
         m_flowRecords.push_back({flow.id, flow.src, flow.dst, flow.demandMbps, scaledDemandMbps, port});
         ++flowIndex;
     }
@@ -857,6 +865,53 @@ NetworkSceneHelper::TraceQueueDiscDrop(std::string interfaceId, Ptr<const QueueD
 {
     (void)item;
     m_interfaceCounters[interfaceId].txDropPackets++;
+}
+
+std::string
+NetworkSceneHelper::IdentifySceneFlow(Ptr<const Packet> packet) const
+{
+    if (packet == nullptr || packet->GetSize() < 2)
+    {
+        return "";
+    }
+
+    Ptr<Packet> copy = packet->Copy();
+    PppHeader ppp;
+    copy->RemoveHeader(ppp);
+    if (ppp.GetProtocol() != 0x0021)
+    {
+        return "";
+    }
+
+    Ipv4Header ipv4;
+    if (copy->RemoveHeader(ipv4) == 0 || ipv4.GetProtocol() != 17 ||
+        ipv4.GetFragmentOffset() != 0)
+    {
+        return "";
+    }
+
+    UdpHeader udp;
+    if (copy->GetSize() < udp.GetSerializedSize() || copy->RemoveHeader(udp) == 0)
+    {
+        return "";
+    }
+
+    auto flowIt = m_flowIdByPort.find(udp.GetDestinationPort());
+    return flowIt == m_flowIdByPort.end() ? "" : flowIt->second;
+}
+
+void
+NetworkSceneHelper::TracePhyTxBegin(std::string interfaceId, Ptr<const Packet> packet)
+{
+    const std::string flowId = IdentifySceneFlow(packet);
+    if (flowId.empty())
+    {
+        return;
+    }
+
+    auto& counters = m_interfaceFlowCounters[{interfaceId, flowId}];
+    counters.txPackets++;
+    counters.txBytes += packet->GetSize();
 }
 
 void

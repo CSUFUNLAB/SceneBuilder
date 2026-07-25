@@ -132,8 +132,10 @@ class NetworkSceneHelper
                        Ptr<Ipv4> ipv4,
                        uint32_t interface);
     void TraceQueueDiscDrop(std::string interfaceId, Ptr<const QueueDiscItem> item);
+    void TracePhyTxBegin(std::string interfaceId, Ptr<const Packet> packet);
     void TraceDeviceTxDrop(std::string interfaceId, Ptr<const Packet> packet);
     void TraceDeviceRxDrop(std::string interfaceId, Ptr<const Packet> packet);
+    std::string IdentifySceneFlow(Ptr<const Packet> packet) const;
     uint32_t GetCurrentQueuePackets(const std::string& interfaceId) const;
     void ResetForScene(const NetworkSceneData& scene);
     void LoadSceneRecords(const NetworkSceneData& scene);
@@ -183,12 +185,14 @@ class NetworkSceneHelper
     std::map<std::string, uint32_t> m_channelIndexById;
     std::map<std::string, uint32_t> m_interfaceIndexById;
     std::map<std::string, uint32_t> m_flowIndexById;
+    std::map<uint16_t, std::string> m_flowIdByPort;
     std::map<std::string, uint32_t> m_ipv4InterfaceById;
     std::map<uint32_t, std::string> m_nodeIdByNs3Node;
     std::map<std::pair<std::string, uint32_t>, std::string> m_interfaceIdByNodeInterface;
     std::map<std::string, std::string> m_peerInterfaceById;
     std::map<std::string, PacketCounters> m_nodeCounters;
     std::map<std::string, PacketCounters> m_interfaceCounters;
+    std::map<std::pair<std::string, std::string>, PacketCounters> m_interfaceFlowCounters;
     std::map<std::string, Ptr<QueueDisc>> m_queueDiscs;
     std::map<std::string, FlowRuntime> m_flowRuntimeById;
     std::unique_ptr<FlowMonitorHelper> m_flowMonitorHelper;

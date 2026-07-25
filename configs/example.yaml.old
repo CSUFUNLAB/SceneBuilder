@@ -7,12 +7,12 @@ topology_sources:
   - name: brite_pool
     type: brite
     enabled: false
-    root_dir: ../topologies/brite
+    root_dir: ../scene_generator/topologies/brite
     glob_patterns: ["**/*.brite"]
   - name: topologyzoo_pool
     type: topologyzoo
     enabled: true
-    root_dir: ../topologies/topologyzoo
+    root_dir: ../scene_generator/topologies/topologyzoo
     glob_patterns: ["**/*.gml"]
 
 fault_generation:

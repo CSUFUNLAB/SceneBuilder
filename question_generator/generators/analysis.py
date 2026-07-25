@@ -11,7 +11,6 @@ from ..evidence import (
     infer_congestion_pattern,
     infer_entity_state,
     infer_flow_failure_cause,
-    infer_flow_failure_type,
 )
 from ..models import QuestionCandidate, QuestionTemplate
 from ..scene import SceneData
@@ -29,7 +28,7 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             (("data_flow_id",), ("normal", "unstable", "degraded", "failed")): self._flow_state,
             (
                 ("data_flow_id",),
-                ("traffic_congestion", "insufficient_channel_capacity", "both"),
+                ("insufficient_channel_capacity", "traffic_congestion"),
             ): self._flow_bandwidth_constraint,
             (
                 ("data_flow_id",),
@@ -41,10 +40,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             ): self._channel_saturation_cause,
             (("data_flow_id",), ("channel_id",)): self._flow_bottleneck,
             (("data_flow_id",), ("entity_id",)): self._flow_failure_cause,
-            (
-                ("data_flow_id",),
-                ("node_crash", "channel_failure", "routing_failure"),
-            ): self._flow_failure_type,
         }
 
     def generate_candidate(
@@ -170,25 +165,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             return None
         data_flow_id, entity_id = rng.choice(candidates)
         return QuestionCandidate({"data_flow_id": data_flow_id}, entity_id)
-
-    @staticmethod
-    def _flow_failure_type(
-        scene: SceneData,
-        target_label: str,
-        rng: random.Random,
-    ) -> QuestionCandidate | None:
-        candidates: list[str] = []
-        for data_flow_id, label in scene.flow_failure_types:
-            flow = scene.entity("data_flow", data_flow_id)
-            if (
-                label == target_label
-                and flow is not None
-                and infer_flow_failure_type(scene, flow) == target_label
-            ):
-                candidates.append(data_flow_id)
-        if not candidates:
-            return None
-        return QuestionCandidate({"data_flow_id": rng.choice(candidates)}, target_label)
 
     @staticmethod
     def _channel_saturation_cause(

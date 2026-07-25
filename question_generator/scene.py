@@ -27,7 +27,6 @@ class SceneData:
         channel_saturation_causes: list[tuple[str, str]] | None = None,
         bandwidth_constraints: list[tuple[str, str]] | None = None,
         flow_failure_causes: list[tuple[str, str]] | None = None,
-        flow_failure_types: list[tuple[str, str]] | None = None,
     ) -> None:
         self.scene_name = scene_name
         self.source_file = source_file
@@ -37,7 +36,7 @@ class SceneData:
         self.channel_saturation_causes = tuple(channel_saturation_causes or [])
         self.bandwidth_constraints = tuple(bandwidth_constraints or [])
         self.flow_failure_causes = tuple(flow_failure_causes or [])
-        self.flow_failure_types = tuple(flow_failure_types or [])
+        self._evidence_cache: dict[str, object] = {}
         self._entities_by_type: dict[str, list[EntityRecord]] = {}
         self._entities_by_key: dict[tuple[str, str], EntityRecord] = {}
         for entity in entities:
@@ -104,7 +103,6 @@ class SceneData:
         channel_saturation_causes: list[tuple[str, str]] = []
         bandwidth_constraints: list[tuple[str, str]] = []
         flow_failure_causes: list[tuple[str, str]] = []
-        flow_failure_types: list[tuple[str, str]] = []
         if label_file.is_file():
             with label_file.open("r", encoding="utf-8-sig") as handle:
                 for line_number, raw_line in enumerate(handle, start=1):
@@ -199,24 +197,6 @@ class SceneData:
                             flow_failure_causes.append(
                                 (str(value["data_flow_id"]), str(value["entity_id"]))
                             )
-                    elif label_type == "data_flow_failure_type":
-                        values = label_row.get("label", [])
-                        if not isinstance(values, list):
-                            raise ValueError(
-                                f"{label_file}:{line_number} flow failure type label must be a list"
-                            )
-                        for value in values:
-                            if (
-                                not isinstance(value, dict)
-                                or "data_flow_id" not in value
-                                or "label" not in value
-                            ):
-                                raise ValueError(
-                                    f"{label_file}:{line_number} contains an invalid flow failure type label"
-                                )
-                            flow_failure_types.append(
-                                (str(value["data_flow_id"]), str(value["label"]))
-                            )
                     elif label_type == "channel_saturation_cause":
                         values = label_row.get("label", [])
                         if not isinstance(values, list):
@@ -275,7 +255,6 @@ class SceneData:
             channel_saturation_causes=channel_saturation_causes,
             bandwidth_constraints=bandwidth_constraints,
             flow_failure_causes=flow_failure_causes,
-            flow_failure_types=flow_failure_types,
         )
 
     def entities(self, entity_type: str) -> list[EntityRecord]:
