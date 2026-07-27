@@ -5,15 +5,21 @@ categories:
   analysis:
     enabled: true
     questions_per_question: 60
-    template_file: ../question_generator/templates/analysis.txt
+    template_file: ../question_generator/templates/analysis.yaml
     output_file: ../analysis_questions.jsonl
   evolution:
     enabled: false
     questions_per_question: 60
-    template_file: ../question_generator/templates/evolution.txt
+    template_file: ../question_generator/templates/evolution.yaml
     output_file: ../evolution_questions.jsonl
+    options:
+      load_increase_multiplier_range: [1.2, 2.0]
+      load_decrease_multiplier_range: [0.2, 0.8]
+      flow_addition_demand_mbps_range: [1.0, 100.0]
+      related_target_probability: 0.8
+      scenes_per_event: 10
   optimization:
     enabled: false
     questions_per_question: 60
-    template_file: ../question_generator/templates/optimization.txt
+    template_file: ../question_generator/templates/optimization.yaml
     output_file: ../optimization_questions.jsonl

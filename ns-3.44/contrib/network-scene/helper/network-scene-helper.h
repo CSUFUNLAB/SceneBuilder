@@ -82,6 +82,7 @@ class NetworkSceneHelper
         std::string mac;
         std::string queuePolicy;
         uint32_t queueSizePackets{0};
+        uint32_t simulationQueueSizePackets{0};
         std::string state;
     };
 

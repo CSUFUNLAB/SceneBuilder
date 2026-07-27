@@ -24,6 +24,14 @@ namespace
 {
 
 constexpr double SATURATION_THRESHOLD = 0.95;
+constexpr uint64_t IPV4_UDP_HEADER_BYTES = 28;
+
+uint64_t
+ApplicationPayloadBytes(const FlowMonitor::FlowStats& stats)
+{
+    const uint64_t headerBytes = stats.rxPackets * IPV4_UDP_HEADER_BYTES;
+    return stats.rxBytes > headerBytes ? stats.rxBytes - headerBytes : 0;
+}
 
 std::string
 JsonEscape(const std::string& value)
@@ -159,6 +167,8 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> nodeStateLabels;
     std::vector<std::string> channelStateLabels;
     std::vector<std::string> dataFlowStateLabels;
+    std::vector<std::string> channelUnavailabilityCauseLabels;
+    std::vector<std::string> nicUnavailabilityCauseLabels;
     std::map<std::string, std::string> channelStateById;
     std::map<std::string, std::string> flowStateById;
     bool hasFaultState = false;
@@ -398,6 +408,34 @@ NetworkSceneHelper::WriteResults() const
         }
     }
 
+    auto channelUnavailabilityCause = [&](const ChannelRecord& channel) {
+        bool hasConnectedNodeFault = false;
+        bool hasChannelOrInterfaceFault = channel.state == "disabled";
+        for (const auto& interfaceId : channel.interfaceIds)
+        {
+            auto interfaceIt = m_interfaceIndexById.find(interfaceId);
+            if (interfaceIt == m_interfaceIndexById.end())
+            {
+                continue;
+            }
+            const auto& iface = m_interfaceRecords[interfaceIt->second];
+            hasChannelOrInterfaceFault =
+                hasChannelOrInterfaceFault || iface.state == "disabled";
+            auto nodeIt = m_nodeIndexById.find(iface.node);
+            if (nodeIt != m_nodeIndexById.end() &&
+                m_nodeRecords[nodeIt->second].state == "disabled")
+            {
+                hasConnectedNodeFault = true;
+            }
+        }
+        if (hasConnectedNodeFault == hasChannelOrInterfaceFault)
+        {
+            return std::string{};
+        }
+        return hasConnectedNodeFault ? std::string{"connected_node_fault"}
+                                     : std::string{"channel_or_interface_fault"};
+    };
+
     for (const auto& iface : m_interfaceRecords)
     {
         auto counters = m_interfaceCounters.find(iface.id) == m_interfaceCounters.end()
@@ -407,7 +445,10 @@ NetworkSceneHelper::WriteResults() const
             counters.txBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         double rxRateMbps = counters.rxBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         uint32_t currentQueuePackets = GetCurrentQueuePackets(iface.id);
-        double queueUtilization = BoundedRatio(currentQueuePackets, iface.queueSizePackets);
+        double queueUtilization =
+            BoundedRatio(currentQueuePackets, iface.simulationQueueSizePackets);
+        uint32_t outputCurrentQueuePackets = static_cast<uint32_t>(
+            std::llround(queueUtilization * iface.queueSizePackets));
         std::string state = "normal";
         if (!IsInterfaceOperational(iface))
         {
@@ -424,7 +465,7 @@ NetworkSceneHelper::WriteResults() const
                << ",\"tx_rate_mbps\":" << txRateMbps
                << ",\"queue_policy\":" << JsonString(iface.queuePolicy)
                << ",\"queue_size_packets\":" << iface.queueSizePackets
-               << ",\"queue_current_packets\":" << currentQueuePackets
+               << ",\"queue_current_packets\":" << outputCurrentQueuePackets
                << ",\"rx_packets\":" << counters.rxPackets
                << ",\"tx_packets\":" << counters.txPackets
                << ",\"rx_drop_packets\":" << counters.rxDropPackets
@@ -440,6 +481,22 @@ NetworkSceneHelper::WriteResults() const
         nicStateLabels.push_back(
             "{\"entity_id\":" + JsonString(outputInterfaceIdById[iface.id]) +
             ",\"label\":" + JsonString(state) + "}");
+        if (state == "disabled")
+        {
+            auto channelIt = channelById.find(iface.channelId);
+            if (channelIt != channelById.end())
+            {
+                const std::string cause =
+                    channelUnavailabilityCause(channelIt->second);
+                if (!cause.empty())
+                {
+                    nicUnavailabilityCauseLabels.push_back(
+                        "{\"entity_id\":" +
+                        JsonString(outputInterfaceIdById[iface.id]) +
+                        ",\"label\":" + JsonString(cause) + "}");
+                }
+            }
+        }
         hasFaultState = hasFaultState || state == "disabled";
         hasCongestedState = hasCongestedState || state == "saturated";
     }
@@ -563,6 +620,16 @@ NetworkSceneHelper::WriteResults() const
         output << "}\n";
         channelStateLabels.push_back("{\"entity_id\":" + JsonString(channel.id) +
                                      ",\"label\":" + JsonString(state) + "}");
+        if (state == "disabled")
+        {
+            const std::string cause = channelUnavailabilityCause(channel);
+            if (!cause.empty())
+            {
+                channelUnavailabilityCauseLabels.push_back(
+                    "{\"entity_id\":" + JsonString(channel.id) +
+                    ",\"label\":" + JsonString(cause) + "}");
+            }
+        }
         channelStateById[channel.id] = state;
         hasFaultState = hasFaultState || state == "disabled" || state == "degraded";
         hasCongestedState = hasCongestedState || state == "saturated";
@@ -581,10 +648,11 @@ NetworkSceneHelper::WriteResults() const
             totalLostPackets += stats.lostPackets;
             delayPacketSumMs += stats.delaySum.GetMilliSeconds();
         }
-        double throughputMbps = hasStats
-                                    ? stats.rxBytes * 8.0 / duration / 1000000.0 *
-                                          m_valueScaleFactor
-                                    : 0.0;
+        double throughputMbps =
+            hasStats
+                ? ApplicationPayloadBytes(stats) * 8.0 / duration / 1000000.0 *
+                      m_valueScaleFactor
+                : 0.0;
         double avgDelayMs = hasStats && stats.rxPackets > 0
                                 ? stats.delaySum.GetMilliSeconds() / static_cast<double>(stats.rxPackets)
                                 : 0.0;
@@ -897,6 +965,10 @@ NetworkSceneHelper::WriteResults() const
                 << JsonRawArray(nicStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"channel_state\",\"label\":"
                 << JsonRawArray(channelStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"channel_unavailability_cause\",\"label\":"
+                << JsonRawArray(channelUnavailabilityCauseLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"nic_unavailability_cause\",\"label\":"
+                << JsonRawArray(nicUnavailabilityCauseLabels) << "}\n";
     labelOutput << "{\"label_type\":\"data_flow_state\",\"label\":"
                 << JsonRawArray(dataFlowStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"network_state\",\"label\":"

@@ -27,6 +27,8 @@ class SceneData:
         channel_saturation_causes: list[tuple[str, str]] | None = None,
         bandwidth_constraints: list[tuple[str, str]] | None = None,
         flow_failure_causes: list[tuple[str, str]] | None = None,
+        channel_unavailability_causes: list[tuple[str, str]] | None = None,
+        nic_unavailability_causes: list[tuple[str, str]] | None = None,
     ) -> None:
         self.scene_name = scene_name
         self.source_file = source_file
@@ -36,6 +38,12 @@ class SceneData:
         self.channel_saturation_causes = tuple(channel_saturation_causes or [])
         self.bandwidth_constraints = tuple(bandwidth_constraints or [])
         self.flow_failure_causes = tuple(flow_failure_causes or [])
+        self.channel_unavailability_causes = tuple(
+            channel_unavailability_causes or []
+        )
+        self.nic_unavailability_causes = tuple(
+            nic_unavailability_causes or []
+        )
         self._evidence_cache: dict[str, object] = {}
         self._entities_by_type: dict[str, list[EntityRecord]] = {}
         self._entities_by_key: dict[tuple[str, str], EntityRecord] = {}
@@ -103,6 +111,8 @@ class SceneData:
         channel_saturation_causes: list[tuple[str, str]] = []
         bandwidth_constraints: list[tuple[str, str]] = []
         flow_failure_causes: list[tuple[str, str]] = []
+        channel_unavailability_causes: list[tuple[str, str]] = []
+        nic_unavailability_causes: list[tuple[str, str]] = []
         if label_file.is_file():
             with label_file.open("r", encoding="utf-8-sig") as handle:
                 for line_number, raw_line in enumerate(handle, start=1):
@@ -215,6 +225,37 @@ class SceneData:
                             channel_saturation_causes.append(
                                 (str(value["channel_id"]), str(value["label"]))
                             )
+                    elif label_type in {
+                        "channel_unavailability_cause",
+                        "nic_unavailability_cause",
+                    }:
+                        values = label_row.get("label", [])
+                        if not isinstance(values, list):
+                            raise ValueError(
+                                f"{label_file}:{line_number} unavailability "
+                                "cause label must be a list"
+                            )
+                        target = (
+                            channel_unavailability_causes
+                            if label_type == "channel_unavailability_cause"
+                            else nic_unavailability_causes
+                        )
+                        for value in values:
+                            if (
+                                not isinstance(value, dict)
+                                or "entity_id" not in value
+                                or "label" not in value
+                            ):
+                                raise ValueError(
+                                    f"{label_file}:{line_number} contains an "
+                                    "invalid unavailability cause label"
+                                )
+                            target.append(
+                                (
+                                    str(value["entity_id"]),
+                                    str(value["label"]),
+                                )
+                            )
         entities: list[EntityRecord] = []
         with source_file.open("r", encoding="utf-8-sig") as handle:
             for line_number, raw_line in enumerate(handle, start=1):
@@ -255,6 +296,8 @@ class SceneData:
             channel_saturation_causes=channel_saturation_causes,
             bandwidth_constraints=bandwidth_constraints,
             flow_failure_causes=flow_failure_causes,
+            channel_unavailability_causes=channel_unavailability_causes,
+            nic_unavailability_causes=nic_unavailability_causes,
         )
 
     def entities(self, entity_type: str) -> list[EntityRecord]:
@@ -310,10 +353,11 @@ def discover_scene_files(root: str | Path) -> list[Path]:
     if not scene_root.is_dir():
         raise ValueError(f"scenes_root is not a directory: {scene_root}")
 
-    files = list(scene_root.glob("*/twin.jsonl"))
+    files = list(scene_root.rglob("twin.jsonl"))
     if (scene_root / "twin.jsonl").is_file():
         files.append(scene_root / "twin.jsonl")
-    files.sort(key=lambda path: (path.parent.name, str(path)))
+    files = list(dict.fromkeys(files))
+    files.sort(key=lambda path: str(path.relative_to(scene_root)))
     if not files:
         raise ValueError(f"No scene twin.jsonl files found under {scene_root}")
     return files

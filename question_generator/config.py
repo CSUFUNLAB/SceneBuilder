@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 import yaml
 
 
@@ -15,6 +16,7 @@ class CategoryConfig:
     questions_per_question: int
     template_file: Path
     output_file: Path
+    options: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -46,13 +48,16 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
         raise ValueError(f"categories.{name}.questions_per_question must be a non-negative integer")
     if enabled and count == 0:
         raise ValueError(f"categories.{name}.questions_per_question must be positive when enabled")
+    options = raw.get("options", {})
+    if not isinstance(options, dict):
+        raise ValueError(f"categories.{name}.options must be a mapping")
 
     return CategoryConfig(
         name=name,
         enabled=enabled,
         questions_per_question=count,
         template_file=_resolve_path(
-            raw.get("template_file", f"templates/{name}.txt"),
+            raw.get("template_file", f"templates/{name}.yaml"),
             base_dir,
             f"categories.{name}.template_file",
         ),
@@ -61,6 +66,7 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
             base_dir,
             f"categories.{name}.output_file",
         ),
+        options=dict(options),
     )
 
 

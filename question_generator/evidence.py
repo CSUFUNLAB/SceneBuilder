@@ -25,7 +25,7 @@ def _number(properties: dict[str, object], name: str) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def _channel_throughputs(
+def channel_directional_throughputs(
     scene: SceneData,
     channel: EntityRecord,
 ) -> tuple[float, float] | None:
@@ -88,7 +88,7 @@ def _maximum_channel_throughput(
     scene: SceneData,
     channel: EntityRecord,
 ) -> float | None:
-    throughputs = _channel_throughputs(scene, channel)
+    throughputs = channel_directional_throughputs(scene, channel)
     return max(throughputs) if throughputs is not None else None
 
 
@@ -467,6 +467,39 @@ def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
     if queue_current / queue_size >= SATURATION_THRESHOLD:
         return "saturated"
     return "normal"
+
+
+def infer_channel_unavailability_cause(
+    scene: SceneData,
+    channel: EntityRecord,
+) -> str | None:
+    if infer_channel_state(scene, channel) != "disabled":
+        return None
+    physical_fault_id = _infer_unique_physical_fault(scene)
+    if physical_fault_id == channel.entity_id:
+        return "channel_or_interface_fault"
+    failed_node = scene.entity("node", physical_fault_id or "")
+    if (
+        failed_node is not None
+        and failed_node.entity_id in scene.channel_endpoint_nodes(channel)
+    ):
+        return "connected_node_fault"
+    return None
+
+
+def infer_nic_unavailability_cause(
+    scene: SceneData,
+    nic: EntityRecord,
+) -> str | None:
+    if infer_nic_state(scene, nic) != "disabled":
+        return None
+    channel = scene.entity(
+        "channel",
+        str(nic.relations.get("channel", "")),
+    )
+    if channel is None:
+        return None
+    return infer_channel_unavailability_cause(scene, channel)
 
 
 def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:

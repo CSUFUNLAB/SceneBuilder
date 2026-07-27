@@ -91,6 +91,15 @@ MbpsToBps(double mbps)
     return static_cast<uint64_t>(std::llround(mbps * 1000000.0));
 }
 
+uint32_t
+ScaledQueueSizePackets(uint32_t queueSizePackets, double scaleFactor)
+{
+    return std::max(
+        1u,
+        static_cast<uint32_t>(
+            std::llround(static_cast<double>(queueSizePackets) / scaleFactor)));
+}
+
 std::string
 QueueDiscTypeForPolicy(const std::string& queuePolicy)
 {
@@ -335,6 +344,9 @@ NetworkSceneHelper::LoadSceneRecords(const NetworkSceneData& scene)
                                       nic.mac,
                                       nic.queuePolicy,
                                       nic.queueSizePackets,
+                                      ScaledQueueSizePackets(
+                                          nic.queueSizePackets,
+                                          m_valueScaleFactor),
                                       nic.state});
         m_interfaceIndexById[nic.id] = static_cast<uint32_t>(m_interfaceRecords.size() - 1);
         m_interfaceIdByNodeInterface[{nic.node, nic.interfaceIndex}] = nic.id;
@@ -407,6 +419,8 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
         for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
         {
             const auto& nic = channelNics[endpoint];
+            const uint32_t simulationQueueSizePackets =
+                ScaledQueueSizePackets(nic.queueSizePackets, m_valueScaleFactor);
             Ptr<PointToPointNetDevice> device =
                 DynamicCast<PointToPointNetDevice>(devices.Get(endpoint));
             if (device == nullptr)
@@ -429,7 +443,8 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
             TrafficControlHelper trafficControl;
             trafficControl.SetRootQueueDisc(QueueDiscTypeForPolicy(nic.queuePolicy),
                                             "MaxSize",
-                                            StringValue(std::to_string(std::max(1u, nic.queueSizePackets)) + "p"));
+                                            StringValue(
+                                                std::to_string(simulationQueueSizePackets) + "p"));
             QueueDiscContainer queueDiscs = trafficControl.Install(devices.Get(endpoint));
             if (queueDiscs.GetN() != 1)
             {

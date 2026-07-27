@@ -2,7 +2,7 @@ output_root: ../generated_scenes
 seed: 20260331
 scenes_per_topology: 10
 max_topology_nodes: 50
-scene_duration: 2
+scene_duration: 1
 
 topology_sources:
   - name: brite_pool

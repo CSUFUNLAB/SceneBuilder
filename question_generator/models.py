@@ -12,12 +12,13 @@ class QuestionTemplate:
     template_id: str
     category: str
     question: str
+    answer_type: str
     answer_values: tuple[str, ...]
     placeholders: tuple[str, ...]
 
     @property
     def has_id_answer(self) -> bool:
-        return len(self.answer_values) == 1 and self.answer_values[0].endswith("_id")
+        return self.answer_type in {"channel_id", "entity_id"}
 
     def render(self, replacements: dict[str, str]) -> str:
         rendered = self.question
@@ -29,6 +30,21 @@ class QuestionTemplate:
         if unresolved:
             raise ValueError(f"Unresolved placeholders for {self.template_id}: {unresolved}")
         return rendered
+
+
+@dataclass(frozen=True)
+class EvolutionEventType:
+    event_type_id: str
+    entity_type: str
+    change: str
+    description: str
+
+
+@dataclass(frozen=True)
+class QuestionTemplateBundle:
+    category: str
+    templates: tuple[QuestionTemplate, ...]
+    event_types: tuple[EvolutionEventType, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -45,9 +61,11 @@ class GeneratedQuestion:
     question: str
     label: str
     scene_name: str
+    original_scene_id: str | None = None
+    evolved_scene_id: str | None = None
 
     def to_dict(self) -> dict[str, str]:
-        return {
+        value = {
             "question_id": self.question_id,
             "question_type": self.question_type,
             "template_id": self.template_id,
@@ -55,6 +73,11 @@ class GeneratedQuestion:
             "label": self.label,
             "scene_name": self.scene_name,
         }
+        if self.original_scene_id is not None:
+            value["original_scene_id"] = self.original_scene_id
+        if self.evolved_scene_id is not None:
+            value["evolved_scene_id"] = self.evolved_scene_id
+        return value
 
 
 @dataclass(frozen=True)

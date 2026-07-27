@@ -8,7 +8,6 @@ import random
 from .config import QUESTION_CATEGORIES, CategoryConfig, QuestionGeneratorConfig, load_config
 from .generators import (
     AnalysisQuestionGenerator,
-    EvolutionQuestionGenerator,
     OptimizationQuestionGenerator,
 )
 from .generators.base import QuestionCategoryGenerator
@@ -51,10 +50,14 @@ def _scene_question_file_names() -> tuple[str, ...]:
     return tuple(f"{category}_questions.jsonl" for category in QUESTION_CATEGORIES)
 
 
-def _clear_scene_question_files(scene_directories: list[Path] | tuple[Path, ...]) -> list[Path]:
+def _clear_scene_question_files(
+    scene_directories: list[Path] | tuple[Path, ...],
+    categories: tuple[str, ...] = QUESTION_CATEGORIES,
+) -> list[Path]:
     removed: list[Path] = []
+    file_names = tuple(f"{category}_questions.jsonl" for category in categories)
     for scene_directory in scene_directories:
-        for file_name in _scene_question_file_names():
+        for file_name in file_names:
             path = scene_directory / file_name
             if path.is_file():
                 path.unlink()
@@ -72,16 +75,10 @@ def _discover_scene_directories_for_cleanup(root: Path) -> list[Path]:
     ):
         return [root]
 
-    return sorted(
-        path
-        for path in root.iterdir()
-        if path.is_dir()
-        and (
-            (path / "metadata.json").is_file()
-            or (path / "twin.jsonl").is_file()
-            or any((path / file_name).is_file() for file_name in known_files)
-        )
-    )
+    scene_directories: set[Path] = set()
+    for file_name in ("metadata.json", "twin.jsonl", *known_files):
+        scene_directories.update(path.parent for path in root.rglob(file_name))
+    return sorted(scene_directories, key=lambda path: str(path.relative_to(root)))
 
 
 def clean_question_outputs(
@@ -111,7 +108,10 @@ def _generator_for(category: str) -> QuestionCategoryGenerator:
     if category == "analysis":
         return AnalysisQuestionGenerator()
     if category == "evolution":
-        return EvolutionQuestionGenerator()
+        raise ValueError(
+            "Evolution questions create paired scenes and Twins; "
+            "run them through 'python main.py questions -t evolution'"
+        )
     if category == "optimization":
         return OptimizationQuestionGenerator()
     raise ValueError(f"Unsupported question category: {category}")
@@ -132,6 +132,10 @@ def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[s
 
 
 def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
+    if not questions:
+        if path.is_file():
+            path.unlink()
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.tmp")
     with temporary_path.open("w", encoding="utf-8", newline="\n") as handle:
@@ -203,7 +207,8 @@ def _generate_category(
     for scene_directory, scene_questions in questions_by_scene.items():
         scene_output_file = scene_directory / f"{category_config.name}_questions.jsonl"
         _write_questions(scene_output_file, scene_questions)
-        scene_output_files.append(scene_output_file)
+        if scene_questions:
+            scene_output_files.append(scene_output_file)
     return (
         CategoryRunResult(
             category=category_config.name,
@@ -224,11 +229,6 @@ def run(
 ) -> QuestionGenerationResult:
     config: QuestionGeneratorConfig = load_config(config_path)
     root = Path(scenes_root).expanduser().resolve() if scenes_root is not None else config.scenes_root
-    _clear_scene_question_files(_discover_scene_directories_for_cleanup(root))
-    scene_files = discover_scene_files(root)
-    rng = random.Random(config.seed)
-    category_results: list[CategoryRunResult] = []
-    question_number = 1
 
     if question_type is not None:
         if question_type not in QUESTION_CATEGORIES:
@@ -238,6 +238,15 @@ def run(
         category_configs = [config.categories[question_type]]
     else:
         category_configs = [category for category in config.categories.values() if category.enabled]
+
+    _clear_scene_question_files(
+        _discover_scene_directories_for_cleanup(root),
+        tuple(category.name for category in category_configs),
+    )
+    scene_files = discover_scene_files(root)
+    rng = random.Random(config.seed)
+    category_results: list[CategoryRunResult] = []
+    question_number = 1
 
     for category_config in category_configs:
         result, question_number = _generate_category(

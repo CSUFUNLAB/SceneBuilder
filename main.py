@@ -17,7 +17,14 @@ import tempfile
 import time
 from typing import Sequence
 
-from question_generator.config import QUESTION_CATEGORIES
+from question_generator.config import (
+    QUESTION_CATEGORIES,
+    load_config as load_question_config,
+)
+from question_generator.evolution_workflow import (
+    generate_evolution_questions,
+    prepare_evolution_scenes,
+)
 from question_generator.runner import (
     QuestionGenerationResult,
     clean_question_outputs,
@@ -30,7 +37,6 @@ from scene_generator.runner import run as generate_scenes
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
-DEFAULT_SCENE_ROOT = PROJECT_ROOT / "generated_scenes"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 TWIN_FILE_NAME = "twin.jsonl"
 LABEL_FILE_NAME = "labels.jsonl"
@@ -46,7 +52,8 @@ PROGRESS_RE = re.compile(
 )
 DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
-COMMANDS = ("generate", "twins", "questions", "clean")
+TWIN_TYPES = ("origin", "evo", "opt")
+COMMANDS = ("generate", "twin", "questions", "clean")
 
 
 class SceneBuilderArgumentParser(argparse.ArgumentParser):
@@ -85,15 +92,28 @@ def build_parser() -> argparse.ArgumentParser:
     generate_parser = subparsers.add_parser("generate", help="Generate network scenes")
     generate_parser.add_argument("-c", "--config", dest="scene_config", required=True)
 
-    twins_parser = subparsers.add_parser("twins", help="Generate twins from existing scenes")
-    twins_parser.add_argument(
-        "scene",
-        nargs="?",
-        help="Relative path of one scene under generated_scenes. Omit it to process all scenes.",
+    twin_parser = subparsers.add_parser(
+        "twin",
+        help="Generate origin, evolution, or optimization Twins",
     )
-    _add_twin_arguments(twins_parser)
+    twin_parser.add_argument("twin_type", choices=TWIN_TYPES)
+    twin_parser.add_argument(
+        "-c",
+        "--config",
+        dest="question_config",
+        default=str(DEFAULT_QUESTION_CONFIG),
+        help="Question generator YAML config",
+    )
+    twin_parser.add_argument(
+        "--scene-root",
+        help="Override the scenes_root in the question configuration.",
+    )
+    _add_twin_arguments(twin_parser)
 
-    questions_parser = subparsers.add_parser("questions", help="Generate questions from scene twins")
+    questions_parser = subparsers.add_parser(
+        "questions",
+        help="Generate questions from completed Twins",
+    )
     question_action = questions_parser.add_mutually_exclusive_group(required=True)
     question_action.add_argument(
         "-t",
@@ -119,7 +139,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--scene-root",
         help="Override the scenes_root in the question configuration.",
     )
-
     clean_parser = subparsers.add_parser("clean", help="Remove generated scene directories")
     clean_parser.add_argument("-c", "--config", dest="scene_config", required=True)
     return parser
@@ -166,27 +185,6 @@ def _resolve_project_path(value: str | Path) -> Path:
     return path.resolve()
 
 
-def _resolve_twin_scene_path(value: str | None) -> Path:
-    scene_root = DEFAULT_SCENE_ROOT.resolve()
-    if value is None:
-        return scene_root
-
-    relative_path = Path(value).expanduser()
-    if relative_path.is_absolute():
-        raise ValueError("twins scene path must be relative to generated_scenes")
-
-    if relative_path.parts and relative_path.parts[0] == DEFAULT_SCENE_ROOT.name:
-        candidate = (PROJECT_ROOT / relative_path).resolve()
-    else:
-        candidate = (scene_root / relative_path).resolve()
-
-    try:
-        candidate.relative_to(scene_root)
-    except ValueError as exc:
-        raise ValueError("twins scene path must stay inside generated_scenes") from exc
-    return candidate
-
-
 def resolve_event_sampling(event_groups: int, events_per_group: int) -> tuple[int, int]:
     if event_groups < 0:
         raise ValueError("--event-groups must be greater than or equal to 0")
@@ -213,7 +211,14 @@ def discover_scenes(scene_root: Path) -> list[Path]:
         return [scene_root]
     if not scene_root.is_dir():
         raise ValueError(f"Scene directory does not exist: {scene_root}")
-    scenes = sorted(path for path in scene_root.iterdir() if is_scene_dir(path))
+    scenes = sorted(
+        {
+            metadata_file.parent
+            for metadata_file in scene_root.rglob("metadata.json")
+            if is_scene_dir(metadata_file.parent)
+        },
+        key=lambda path: str(path.relative_to(scene_root)),
+    )
     if not scenes:
         raise ValueError(f"No generated scenes found under: {scene_root}")
     return scenes
@@ -612,6 +617,53 @@ def _run_twin_stage(args: argparse.Namespace, scene_root: Path, scenes: Sequence
     )
 
 
+def _group_scenes_root(scenes_root: Path, group: str) -> Path:
+    if scenes_root.name in TWIN_TYPES:
+        if scenes_root.name != group:
+            raise ValueError(
+                f"scenes_root points to {scenes_root.name}, not {group}"
+            )
+        return scenes_root
+    return scenes_root / group
+
+
+def _configured_scenes_root(
+    question_config: str | Path,
+    override: Path | None,
+) -> Path:
+    return (
+        override
+        if override is not None
+        else load_question_config(question_config).scenes_root
+    )
+
+
+def _require_completed_twins(
+    scenes_root: Path,
+    group: str,
+) -> tuple[Path, list[Path]]:
+    group_root = _group_scenes_root(scenes_root, group)
+    try:
+        scenes = discover_scenes(group_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"No {group} scenes are available; run "
+            f"'python main.py twin {group}' first"
+        ) from exc
+    incomplete = [
+        scene
+        for scene in scenes
+        if not (scene / TWIN_FILE_NAME).is_file()
+        or not (scene / LABEL_FILE_NAME).is_file()
+    ]
+    if incomplete:
+        raise ValueError(
+            f"{len(incomplete)} {group} scene(s) do not have complete Twin "
+            f"outputs; run 'python main.py twin {group}' first"
+        )
+    return group_root, scenes
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -629,8 +681,56 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(scene_dir)
             return 0
 
-        if args.command == "twins":
-            result = _run_twin_stage(args, _resolve_twin_scene_path(args.scene))
+        if args.command == "twin":
+            scenes_root_override = (
+                _resolve_project_path(args.scene_root)
+                if args.scene_root
+                else None
+            )
+            scenes_root = _configured_scenes_root(
+                args.question_config,
+                scenes_root_override,
+            )
+            print(f"Twin type: {args.twin_type}", flush=True)
+            if args.twin_type == "origin":
+                result = _run_twin_stage(
+                    args,
+                    _group_scenes_root(scenes_root, "origin"),
+                )
+                return 0 if result.complete else 1
+            if args.twin_type == "evo":
+                if args.dry_run:
+                    raise ValueError(
+                        "Evolution Twin generation does not support --dry-run "
+                        "because it creates derived scene directories"
+                    )
+                if args.stop_time != 0:
+                    raise ValueError(
+                        "Evolution Twin generation does not support --stop-time; "
+                        "original and evolved Twins must use the same duration"
+                    )
+                preparation = prepare_evolution_scenes(
+                    args.question_config,
+                    scenes_root=scenes_root,
+                )
+                if not preparation.plans:
+                    raise ValueError(
+                        "No evolution scenes could be generated from the "
+                        "available origin scenes"
+                    )
+                result = _run_twin_stage(
+                    args,
+                    preparation.scenes_root,
+                    [plan.evolved_scene_dir for plan in preparation.plans],
+                )
+                print(
+                    f"Prepared {len(preparation.plans)} evolution scene(s)"
+                )
+                return 0 if result.complete else 1
+            result = _run_twin_stage(
+                args,
+                _group_scenes_root(scenes_root, "opt"),
+            )
             return 0 if result.complete else 1
 
         if args.command == "questions":
@@ -642,10 +742,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"from {result.scene_count} scene(s)"
                 )
                 return 0
-            print(f"Question type: {args.question_type}")
+            print(f"Question type: {args.question_type}", flush=True)
+            configured_root = _configured_scenes_root(
+                args.question_config,
+                scenes_root,
+            )
+            if args.question_type == "analysis":
+                original_scenes_root, _ = _require_completed_twins(
+                    configured_root,
+                    "origin",
+                )
+                result = generate_questions(
+                    args.question_config,
+                    scenes_root=original_scenes_root,
+                    question_type="analysis",
+                )
+                _print_question_result(result)
+                return 0
+            if args.question_type == "evolution":
+                _require_completed_twins(configured_root, "evo")
+                result = generate_evolution_questions(
+                    args.question_config,
+                    scenes_root=configured_root,
+                )
+                _print_question_result(result)
+                return 0
+            optimization_root, _ = _require_completed_twins(
+                configured_root,
+                "opt",
+            )
             result = generate_questions(
                 args.question_config,
-                scenes_root=scenes_root,
+                scenes_root=optimization_root,
                 question_type=args.question_type,
             )
             _print_question_result(result)
