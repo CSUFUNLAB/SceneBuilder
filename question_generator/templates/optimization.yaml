@@ -1,3 +1,30 @@
 schema_version: 1
 question_type: optimization
-templates: []
+
+templates:
+  - id: TO0001
+    question: What new path should data flow $data_flow_id$ use to improve its throughput?
+    answer:
+      type: path
+
+  - id: TO0002
+    question: What new path should data flow $data_flow_id$ use to reduce its average delay?
+    answer:
+      type: path
+
+  - id: TO0003
+    question: What new path should data flow $data_flow_id$ use to reduce its packet loss?
+    answer:
+      type: path
+
+  - id: TO0004
+    question: How should the routing table of node $node_id$ be modified to repair its routing failure?
+    answer:
+      type: route_entries
+      item_fields: [source_node_id, destination_node_id]
+
+  - id: TO0005
+    question: Which channel should be expanded, and to what capacity, to satisfy the demand of data flow $data_flow_id$?
+    answer:
+      type: channel_capacity
+      fields: [channel_id, capacity_mbps]

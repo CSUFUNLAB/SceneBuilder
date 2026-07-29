@@ -15,7 +15,14 @@ from .models import (
 
 SCHEMA_VERSION = 1
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
-_ANSWER_TYPES = {"enum", "channel_id", "entity_id"}
+_ANSWER_TYPES = {
+    "enum",
+    "channel_id",
+    "entity_id",
+    "path",
+    "route_entries",
+    "channel_capacity",
+}
 _EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
 _EVENT_CHANGES = {
     "failure",
@@ -143,9 +150,18 @@ def _load_event_types(
 def _load_answer(
     raw_answer: object,
     location: str,
-) -> tuple[str, tuple[str, ...]]:
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     answer = _mapping(raw_answer, location)
-    _reject_unknown(answer, {"type", "values"}, location)
+    _reject_unknown(
+        answer,
+        {"type", "values", "fields", "item_fields"},
+        location,
+    )
     answer_type = _identifier(answer.get("type"), f"{location}.type")
     if answer_type not in _ANSWER_TYPES:
         raise ValueError(
@@ -162,9 +178,40 @@ def _load_answer(
         raise ValueError(f"{location}: enum answers require values")
     if answer_type != "enum" and values:
         raise ValueError(f"{location}: ID answers cannot define values")
+    fields = tuple(
+        _identifier(value, f"{location}.fields")
+        for value in _list(answer.get("fields", []), f"{location}.fields")
+    )
+    item_fields = tuple(
+        _identifier(value, f"{location}.item_fields")
+        for value in _list(
+            answer.get("item_fields", []),
+            f"{location}.item_fields",
+        )
+    )
+    if len(fields) != len(set(fields)):
+        raise ValueError(f"{location}.fields must be unique")
+    if len(item_fields) != len(set(item_fields)):
+        raise ValueError(f"{location}.item_fields must be unique")
+    if answer_type == "channel_capacity":
+        if not fields or item_fields:
+            raise ValueError(
+                f"{location}: channel_capacity requires fields only"
+            )
+    elif answer_type == "route_entries":
+        if not item_fields or fields:
+            raise ValueError(
+                f"{location}: route_entries requires item_fields only"
+            )
+    elif fields or item_fields:
+        raise ValueError(
+            f"{location}: {answer_type} cannot define fields or item_fields"
+        )
     return (
         answer_type,
         values if answer_type == "enum" else (answer_type,),
+        fields,
+        item_fields,
     )
 
 
@@ -202,7 +249,12 @@ def _load_templates(
         )
         if not placeholders:
             raise ValueError(f"{location}.question needs at least one placeholder")
-        answer_type, answer_values = _load_answer(
+        (
+            answer_type,
+            answer_values,
+            answer_fields,
+            answer_item_fields,
+        ) = _load_answer(
             item.get("answer"),
             f"{location}.answer",
         )
@@ -215,6 +267,8 @@ def _load_templates(
                 answer_type=answer_type,
                 answer_values=answer_values,
                 placeholders=placeholders,
+                answer_fields=answer_fields,
+                answer_item_fields=answer_item_fields,
             )
         )
     return tuple(templates)

@@ -53,6 +53,7 @@ PROGRESS_RE = re.compile(
 DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 TWIN_TYPES = ("origin", "evo", "opt")
+SCENES_DIR_NAME = "scenes"
 COMMANDS = ("generate", "twin", "questions", "clean")
 
 
@@ -618,13 +619,22 @@ def _run_twin_stage(args: argparse.Namespace, scene_root: Path, scenes: Sequence
 
 
 def _group_scenes_root(scenes_root: Path, group: str) -> Path:
+    if (
+        scenes_root.name == SCENES_DIR_NAME
+        and scenes_root.parent.name in TWIN_TYPES
+    ):
+        if scenes_root.parent.name != group:
+            raise ValueError(
+                f"scenes_root points to {scenes_root.parent.name}, not {group}"
+            )
+        return scenes_root
     if scenes_root.name in TWIN_TYPES:
         if scenes_root.name != group:
             raise ValueError(
                 f"scenes_root points to {scenes_root.name}, not {group}"
             )
-        return scenes_root
-    return scenes_root / group
+        return scenes_root / SCENES_DIR_NAME
+    return scenes_root / group / SCENES_DIR_NAME
 
 
 def _configured_scenes_root(

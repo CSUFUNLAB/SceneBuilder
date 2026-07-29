@@ -6,7 +6,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from .cleaner import clean_output_root
+from .cleaner import reset_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
@@ -26,8 +26,7 @@ from .writers.matrix_writer import write_matrix_csv
 
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 ORIGINAL_SCENES_DIR_NAME = "origin"
-EVOLUTION_SCENES_DIR_NAME = "evo"
-OPTIMIZATION_SCENES_DIR_NAME = "opt"
+SCENES_DIR_NAME = "scenes"
 
 
 def _sanitize_name(value: str) -> str:
@@ -50,7 +49,12 @@ def _build_scene_dir(config, selected: SelectedTopology, scene_index: int, total
         f"{topo_stem}_"
         f"t{duration}s"
     )
-    return config.output_root / ORIGINAL_SCENES_DIR_NAME / scene_name
+    return (
+        config.output_root
+        / ORIGINAL_SCENES_DIR_NAME
+        / SCENES_DIR_NAME
+        / scene_name
+    )
 
 
 def _build_internal_id_graph(graph: nx.Graph) -> nx.Graph:
@@ -376,13 +380,12 @@ def run(config_path: str | Path) -> list[Path]:
         )
 
     total_scene_count = len(eligible_topologies) * int(config.scenes_per_topology)
-    clean_output_root(config.output_root)
-    (config.output_root / ORIGINAL_SCENES_DIR_NAME).mkdir(parents=True, exist_ok=True)
-    (config.output_root / EVOLUTION_SCENES_DIR_NAME).mkdir(parents=True, exist_ok=True)
-    (config.output_root / OPTIMIZATION_SCENES_DIR_NAME).mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    reset_output_root(config.output_root)
+    (
+        config.output_root
+        / ORIGINAL_SCENES_DIR_NAME
+        / SCENES_DIR_NAME
+    ).mkdir(parents=True, exist_ok=True)
     root_rng = RandomManager(config.seed)
 
     generated: list[Path] = []

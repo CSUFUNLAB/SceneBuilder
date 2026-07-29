@@ -19,7 +19,11 @@ from .models import (
     GenerationCount,
     QuestionTemplate,
 )
-from .runner import CategoryRunResult, QuestionGenerationResult
+from .runner import (
+    CategoryRunResult,
+    QuestionGenerationResult,
+    export_question_template,
+)
 from .scene import EntityRecord, SceneData
 from .templates import load_template_bundle
 
@@ -27,6 +31,9 @@ from .templates import load_template_bundle
 DERIVATION_KIND = "evolution"
 ORIGINAL_SCENES_DIR_NAME = "origin"
 EVOLUTION_SCENES_DIR_NAME = "evo"
+SCENES_DIR_NAME = "scenes"
+NUMERIC_UNCHANGED_RELATIVE_TOLERANCE = 0.01
+EXACT_NUMERIC_METRICS = frozenset({"lost_packets"})
 SCENE_NAME_PATTERN = re.compile(
     r"^(?P<prefix>.+)_id(?P<scene_id>[0-9]+)_(?P<suffix>.+)$"
 )
@@ -139,7 +146,8 @@ _QUESTION_RULES = {
 }
 
 
-_EXPECTED_NON_NUMERIC_ANSWERS = {
+_EXPECTED_ANSWER_VALUES = {
+    "TE0001": ("unchanged", "decrease"),
     "TE0017": ("unchanged", "routing_failed", "disabled"),
     "TE0018": ("recovered", "unchanged"),
     "TE0019": ("recovered", "unchanged", "disabled"),
@@ -214,8 +222,12 @@ def prepare_evolution_scenes(
     )
     _clear_previous_evolution_outputs(root, category.output_file)
 
-    original_scenes_root = root / ORIGINAL_SCENES_DIR_NAME
-    evolution_scenes_root = root / EVOLUTION_SCENES_DIR_NAME
+    original_scenes_root = (
+        root / ORIGINAL_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
+    evolution_scenes_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
     source_directories = [
         path.parent
         for path in sorted(original_scenes_root.glob("*/metadata.json"))
@@ -235,11 +247,11 @@ def prepare_evolution_scenes(
     options = _evolution_options(category)
     scenes_per_event = int(options["scenes_per_event"])
     plans: list[EvolutionPlan] = []
-    used_source_scene_ids: set[str] = set()
     next_scene_numeric_id, scene_id_width = _next_scene_id(root)
     serial = 0
     for spec in template_bundle.event_types:
         event_type = spec.event_type_id
+        used_source_scene_ids: set[str] = set()
         for _ in range(scenes_per_event):
             candidates = [
                 source
@@ -331,8 +343,9 @@ def generate_evolution_questions(
             "No completed evolution scene pairs are available; run "
             "'python main.py twin evo' first"
         )
+    export_question_template(category)
     _clear_evolution_question_outputs(
-        root / EVOLUTION_SCENES_DIR_NAME,
+        root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME,
         category.output_file,
     )
 
@@ -486,16 +499,7 @@ def _validate_templates(
                 f"{template.template_id} placeholders must be "
                 f"{sorted(expected_placeholders)}, got {list(template.placeholders)}"
             )
-        if rule.comparison_kind == "numeric" and template.answer_values != (
-            "increase",
-            "unchanged",
-            "decrease",
-        ):
-            raise ValueError(
-                f"{template.template_id} numeric answers must be "
-                "[increase, unchanged, decrease]"
-            )
-        expected_answers = _EXPECTED_NON_NUMERIC_ANSWERS.get(
+        expected_answers = _EXPECTED_ANSWER_VALUES.get(
             template.template_id
         )
         if (
@@ -505,6 +509,16 @@ def _validate_templates(
             raise ValueError(
                 f"{template.template_id} answers must be "
                 f"{list(expected_answers)}"
+            )
+        if (
+            expected_answers is None
+            and rule.comparison_kind == "numeric"
+            and template.answer_values
+            != ("increase", "unchanged", "decrease")
+        ):
+            raise ValueError(
+                f"{template.template_id} numeric answers must be "
+                "[increase, unchanged, decrease]"
             )
 
 
@@ -1275,11 +1289,29 @@ def _evaluate_target(
         )
         if before_value is None or after_value is None:
             return None
-    return _numeric_transition(before_value, after_value)
+    relative_tolerance = (
+        0.0
+        if rule.metric_name in EXACT_NUMERIC_METRICS
+        else NUMERIC_UNCHANGED_RELATIVE_TOLERANCE
+    )
+    return _numeric_transition(
+        before_value,
+        after_value,
+        relative_tolerance=relative_tolerance,
+    )
 
 
-def _numeric_transition(before: float, after: float) -> str:
-    if math.isclose(before, after, rel_tol=1e-6, abs_tol=1e-6):
+def _numeric_transition(
+    before: float,
+    after: float,
+    *,
+    relative_tolerance: float = 0.0,
+) -> str:
+    unchanged_threshold = abs(before) * relative_tolerance
+    if (
+        abs(after - before) <= unchanged_threshold
+        or math.isclose(before, after, rel_tol=0.0, abs_tol=1e-6)
+    ):
         return "unchanged"
     return "increase" if after > before else "decrease"
 
@@ -1417,7 +1449,9 @@ def _load_evolution_plans(
     root: Path,
     event_types: tuple[EvolutionEventType, ...],
 ) -> list[EvolutionPlan]:
-    evolution_root = root / EVOLUTION_SCENES_DIR_NAME
+    evolution_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
     event_type_by_id = {
         event_type.event_type_id: event_type
         for event_type in event_types
@@ -1467,6 +1501,7 @@ def _load_evolution_plans(
                 original_scene_file=(
                     root
                     / ORIGINAL_SCENES_DIR_NAME
+                    / SCENES_DIR_NAME
                     / original_scene_id
                     / "twin.jsonl"
                 ),
@@ -1494,8 +1529,12 @@ def _clear_previous_evolution_outputs(root: Path, global_output: Path) -> None:
         global_output.unlink()
     if not root.is_dir():
         raise ValueError(f"scenes_root is not a directory: {root}")
-    original_scenes_root = root / ORIGINAL_SCENES_DIR_NAME
-    evolution_scenes_root = root / EVOLUTION_SCENES_DIR_NAME
+    original_scenes_root = (
+        root / ORIGINAL_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
+    evolution_scenes_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
     original_scenes_root.mkdir(parents=True, exist_ok=True)
     evolution_scenes_root.mkdir(parents=True, exist_ok=True)
     for scene_dir in list(evolution_scenes_root.iterdir()):

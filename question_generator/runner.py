@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
+import shutil
 
 from .config import QUESTION_CATEGORIES, CategoryConfig, QuestionGeneratorConfig, load_config
 from .generators import (
@@ -96,6 +97,10 @@ def clean_question_outputs(
         if output_file.is_file():
             output_file.unlink()
             removed.append(output_file)
+        exported_template_file = category.exported_template_file
+        if exported_template_file.is_file():
+            exported_template_file.unlink()
+            removed.append(exported_template_file)
 
     return QuestionCleanupResult(
         scenes_root=root,
@@ -145,6 +150,15 @@ def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
     temporary_path.replace(path)
 
 
+def export_question_template(category_config: CategoryConfig) -> Path:
+    output_path = category_config.exported_template_file
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = output_path.with_name(f".{output_path.name}.tmp")
+    shutil.copyfile(category_config.template_file, temporary_path)
+    temporary_path.replace(output_path)
+    return output_path
+
+
 def _generate_category(
     category_config: CategoryConfig,
     scene_files: list[Path],
@@ -154,6 +168,7 @@ def _generate_category(
     templates = load_templates(category_config.template_file, category_config.name)
     if not templates:
         raise ValueError(f"Enabled category {category_config.name} has no question templates")
+    export_question_template(category_config)
 
     generator = _generator_for(category_config.name)
     questions: list[GeneratedQuestion] = []

@@ -15,6 +15,8 @@ class QuestionTemplate:
     answer_type: str
     answer_values: tuple[str, ...]
     placeholders: tuple[str, ...]
+    answer_fields: tuple[str, ...] = ()
+    answer_item_fields: tuple[str, ...] = ()
 
     @property
     def has_id_answer(self) -> bool:

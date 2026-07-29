@@ -7,6 +7,12 @@ import yaml
 
 
 QUESTION_CATEGORIES = ("analysis", "evolution", "optimization")
+QUESTION_DATASET_DIRS = {
+    "analysis": "origin",
+    "evolution": "evo",
+    "optimization": "opt",
+}
+EXPORTED_TEMPLATE_FILE_NAME = "question_template.yaml"
 
 
 @dataclass(frozen=True)
@@ -17,6 +23,10 @@ class CategoryConfig:
     template_file: Path
     output_file: Path
     options: dict[str, Any]
+
+    @property
+    def exported_template_file(self) -> Path:
+        return self.output_file.parent / EXPORTED_TEMPLATE_FILE_NAME
 
 
 @dataclass(frozen=True)
@@ -62,7 +72,13 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
             f"categories.{name}.template_file",
         ),
         output_file=_resolve_path(
-            raw.get("output_file", f"output/{name}_questions.jsonl"),
+            raw.get(
+                "output_file",
+                (
+                    f"../generated_scenes/{QUESTION_DATASET_DIRS[name]}/"
+                    f"{name}_questions.jsonl"
+                ),
+            ),
             base_dir,
             f"categories.{name}.output_file",
         ),

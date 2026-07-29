@@ -61,7 +61,7 @@ python main.py generate -c configs/example.yaml
 场景会生成到配置文件的 `output_root`，当前示例配置对应：
 
 ```text
-/home/SceneBuilder/generated_scenes/origin
+/home/SceneBuilder/generated_scenes/origin/scenes
 ```
 
 一次生成的场景数量为：
@@ -70,7 +70,9 @@ python main.py generate -c configs/example.yaml
 符合 max_topology_nodes 限制的拓扑数量 x scenes_per_topology
 ```
 
-注意：重新执行场景生成时，会先清理 `output_root` 下已有的场景目录，再生成新场景。
+注意：重新执行场景生成时，会完整清空配置指定的 `output_root`，包括此前生成的
+`origin`、`evo`、`opt` 场景、Twin、问题文件和问题模板，然后只创建并生成新的
+`origin/scenes`。请勿将 `output_root` 指向需要保留其他文件的目录。
 
 ### 2. 生成 Twin
 
@@ -86,12 +88,12 @@ python main.py twin origin
 python main.py twin evo
 ```
 
-该命令只从 `origin` 中同时具有 `twin.jsonl` 和 `labels.jsonl` 的场景里随机抽样；
+该命令只从 `origin/scenes` 中同时具有 `twin.jsonl` 和 `labels.jsonl` 的场景里随机抽样；
 缺少完整 Twin 输出的场景会被跳过，只有一个可用场景都没有时才会提示先运行
 `python main.py twin origin`。它会读取 `question_generator/templates/evolution.yaml`
 中独立定义的 `events` 目录，按每种事件从符合条件的原场景中随机抽样；原场景在本次
-抽样中不重复使用。随后，命令将事件直接施加到复制出的静态场景上，并在 `evo` 中生成
-Twin。当前目录包含节点、信道和网卡的故障/恢复、数据流负载的增加/降低，以及新增
+抽样中不重复使用。随后，命令将事件直接施加到复制出的静态场景上，并在 `evo/scenes`
+中生成 Twin。当前目录包含节点、信道和网卡的故障/恢复、数据流负载的增加/降低，以及新增
 数据流，共九类事件。新增流事件会选择一个静态路由可达且尚无现有流的源宿节点对，
 分配新的流 ID，并按配置范围随机生成需求带宽。
 
@@ -137,7 +139,7 @@ python main.py questions -t analysis \
 `question_id`，格式为 `Q00000001`。因此，同一个 `template_id` 可以生成多个不同的
 `question_id`。
 
-分析问题只读取 `origin`。如果其中存在未生成 Twin 的场景，命令会停止并提示先运行
+分析问题只读取 `origin/scenes`。如果其中存在未生成 Twin 的场景，命令会停止并提示先运行
 `python main.py twin origin`。
 
 生成演化问题时使用：
@@ -147,7 +149,7 @@ python main.py questions -t evolution -c configs/question_generator.yaml
 ```
 
 该命令不会创建场景或运行 ns-3；它要求先运行 `python main.py twin evo`。生成器读取
-`evo` 中的事件元数据和 Twin，比较对应的原场景 Twin，再按目标标签寻找实际满足变化的
+`evo/scenes` 中的事件元数据和 Twin，比较对应的原场景 Twin，再按目标标签寻找实际满足变化的
 实体。例如生成 `increase` 标签时，只有确实观测到对应指标升高的实体才会写入问题。
 一个演化场景可以为不同模板提供多道问题。
 
@@ -164,26 +166,35 @@ python main.py clean -c configs/example.yaml
 ```text
 generated_scenes/
 ├── origin/
-│   └── <original_scene_id>/
-│       ├── metadata.json
-│       ├── nodes.csv
-│       ├── channels.csv
-│       ├── nics.csv
-│       ├── routing_matrix.csv
-│       ├── traffic.jsonl
-│       ├── twin.jsonl
-│       ├── labels.jsonl
-│       └── <question_type>_questions.jsonl
+│   ├── question_template.yaml
+│   ├── analysis_questions.jsonl
+│   └── scenes/
+│       └── <original_scene_id>/
+│           ├── metadata.json
+│           ├── nodes.csv
+│           ├── channels.csv
+│           ├── nics.csv
+│           ├── routing_matrix.csv
+│           ├── traffic.jsonl
+│           ├── twin.jsonl
+│           ├── labels.jsonl
+│           └── analysis_questions.jsonl
 ├── evo/
-│   └── <evolved_scene_id>/
-│       └── 与原场景相同的场景文件
+│   ├── question_template.yaml
+│   ├── evolution_questions.jsonl
+│   └── scenes/
+│       └── <evolved_scene_id>/
+│           └── 与原场景相同的场景文件
 └── opt/
-    └── <optimization_scene_id>/
-        └── 优化场景文件
+    ├── question_template.yaml
+    ├── optimization_questions.jsonl
+    └── scenes/
+        └── <optimization_scene_id>/
+            └── 优化场景文件
 ```
 
-普通场景生成始终写入 `origin`；`twin evo` 基于其中的原场景创建新场景，并只写入
-`evo`。演化场景名末尾使用事件场景 ID，例如
+普通场景生成始终写入 `origin/scenes`；`twin evo` 基于其中的原场景创建新场景，并只写入
+`evo/scenes`。演化场景名末尾使用事件场景 ID，例如
 `example_id2001_York_t2s_evo_E00000001`。三个目录中的数字场景 ID 共用同一编号空间。
 
 场景输入文件的作用：
@@ -262,9 +273,11 @@ generated_scenes/
 
 全网状态的判断优先级为 `faulty > congested > normal`。存在节点崩溃、节点路由故障、网卡故障、信道故障或数据流失败时为 `faulty`；没有故障，但至少一个链路或网卡为 `saturated` 时为 `congested`；其余情况为 `normal`。数据流的 `degraded` 或 `unstable` 状态本身不会把全网标记为拥塞。
 
-问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。默认分析问题输出到项目根目录的 `analysis_questions.jsonl`。
+问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。
+默认分析问题写入 `generated_scenes/origin/analysis_questions.jsonl`。
 
-演化问题的总列表默认写入 `evolution_questions.jsonl`。每条记录除通用字段外，还包含：
+演化问题的总列表默认写入
+`generated_scenes/evo/evolution_questions.jsonl`。每条记录除通用字段外，还包含：
 
 - `original_scene_id`：变更前的原场景 ID。
 - `evolved_scene_id`：基于原场景生成的新场景 ID。
@@ -308,6 +321,10 @@ generated_scenes/
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。
 
+每次成功生成某一类问题时，生成器会把该类 `template_file` 原样复制到问题文件同目录的
+`question_template.yaml`。因此 `origin`、`evo` 和 `opt` 都是包含问题列表、原始模板和
+`scenes/` 的自包含数据集目录，下游可以直接从模板的 `answer` 字段读取输出约束。
+
 模板文件是 `schema_version: 1` 的 YAML。所有任务的 `templates` 使用相同结构，每项只
 包含唯一的 `id`、问题文本 `question` 和答案契约 `answer`。分析、演化和优化模板 ID
 分别使用 `TA`、`TE`、`TO` 前缀，后接四位数字；问题生成器根据模板 ID 选择对应生成规则。
@@ -319,7 +336,11 @@ generated_scenes/
 演化类的 `options.scenes_per_event` 使用一个正整数控制每类事件生成多少个场景；例如设置
 为 `3` 时，九类事件各生成 3 个场景，最多生成 27 个演化场景。该区域还可配置流量增减
 倍率、新增流的 `flow_addition_demand_mbps_range` 需求带宽范围，以及优先选择事件相关
-目标的概率。
+目标的概率。同一事件类型内部从符合条件的原场景中随机不放回抽取；不同事件类型彼此
+独立，可以复用同一个原场景，前面的事件不会消耗后续事件的候选场景。
+演化问题比较吞吐量、时延和信道承载带宽等连续数值时，变化绝对值不超过原值的 `1%`
+判定为 `unchanged`；`lost_packets` 属于整数计数，只有数值完全相等才判定为
+`unchanged`。
 当前已经实现分析类与演化类问题生成；优化类保留入口，但尚未启用完整生成逻辑。
 
 ## 常用选项

@@ -6,12 +6,12 @@ categories:
     enabled: true
     questions_per_question: 60
     template_file: ../question_generator/templates/analysis.yaml
-    output_file: ../analysis_questions.jsonl
+    output_file: ../generated_scenes/origin/analysis_questions.jsonl
   evolution:
     enabled: false
     questions_per_question: 60
     template_file: ../question_generator/templates/evolution.yaml
-    output_file: ../evolution_questions.jsonl
+    output_file: ../generated_scenes/evo/evolution_questions.jsonl
     options:
       load_increase_multiplier_range: [1.2, 2.0]
       load_decrease_multiplier_range: [0.2, 0.8]
@@ -22,4 +22,4 @@ categories:
     enabled: false
     questions_per_question: 60
     template_file: ../question_generator/templates/optimization.yaml
-    output_file: ../optimization_questions.jsonl
+    output_file: ../generated_scenes/opt/optimization_questions.jsonl
