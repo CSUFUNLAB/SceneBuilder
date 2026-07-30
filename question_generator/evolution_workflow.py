@@ -12,7 +12,7 @@ import shutil
 from typing import Any
 
 from .config import CategoryConfig, QuestionGeneratorConfig, load_config
-from .evidence import channel_directional_throughputs, infer_entity_state
+from .evidence import channel_directional_throughputs
 from .models import (
     EvolutionEventType,
     GeneratedQuestion,
@@ -112,10 +112,6 @@ _QUESTION_RULES = {
     ),
     "TE0017": EvolutionQuestionRule("node_failure", "node", "status"),
     "TE0018": EvolutionQuestionRule("node_recovery", "node", "status"),
-    "TE0019": EvolutionQuestionRule("channel_failure", "channel", "status"),
-    "TE0020": EvolutionQuestionRule("channel_recovery", "channel", "status"),
-    "TE0021": EvolutionQuestionRule("nic_failure", "nic", "status"),
-    "TE0022": EvolutionQuestionRule("nic_recovery", "nic", "status"),
     "TE0023": EvolutionQuestionRule(
         "flow_load_increase", "channel", "saturation_outcome"
     ),
@@ -150,10 +146,6 @@ _EXPECTED_ANSWER_VALUES = {
     "TE0001": ("unchanged", "decrease"),
     "TE0017": ("unchanged", "routing_failed", "disabled"),
     "TE0018": ("recovered", "unchanged"),
-    "TE0019": ("recovered", "unchanged", "disabled"),
-    "TE0020": ("recovered", "unchanged", "saturated"),
-    "TE0021": ("recovered", "unchanged", "disabled"),
-    "TE0022": ("recovered", "unchanged", "saturated"),
     "TE0023": ("saturated", "not_saturated"),
     "TE0024": ("recovered", "not_recovered"),
     "TE0025": ("saturated", "not_saturated"),
@@ -722,6 +714,11 @@ def template_placeholder_names(
                 "event_demand_mbps",
             }
         )
+    elif (
+        event_type.entity_type == "data_flow"
+        and event_type.change in {"load_increase", "load_decrease"}
+    ):
+        names.add("event_rate_multiplier")
     if not (
         event_type.entity_type == "data_flow"
         and rule.target_entity_type == "data_flow"
@@ -1174,6 +1171,14 @@ def _find_evidence_candidates(
                     "event_demand_mbps": str(event["demand_mbps"]),
                 }
             )
+        elif (
+            event_entity_type == "data_flow"
+            and event_type.change
+            in {"load_increase", "load_decrease"}
+        ):
+            replacements["event_rate_multiplier"] = str(
+                event["multiplier"]
+            )
         target_placeholder = _target_placeholder(target_entity_type)
         if target_placeholder in template_placeholder_names(
             template,
@@ -1237,8 +1242,8 @@ def _evaluate_target(
     if rule.comparison_kind == "after_status":
         if before_entity is not None or after_entity is None:
             return None
-        after_state = infer_entity_state(after, after_entity)
-        if after_state is None or after_state != after_entity.label:
+        after_state = after_entity.label
+        if not after_state:
             return None
         return after_state
     if before_entity is None or after_entity is None:
@@ -1248,14 +1253,9 @@ def _evaluate_target(
         "saturation_outcome",
         "saturation_recovery",
     }:
-        before_state = infer_entity_state(before, before_entity)
-        after_state = infer_entity_state(after, after_entity)
-        if (
-            before_state is None
-            or after_state is None
-            or before_state != before_entity.label
-            or after_state != after_entity.label
-        ):
+        before_state = before_entity.label
+        after_state = after_entity.label
+        if not before_state or not after_state:
             return None
         if rule.comparison_kind == "saturation_outcome":
             return (

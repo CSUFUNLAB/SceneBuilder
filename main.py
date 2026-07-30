@@ -11,11 +11,12 @@ import random
 import re
 import select
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Sequence
+from typing import Callable, Sequence
 
 from question_generator.config import (
     QUESTION_CATEGORIES,
@@ -156,7 +157,10 @@ def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
         "--stop-time",
         type=float,
         default=0.0,
-        help="Simulation stop time in seconds. 0 uses each scene's metadata duration.",
+        help=(
+            "Absolute simulation stop time in seconds. 0 uses the application "
+            "start time plus each scene's metadata duration."
+        ),
     )
     parser.add_argument(
         "--progress-interval",
@@ -481,6 +485,7 @@ def run_twins(
     events_per_group: int = 0,
     event_seed: int = 1,
     event_list: str = "events.jsonl",
+    before_output_reset: Callable[[], None] | None = None,
 ) -> TwinGenerationResult:
     event_groups, events_per_group = resolve_event_sampling(event_groups, events_per_group)
     resolved_scene_root = Path(scene_root).expanduser().resolve()
@@ -495,6 +500,9 @@ def run_twins(
         raise ValueError(f"Invalid generated scene directory: {invalid_scenes[0]}")
     if not scene_paths:
         raise ValueError("No generated scenes were provided for twin generation")
+
+    if before_output_reset is not None and not dry_run:
+        before_output_reset()
 
     removed_twin_files = clear_twin_outputs(scene_paths, dry_run)
     if not dry_run:
@@ -600,7 +608,13 @@ def _print_question_result(result: QuestionGenerationResult) -> None:
             )
 
 
-def _run_twin_stage(args: argparse.Namespace, scene_root: Path, scenes: Sequence[Path] | None = None) -> TwinGenerationResult:
+def _run_twin_stage(
+    args: argparse.Namespace,
+    scene_root: Path,
+    scenes: Sequence[Path] | None = None,
+    *,
+    before_output_reset: Callable[[], None] | None = None,
+) -> TwinGenerationResult:
     return run_twins(
         scene_root,
         scenes=scenes,
@@ -615,6 +629,7 @@ def _run_twin_stage(args: argparse.Namespace, scene_root: Path, scenes: Sequence
         events_per_group=args.events_per_group,
         event_seed=args.event_seed,
         event_list=args.event_list,
+        before_output_reset=before_output_reset,
     )
 
 
@@ -648,9 +663,82 @@ def _configured_scenes_root(
     )
 
 
+def _clear_dependent_evolution_outputs(
+    origin_scenes_root: Path,
+    evolution_output_file: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    dataset_root = origin_scenes_root.parent.parent
+    evolution_scenes_root = (
+        dataset_root / "evo" / SCENES_DIR_NAME
+    )
+    if evolution_scenes_root.is_symlink():
+        raise ValueError(
+            "Refusing to clear a symbolic-link evolution scenes root: "
+            f"{evolution_scenes_root}"
+        )
+    if evolution_scenes_root.exists() and not evolution_scenes_root.is_dir():
+        raise NotADirectoryError(
+            f"Evolution scenes root is not a directory: {evolution_scenes_root}"
+        )
+
+    removed_scene_entries: list[Path] = []
+    if evolution_scenes_root.is_dir():
+        for entry in sorted(
+            evolution_scenes_root.iterdir(),
+            key=lambda path: path.name,
+        ):
+            if entry.is_symlink() or entry.is_file():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+            removed_scene_entries.append(entry)
+
+    removed_question_artifacts: list[Path] = []
+    question_artifacts = (
+        evolution_output_file,
+        evolution_output_file.parent / "question_template.yaml",
+    )
+    for artifact in dict.fromkeys(question_artifacts):
+        if artifact.is_symlink() or artifact.is_file():
+            artifact.unlink()
+            removed_question_artifacts.append(artifact)
+
+    return tuple(removed_scene_entries), tuple(removed_question_artifacts)
+
+
+def _clear_question_outputs(
+    scenes_root: Path,
+    output_file: Path,
+    question_type: str,
+) -> tuple[Path, ...]:
+    removed: list[Path] = []
+    if scenes_root.is_dir():
+        for local_output in sorted(
+            scenes_root.glob(f"*/{question_type}_questions.jsonl"),
+            key=lambda path: str(path),
+        ):
+            if local_output.is_symlink() or local_output.is_file():
+                local_output.unlink()
+                removed.append(local_output)
+
+    global_artifacts = (
+        output_file,
+        output_file.parent / "question_template.yaml",
+    )
+    for artifact in dict.fromkeys(global_artifacts):
+        if artifact.is_symlink() or artifact.is_file():
+            artifact.unlink()
+            removed.append(artifact)
+    return tuple(removed)
+
+
 def _require_completed_twins(
     scenes_root: Path,
     group: str,
+    *,
+    allow_partial: bool = False,
 ) -> tuple[Path, list[Path]]:
     group_root = _group_scenes_root(scenes_root, group)
     try:
@@ -660,18 +748,35 @@ def _require_completed_twins(
             f"No {group} scenes are available; run "
             f"'python main.py twin {group}' first"
         ) from exc
+    complete = [
+        scene
+        for scene in scenes
+        if (scene / TWIN_FILE_NAME).is_file()
+        and (scene / LABEL_FILE_NAME).is_file()
+    ]
     incomplete = [
         scene
         for scene in scenes
         if not (scene / TWIN_FILE_NAME).is_file()
         or not (scene / LABEL_FILE_NAME).is_file()
     ]
-    if incomplete:
+    if incomplete and not allow_partial:
         raise ValueError(
             f"{len(incomplete)} {group} scene(s) do not have complete Twin "
             f"outputs; run 'python main.py twin {group}' first"
         )
-    return group_root, scenes
+    if not complete:
+        raise ValueError(
+            f"No {group} scenes have complete twin.jsonl and labels.jsonl "
+            f"outputs; run 'python main.py twin {group}' first"
+        )
+    if incomplete:
+        print(
+            f"Using {len(complete)} completed {group} scene(s); "
+            f"skipping {len(incomplete)} incomplete scene(s).",
+            flush=True,
+        )
+    return group_root, complete
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -703,9 +808,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"Twin type: {args.twin_type}", flush=True)
             if args.twin_type == "origin":
+                origin_scenes_root = _group_scenes_root(
+                    scenes_root,
+                    "origin",
+                )
+                question_categories = load_question_config(
+                    args.question_config
+                ).categories
+                evolution_output_file = question_categories[
+                    "evolution"
+                ].output_file
+                analysis_output_file = question_categories[
+                    "analysis"
+                ].output_file
+
+                def invalidate_origin_dependents() -> None:
+                    removed_analysis_artifacts = _clear_question_outputs(
+                        origin_scenes_root,
+                        analysis_output_file,
+                        "analysis",
+                    )
+                    removed_scenes, removed_artifacts = (
+                        _clear_dependent_evolution_outputs(
+                            origin_scenes_root,
+                            evolution_output_file,
+                        )
+                    )
+                    print(
+                        "Invalidated "
+                        f"{len(removed_analysis_artifacts)} analysis question "
+                        "artifact(s), "
+                        f"{len(removed_scenes)} evolution scene entr"
+                        f"{'y' if len(removed_scenes) == 1 else 'ies'} "
+                        "and "
+                        f"{len(removed_artifacts)} evolution question "
+                        "artifact(s).",
+                        flush=True,
+                    )
+
                 result = _run_twin_stage(
                     args,
-                    _group_scenes_root(scenes_root, "origin"),
+                    origin_scenes_root,
+                    before_output_reset=invalidate_origin_dependents,
                 )
                 return 0 if result.complete else 1
             if args.twin_type == "evo":
@@ -758,13 +902,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scenes_root,
             )
             if args.question_type == "analysis":
-                original_scenes_root, _ = _require_completed_twins(
-                    configured_root,
-                    "origin",
+                original_scenes_root, completed_scenes = (
+                    _require_completed_twins(
+                        configured_root,
+                        "origin",
+                        allow_partial=True,
+                    )
                 )
                 result = generate_questions(
                     args.question_config,
                     scenes_root=original_scenes_root,
+                    scene_files=[
+                        scene / TWIN_FILE_NAME
+                        for scene in completed_scenes
+                    ],
                     question_type="analysis",
                 )
                 _print_question_result(result)

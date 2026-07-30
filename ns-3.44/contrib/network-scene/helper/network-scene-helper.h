@@ -52,6 +52,7 @@ class NetworkSceneHelper
     uint32_t GetChannelCount() const;
     uint32_t GetFlowCount() const;
     Time GetSceneDuration() const;
+    Time GetSimulationStopTime() const;
 
   private:
     struct NodeRecord

@@ -20,7 +20,10 @@ main(int argc, char* argv[])
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("scene", "Scene directory or scene name under ./scenes", scene);
-    cmd.AddValue("stopTime", "Simulation stop time in seconds. 0 means scene duration.", stopTime);
+    cmd.AddValue("stopTime",
+                 "Absolute simulation stop time in seconds. 0 means application start time plus "
+                 "scene duration.",
+                 stopTime);
     cmd.Parse(argc, argv);
 
     NetworkSceneHelper helper;
@@ -31,7 +34,7 @@ main(int argc, char* argv[])
     }
     helper.Install();
 
-    Time stop = stopTime > 0.0 ? Seconds(stopTime) : helper.GetSceneDuration();
+    Time stop = helper.GetSimulationStopTime();
     Simulator::Stop(stop);
 
     std::cout << "Loaded scene: " << scene << "\n"

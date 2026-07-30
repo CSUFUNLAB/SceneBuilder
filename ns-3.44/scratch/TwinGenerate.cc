@@ -82,7 +82,10 @@ main(int argc, char* argv[])
     cmd.AddValue("scene", "Scene directory path or scene name under ./scenes", scene);
     cmd.AddValue("events", "Event JSONL file. Empty means events are not loaded.", events);
     cmd.AddValue("result", "Result JSONL output path. Empty means <scene>/twin.jsonl.", result);
-    cmd.AddValue("stopTime", "Simulation stop time in seconds. 0 means scene duration.", stopTime);
+    cmd.AddValue("stopTime",
+                 "Absolute simulation stop time in seconds. 0 means application start time plus "
+                 "scene duration.",
+                 stopTime);
     cmd.AddValue("progressInterval",
                  "Progress report interval in simulated seconds. 0 disables machine-readable progress.",
                  progressInterval);
@@ -117,7 +120,7 @@ main(int argc, char* argv[])
     }
     helper.Install();
 
-    Time stop = stopTime > 0.0 ? Seconds(stopTime) : helper.GetSceneDuration();
+    Time stop = helper.GetSimulationStopTime();
     Simulator::Stop(stop);
     if (progressInterval > 0.0)
     {

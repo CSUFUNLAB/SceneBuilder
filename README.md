@@ -6,7 +6,7 @@ SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置�
 
 1. **场景生成**：生成节点、信道、网卡、路由和流量等静态输入。
 2. **Twin 生成**：按 `origin`、`evo` 或 `opt` 类型运行 ns-3。
-3. **问题生成**：只读取已经完成的 Twin，根据证据生成问题和标签。
+3. **问题生成**：只读取已经完成的 Twin 和标签，生成具体问题。
 
 所有步骤统一通过项目根目录的 `main.py` 执行。
 
@@ -47,7 +47,7 @@ python main.py <模式> [选项]
 
 - `generate`：生成网络场景。
 - `twin`：生成指定类型的 Twin。
-- `questions`：从已有 Twin 生成问题和标签。
+- `questions`：从已有 Twin 和标签生成问题。
 - `clean`：清理场景配置对应的已有场景目录。
 
 不指定模式或输入错误模式时，程序会列出全部可用模式并提示查看帮助。
@@ -81,6 +81,10 @@ python main.py generate -c configs/example.yaml
 ```bash
 python main.py twin origin
 ```
+
+重新生成 origin Twin 会先删除全局及各场景内的分析问题输出、分析问题导出模板，清空
+`evo/scenes`，并删除已有的演化问题输出及其导出模板。这些内容依赖旧的 origin Twin，
+必须重新运行对应的问题生成命令；演化数据还必须先重新运行 `twin evo`。
 
 演化场景及 Twin：
 
@@ -139,8 +143,9 @@ python main.py questions -t analysis \
 `question_id`，格式为 `Q00000001`。因此，同一个 `template_id` 可以生成多个不同的
 `question_id`。
 
-分析问题只读取 `origin/scenes`。如果其中存在未生成 Twin 的场景，命令会停止并提示先运行
-`python main.py twin origin`。
+分析问题只读取 `origin/scenes` 中同时具有 `twin.jsonl` 和 `labels.jsonl` 的完整场景。
+允许在 `twin origin` 尚未处理完全部场景时生成问题；命令会报告已使用和跳过的场景数。
+只有一个完整场景都没有时，才会提示先运行 `python main.py twin origin`。
 
 生成演化问题时使用：
 
@@ -212,9 +217,18 @@ generated_scenes/
 `throughput_mbps` 不包含 IPv4 和 UDP 头部。信道和网卡的带宽统计仍表示网络实际承载的
 数据量，因此保留相应协议开销。
 
-`labels.jsonl` 独立保存标签。节点、网卡、信道和数据流状态分别写在 `node_state`、`nic_state`、`channel_state`、`data_flow_state` 行中，每行的 `label` 都是由 `{entity_id, label}` 构成的列表。节点状态为 `normal`、`disabled` 或 `routing_failed`；`network_state` 行保存全网状态，取值为 `normal`、`congested` 或 `faulty`。
+`labels.jsonl` 独立保存能够由分析问题生成器直接使用的答案。节点、网卡、信道和数据流
+状态分别写在 `node_state`、`nic_state`、`channel_state`、`data_flow_state` 行中，每行的
+`label` 都是由 `{entity_id, label}` 构成的列表。节点状态为 `normal`、`disabled` 或
+`routing_failed`。没有对应问题模板的全网状态不写入 `labels.jsonl`。
 
-`bottleneck` 行保存可确认的流瓶颈，格式为 `{data_flow_id, channel_id}`。仅当一条流的路径上恰好有一个 `saturated` 信道、其余信道全部为 `normal` 时才写入该标签。生成瓶颈链路问题时还要求该流的完整路径至少包含两条信道，单跳流的瓶颈标签不会被抽取为问题；列表为空或没有满足路径长度门槛的标签时，该场景不会生成瓶颈问题。
+四类实体状态行始终写出。其余条件型标签只有在当前场景至少存在一个有效答案时才写出；
+不会保留 `label: []` 的空行。缺少某一条件型标签行表示该场景不能为对应题型提供候选，
+不是 Twin 文件不完整。
+
+`bottleneck` 行保存可确认的流瓶颈，格式为 `{data_flow_id, channel_id}`。仅当一条流的
+完整路径至少包含两条信道、路径上恰好有一个 `saturated` 信道且其余信道全部为 `normal`
+时才写入。单跳流不会产生瓶颈标签。
 
 `data_flow_congestion_pattern` 行保存流路径的拥塞模式。路径链路全部为 `normal` 或 `saturated` 且恰好一条链路饱和时标记为 `single_channel_bottleneck`；至少两条链路饱和时标记为 `multi_channel_saturation`。路径无饱和链路，或包含 `disabled/degraded` 链路时不生成该标签。
 
@@ -247,31 +261,40 @@ generated_scenes/
 `rx_rate_mbps`、`rx_packets` 是该网卡从链路实际收到的流量；因此可逐跳比较发送端与对端
 接收端，判断路径中任意一条链路是否造成传输损失。
 
-`data_flow_failure_cause` 行保存导致数据流 `failed` 的唯一物理故障实体，格式为 `{data_flow_id, entity_id}`，其中 `entity_id` 只能是节点 ID 或链路 ID。路径链路的网卡为 `disabled` 时，根因统一归并为所属链路 ID，不输出网卡 ID。`routing_failed` 是物理故障造成的派生节点状态，不作为独立根因；去重后恰好只有一个故障节点或链路时才写入。生成流失败根因问题时还要求目标流的完整路径至少包含两条信道，即路径上至少存在一个中间节点；单跳流、多故障或没有明确根因时不生成该问题。
+`data_flow_failure_cause` 行保存导致数据流 `failed` 的唯一物理故障实体，格式为
+`{data_flow_id, entity_id}`，其中 `entity_id` 只能是节点 ID 或链路 ID。路径链路的网卡为
+`disabled` 时，根因统一归并为所属链路 ID，不输出网卡 ID。`routing_failed` 是物理故障
+造成的派生节点状态，不作为独立根因。只有目标流路径至少包含两条信道，且去重后恰好只有
+一个故障节点或链路时才写入；单跳流、多故障或没有明确根因时不产生该标签。
 
 分析问题的实体状态候选仅限数据流覆盖范围：节点必须出现在至少一条流的路径中，链路必须属于至少一条流的 `path_channels`，网卡必须属于这些路径链路。未被任何流经过的实体不会被抽取。数据流实体通过 `path_nodes` 和 `path_channels` 显式保存故障前静态路由确定的完整路径；物理故障不会使这两个字段缩短、清空或改为备用路径。
 
-问题生成采用“私有标签 + 公开证据”双重门槛：`labels.jsonl` 只提供标准答案，不作为答题证据；生成器必须能仅根据 `twin.jsonl` 独立推导出相同且唯一的答案，否则跳过该场景中的候选。十一类分析问题的门槛如下：
+分析问题采用“标签或推导二选一”的规则：只要答案已经写入 `labels.jsonl`，问题生成器就
+直接使用，不再从 `twin.jsonl` 重复推导或交叉校验。当前十一类分析标签与模板一一对应：
 
-| 问题 | 公开证据门槛 |
+| 标签类型 | 问题模板 |
 | --- | --- |
-| 节点状态 | 节点位于流路径中，并且能由全网流结果与完整静态路径唯一定位一个物理故障。节点本身是唯一故障节点时判为 `disabled`；节点保留的任一静态路由仍将该故障节点作为下一跳，或仍从故障链路对应网卡转发时，判为 `routing_failed`。无上述故障证据但节点有收发包或至少一条相邻链路可用时可判为 `normal`；答案不唯一时不出题。 |
-| 链路状态 | 链路位于流路径中，具有原始容量，并且 `carries` 与所有流的完整路径一致。按流路径将 `carries.bandwidth_mbps` 分为两个方向并分别求和，取较大方向：达到原始容量的 95% 时判为 `saturated`；处于原始容量的 70% 至 90%（含边界）时判为 `normal`，因为配置允许的退化倍率最高为 0.5，退化链路不可能达到该区间。其他情况下逐方向比较两端网卡：发送端至少有 10 个 `tx_packets` 时，以其 `tx_rate_mbps` 作为直接送入该链路的流量，以对端 `rx_rate_mbps` 作为该链路实际交付的流量，并令预期吞吐量为 `min(tx_rate_mbps, 原始容量)`；对端接收量为零时可判为 `disabled`，大于零但低于预期值 95% 时可判为 `degraded`。该证据适用于路径中的任意一跳，其余证据不足的情况不出题。 |
-| 网卡状态 | 网卡属于流路径链路。若所属链路能由公开证据唯一判为 `disabled`，则该网卡在运行意义上同样不可用，判为 `disabled`；这不表示网卡自身一定是物理故障根因。链路任一方向当前吞吐量为正且队列字段完整时，按队列占用率判为 `normal` 或 `saturated`。网卡仅使用 `normal`、`disabled`、`saturated` 三种状态。 |
-| 数据流状态 | `tx_packets`、`rx_packets`、`lost_packets`、`throughput_mbps` 和 `demand_mbps` 完整，并能按状态优先级唯一重算。 |
-| 路径带宽约束 | 流的需求和完整路径、路径信道的原始容量与 `carries` 必须完整。先按流路径重建每条信道的两个方向总吞吐量，再从较大方向总吞吐量达到原始容量 95% 的路径信道中选择原始容量最小的瓶颈信道；其原始容量严格小于流需求时判为 `insufficient_channel_capacity`，否则判为 `traffic_congestion`。没有饱和瓶颈信道时不生成，信道是否退化不参与分类。 |
-| 路径拥塞模式 | 每条路径链路都必须能由原始容量、`carries`、完整流路径和逐跳网卡收发证据确认状态；存在无法唯一判断的低负载链路时不生成。 |
-| 信道饱和原因 | 根据信道 `carries` 和完整流路径重建的较大方向总吞吐量达到原始容量的 95%，并且所有流需求完整；最大流需求严格大于其余流之和时为 `single_large_flow`，否则为 `multiple_flow_aggregation`。 |
-| 瓶颈链路 | 数据流的完整路径至少包含两条信道，每条路径链路状态都必须能从公开证据唯一判断且恰好只有一条 `saturated` 链路；单跳流或低吞吐链路存在状态歧义时不生成。 |
-| 流失败根因 | 目标流的完整路径至少包含两条信道，即至少存在一个中间节点；所有流都具有完整静态路径和可重算的公开状态。将每个零吞吐链路或无流量节点作为候选物理故障，比较“静态路径经过该实体的流集合”与“实际失败流集合”；只有全网恰好一个候选完全解释失败集合，且目标流路径经过该候选时才出题。故障节点至少需要两条相邻链路，避免叶节点崩溃与其唯一链路故障无法区分。 |
-| 信道不可用来源 | 目标信道必须位于流路径中并能由公开证据判为 `disabled`。根据完整静态路径和全网流结果必须唯一定位一个物理故障；唯一故障是任一端点节点时为 `connected_node_fault`，唯一故障是目标信道时为 `channel_or_interface_fault`。网卡物理故障按所属信道归并；节点侧与信道侧仍有歧义时不出题。 |
-| 网卡不可用来源 | 目标网卡必须属于流路径信道，其所属信道能由公开证据判为 `disabled`，并且全网流结果只能定位一个物理故障。唯一故障是该信道任一端点节点时为 `connected_node_fault`，唯一故障是所属信道时为 `channel_or_interface_fault`；任一端网卡的物理故障都归并为所属信道。答案不唯一时不出题。 |
+| `node_state` | `TA0001` |
+| `channel_state` | `TA0002` |
+| `nic_state` | `TA0003` |
+| `data_flow_state` | `TA0004` |
+| `data_flow_bandwidth_constraint` | `TA0005` |
+| `data_flow_congestion_pattern` | `TA0006` |
+| `channel_saturation_cause` | `TA0007` |
+| `bottleneck` | `TA0008` |
+| `data_flow_failure_cause` | `TA0009` |
+| `channel_unavailability_cause` | `TA0010` |
+| `nic_unavailability_cause` | `TA0011` |
 
-任何公开字段缺失、路径不完整、存在多个可能答案，或公开推导结果与私有标签不一致，都会使候选被拒绝。若因此达不到配置的题目数量，生成器保留已生成题目，并在命令行报告实际数量。
+问题生成器仍会检查标签引用的实体是否存在，并对实体状态题和不可用原因题应用数据流覆盖
+范围筛选；这些检查只决定候选能否用于模板，不会重新计算答案。必须通过比较两个 Twin
+才能得到的演化问题标签，例如吞吐量、丢包数、时延或状态变化，不写入 `labels.jsonl`，
+而是在生成演化问题时按需计算。
+
+若某类标签的场景数或答案分布不足以达到配置数量，生成器保留已生成的问题，并在命令行
+报告实际数量。
 
 数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
-
-全网状态的判断优先级为 `faulty > congested > normal`。存在节点崩溃、节点路由故障、网卡故障、信道故障或数据流失败时为 `faulty`；没有故障，但至少一个链路或网卡为 `saturated` 时为 `congested`；其余情况为 `normal`。数据流的 `degraded` 或 `unstable` 状态本身不会把全网标记为拥塞。
 
 问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。
 默认分析问题写入 `generated_scenes/origin/analysis_questions.jsonl`。
@@ -298,7 +321,8 @@ generated_scenes/
 - `seed`：随机种子。
 - `scenes_per_topology`：每个符合条件的拓扑生成多少个场景。
 - `max_topology_nodes`：允许参与生成的最大拓扑节点数。
-- `scene_duration`：场景和默认仿真时长。
+- `scene_duration`：业务应用的运行时长。应用默认在第 1 秒启动，因此绝对仿真停止时刻为
+  `1s + scene_duration`。
 - `topology_sources`：Topology Zoo 或 BRITE 拓扑来源。
 - `fault_generation`：全网正常、单故障和双故障的抽样概率，以及链路、网卡物理故障的状态分布。被抽中的节点物理故障固定为崩溃 `disabled`，不再随机生成独立路由故障。
 - `link_generation`、`nics`、`routing`：信道、网卡、队列和路由生成规则。
@@ -345,7 +369,7 @@ generated_scenes/
 
 ## 常用选项
 
-- `--stop-time <秒>`：覆盖场景元数据中的默认仿真时长。
+- `--stop-time <秒>`：以绝对仿真时刻覆盖默认停止时刻；必须晚于应用启动时刻。
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
 - `--no-build`：跳过运行前的显式编译步骤。
 - `--continue-on-error`：单个场景失败后继续处理其他场景。

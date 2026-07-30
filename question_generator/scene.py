@@ -21,7 +21,6 @@ class SceneData:
         scene_name: str,
         source_file: Path,
         entities: list[EntityRecord],
-        network_state: str = "",
         bottlenecks: list[tuple[str, str]] | None = None,
         congestion_patterns: list[tuple[str, str]] | None = None,
         channel_saturation_causes: list[tuple[str, str]] | None = None,
@@ -32,7 +31,6 @@ class SceneData:
     ) -> None:
         self.scene_name = scene_name
         self.source_file = source_file
-        self.network_state = network_state
         self.bottlenecks = tuple(bottlenecks or [])
         self.congestion_patterns = tuple(congestion_patterns or [])
         self.channel_saturation_causes = tuple(channel_saturation_causes or [])
@@ -105,7 +103,6 @@ class SceneData:
             else f"labels_{source_file.stem.removeprefix('twin_')}.jsonl"
         )
         entity_labels: dict[str, str] = {}
-        network_state = ""
         bottlenecks: list[tuple[str, str]] = []
         congestion_patterns: list[tuple[str, str]] = []
         channel_saturation_causes: list[tuple[str, str]] = []
@@ -137,8 +134,6 @@ class SceneData:
                             if not isinstance(value, dict) or "entity_id" not in value or "label" not in value:
                                 raise ValueError(f"{label_file}:{line_number} contains an invalid entity label")
                             entity_labels[str(value["entity_id"])] = str(value["label"])
-                    elif label_type == "network_state":
-                        network_state = str(label_row.get("label", ""))
                     elif label_type == "bottleneck":
                         values = label_row.get("label", [])
                         if not isinstance(values, list):
@@ -290,7 +285,6 @@ class SceneData:
             scene_name,
             source_file,
             entities,
-            network_state=network_state,
             bottlenecks=bottlenecks,
             congestion_patterns=congestion_patterns,
             channel_saturation_causes=channel_saturation_causes,

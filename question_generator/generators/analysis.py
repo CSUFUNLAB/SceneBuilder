@@ -4,16 +4,6 @@ import random
 from typing import Callable
 
 from .base import QuestionCategoryGenerator
-from ..evidence import (
-    infer_bandwidth_constraint,
-    infer_bottleneck,
-    infer_channel_unavailability_cause,
-    infer_channel_saturation_cause,
-    infer_congestion_pattern,
-    infer_entity_state,
-    infer_flow_failure_cause,
-    infer_nic_unavailability_cause,
-)
 from ..models import QuestionCandidate, QuestionTemplate
 from ..scene import SceneData
 
@@ -64,7 +54,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             for entity in scene.entities(entity_type)
             if entity.label == target_label
             and scene.entity_is_in_flow_scope(entity_type, entity.entity_id)
-            and infer_entity_state(scene, entity) == target_label
         ]
         if not candidates:
             return None
@@ -95,7 +84,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             if (
                 label == target_label
                 and flow is not None
-                and infer_bandwidth_constraint(scene, flow) == target_label
             ):
                 candidates.append(data_flow_id)
         if not candidates:
@@ -114,8 +102,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         candidates = [
             (data_flow_id, channel_id)
             for data_flow_id, channel_id in scene.bottlenecks
-            if (flow := scene.entity("data_flow", data_flow_id)) is not None
-            and infer_bottleneck(scene, flow) == channel_id
+            if scene.entity("data_flow", data_flow_id) is not None
+            and scene.entity("channel", channel_id) is not None
         ]
         if not candidates:
             return None
@@ -134,7 +122,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             if (
                 label == target_label
                 and flow is not None
-                and infer_congestion_pattern(scene, flow) == target_label
             ):
                 candidates.append(data_flow_id)
         if not candidates:
@@ -152,8 +139,11 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         candidates = [
             (data_flow_id, entity_id)
             for data_flow_id, entity_id in scene.flow_failure_causes
-            if (flow := scene.entity("data_flow", data_flow_id)) is not None
-            and infer_flow_failure_cause(scene, flow) == entity_id
+            if scene.entity("data_flow", data_flow_id) is not None
+            and (
+                scene.entity("node", entity_id) is not None
+                or scene.entity("channel", entity_id) is not None
+            )
         ]
         if not candidates:
             return None
@@ -172,7 +162,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             if (
                 label == target_label
                 and channel is not None
-                and infer_channel_saturation_cause(scene, channel) == target_label
             ):
                 candidates.append(channel_id)
         if not candidates:
@@ -189,9 +178,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             channel_id
             for channel_id, label in scene.channel_unavailability_causes
             if label == target_label
-            and (channel := scene.entity("channel", channel_id)) is not None
+            and scene.entity("channel", channel_id) is not None
             and scene.entity_is_in_flow_scope("channel", channel_id)
-            and infer_channel_unavailability_cause(scene, channel) == target_label
         ]
         if not candidates:
             return None
@@ -210,9 +198,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             nic_id
             for nic_id, label in scene.nic_unavailability_causes
             if label == target_label
-            and (nic := scene.entity("nic", nic_id)) is not None
+            and scene.entity("nic", nic_id) is not None
             and scene.entity_is_in_flow_scope("nic", nic_id)
-            and infer_nic_unavailability_cause(scene, nic) == target_label
         ]
         if not candidates:
             return None

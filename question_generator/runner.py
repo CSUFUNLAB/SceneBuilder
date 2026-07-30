@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import random
 import shutil
+from typing import Sequence
 
 from .config import QUESTION_CATEGORIES, CategoryConfig, QuestionGeneratorConfig, load_config
 from .generators import (
@@ -240,6 +241,7 @@ def run(
     config_path: str | Path,
     *,
     scenes_root: str | Path | None = None,
+    scene_files: Sequence[str | Path] | None = None,
     question_type: str | None = None,
 ) -> QuestionGenerationResult:
     config: QuestionGeneratorConfig = load_config(config_path)
@@ -258,7 +260,29 @@ def run(
         _discover_scene_directories_for_cleanup(root),
         tuple(category.name for category in category_configs),
     )
-    scene_files = discover_scene_files(root)
+    if scene_files is None:
+        selected_scene_files = discover_scene_files(root)
+    else:
+        selected_scene_files = list(
+            dict.fromkeys(
+                Path(scene_file).expanduser().resolve()
+                for scene_file in scene_files
+            )
+        )
+        missing_scene_file = next(
+            (
+                scene_file
+                for scene_file in selected_scene_files
+                if not scene_file.is_file()
+            ),
+            None,
+        )
+        if missing_scene_file is not None:
+            raise ValueError(
+                f"Scene twin file does not exist: {missing_scene_file}"
+            )
+        if not selected_scene_files:
+            raise ValueError("No completed scene twin files were provided")
     rng = random.Random(config.seed)
     category_results: list[CategoryRunResult] = []
     question_number = 1
@@ -266,13 +290,13 @@ def run(
     for category_config in category_configs:
         result, question_number = _generate_category(
             category_config,
-            scene_files,
+            selected_scene_files,
             rng,
             question_number,
         )
         category_results.append(result)
 
     return QuestionGenerationResult(
-        scene_count=len(scene_files),
+        scene_count=len(selected_scene_files),
         categories=tuple(category_results),
     )

@@ -272,7 +272,12 @@ NetworkSceneHelper::ResetForScene(const NetworkSceneData& scene)
     m_sceneDuration = Seconds(scene.sceneDurationSeconds);
     if (m_applicationStopTime.IsZero())
     {
-        m_applicationStopTime = m_sceneDuration;
+        m_applicationStopTime = m_applicationStartTime + m_sceneDuration;
+    }
+    if (m_applicationStopTime <= m_applicationStartTime)
+    {
+        throw std::runtime_error(
+            "Application stop time must be later than the application start time");
     }
 
     m_nodes = NodeContainer();
@@ -978,6 +983,12 @@ Time
 NetworkSceneHelper::GetSceneDuration() const
 {
     return m_sceneDuration;
+}
+
+Time
+NetworkSceneHelper::GetSimulationStopTime() const
+{
+    return m_applicationStopTime;
 }
 
 } // namespace ns3

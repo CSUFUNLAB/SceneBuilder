@@ -115,25 +115,25 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0013
-    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the load of data flow $event_data_flow_id$ increases?
+    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0014
-    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its load increases?
+    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its demand is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0015
-    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the load of data flow $event_data_flow_id$ decreases?
+    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0016
-    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its load decreases?
+    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its demand is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
@@ -150,50 +150,26 @@ templates:
       type: enum
       values: [recovered, unchanged]
 
-  - id: TE0019
-    question: Does channel $target_channel_id$ recover, become disabled, or remain unchanged after channel $event_channel_id$ fails?
-    answer:
-      type: enum
-      values: [recovered, unchanged, disabled]
-
-  - id: TE0020
-    question: Does channel $target_channel_id$ recover, become saturated, or remain unchanged after channel $event_channel_id$ recovers?
-    answer:
-      type: enum
-      values: [recovered, unchanged, saturated]
-
-  - id: TE0021
-    question: Does interface $target_nic_id$ recover, become disabled, or remain unchanged after interface $event_nic_id$ fails?
-    answer:
-      type: enum
-      values: [recovered, unchanged, disabled]
-
-  - id: TE0022
-    question: Does interface $target_nic_id$ recover, become saturated, or remain unchanged after interface $event_nic_id$ recovers?
-    answer:
-      type: enum
-      values: [recovered, unchanged, saturated]
-
   - id: TE0023
-    question: Is channel $target_channel_id$ saturated or unsaturated after the load of data flow $event_data_flow_id$ increases?
+    question: Is channel $target_channel_id$ saturated or unsaturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [saturated, not_saturated]
 
   - id: TE0024
-    question: Does channel $target_channel_id$ recover from saturation or remain saturated after the load of data flow $event_data_flow_id$ decreases?
+    question: Does channel $target_channel_id$ recover from saturation or remain saturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [recovered, not_recovered]
 
   - id: TE0025
-    question: Is interface $target_nic_id$ saturated or unsaturated after the load of data flow $event_data_flow_id$ increases?
+    question: Is interface $target_nic_id$ saturated or unsaturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [saturated, not_saturated]
 
   - id: TE0026
-    question: Does interface $target_nic_id$ recover from saturation or remain saturated after the load of data flow $event_data_flow_id$ decreases?
+    question: Does interface $target_nic_id$ recover from saturation or remain saturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
     answer:
       type: enum
       values: [recovered, not_recovered]

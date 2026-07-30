@@ -171,8 +171,6 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> nicUnavailabilityCauseLabels;
     std::map<std::string, std::string> channelStateById;
     std::map<std::string, std::string> flowStateById;
-    bool hasFaultState = false;
-    bool hasCongestedState = false;
 
     const double duration = std::max(0.000001, (m_applicationStopTime - m_applicationStartTime).GetSeconds());
     std::map<uint16_t, FlowMonitor::FlowStats> statsByPort;
@@ -497,8 +495,6 @@ NetworkSceneHelper::WriteResults() const
                 }
             }
         }
-        hasFaultState = hasFaultState || state == "disabled";
-        hasCongestedState = hasCongestedState || state == "saturated";
     }
 
     for (const auto& node : m_nodeRecords)
@@ -520,8 +516,6 @@ NetworkSceneHelper::WriteResults() const
         output << "}\n";
         nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
                                   ",\"label\":" + JsonString(node.state) + "}");
-        hasFaultState = hasFaultState || node.state == "disabled" ||
-                        node.state == "routing_failed";
     }
 
     for (const auto& channel : m_channelRecords)
@@ -631,8 +625,6 @@ NetworkSceneHelper::WriteResults() const
             }
         }
         channelStateById[channel.id] = state;
-        hasFaultState = hasFaultState || state == "disabled" || state == "degraded";
-        hasCongestedState = hasCongestedState || state == "saturated";
     }
 
     for (const auto& flow : m_flowRecords)
@@ -694,7 +686,6 @@ NetworkSceneHelper::WriteResults() const
         dataFlowStateLabels.push_back("{\"entity_id\":" + JsonString(flow.id) +
                                       ",\"label\":" + JsonString(state) + "}");
         flowStateById[flow.id] = state;
-        hasFaultState = hasFaultState || state == "failed";
     }
 
     const double totalThroughputMbps = totalRxBytes * 8.0 / duration / 1000000.0;
@@ -704,9 +695,6 @@ NetworkSceneHelper::WriteResults() const
     const double meanUtilization = utilizationCount > 0 ? utilizationSum / utilizationCount : 0.0;
     const double loadVariance =
         utilizationCount > 0 ? utilizationSquareSum / utilizationCount - meanUtilization * meanUtilization : 0.0;
-    const std::string networkState =
-        hasFaultState ? "faulty" : (hasCongestedState ? "congested" : "normal");
-
     std::vector<std::string> bottleneckLabels;
     std::vector<std::string> congestionPatternLabels;
     std::vector<std::string> channelSaturationCauseLabels;
@@ -852,7 +840,7 @@ NetworkSceneHelper::WriteResults() const
             congestionPatternLabels.push_back(
                 "{\"data_flow_id\":" + JsonString(flow.id) +
                 ",\"label\":" + JsonString(congestionPattern) + "}");
-            if (saturatedChannelIds.size() == 1)
+            if (saturatedChannelIds.size() == 1 && pathChannels.size() >= 2)
             {
                 bottleneckLabels.push_back(
                     "{\"data_flow_id\":" + JsonString(flow.id) +
@@ -877,7 +865,7 @@ NetworkSceneHelper::WriteResults() const
                                                 ",\"label\":" + JsonString(constraint) + "}");
         }
 
-        if (flowStateById[flow.id] == "failed")
+        if (flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
         {
             std::vector<std::string> faultEntityIds;
             auto addFaultEntity = [&faultEntityIds](const std::string& entityId) {
@@ -965,24 +953,43 @@ NetworkSceneHelper::WriteResults() const
                 << JsonRawArray(nicStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"channel_state\",\"label\":"
                 << JsonRawArray(channelStateLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"channel_unavailability_cause\",\"label\":"
-                << JsonRawArray(channelUnavailabilityCauseLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"nic_unavailability_cause\",\"label\":"
-                << JsonRawArray(nicUnavailabilityCauseLabels) << "}\n";
     labelOutput << "{\"label_type\":\"data_flow_state\",\"label\":"
                 << JsonRawArray(dataFlowStateLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"network_state\",\"label\":"
-                << JsonString(networkState) << "}\n";
-    labelOutput << "{\"label_type\":\"bottleneck\",\"label\":"
-                << JsonRawArray(bottleneckLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"data_flow_congestion_pattern\",\"label\":"
-                << JsonRawArray(congestionPatternLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"channel_saturation_cause\",\"label\":"
-                << JsonRawArray(channelSaturationCauseLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"data_flow_bandwidth_constraint\",\"label\":"
-                << JsonRawArray(bandwidthConstraintLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"data_flow_failure_cause\",\"label\":"
-                << JsonRawArray(flowFailureCauseLabels) << "}\n";
+    if (!channelUnavailabilityCauseLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"channel_unavailability_cause\",\"label\":"
+                    << JsonRawArray(channelUnavailabilityCauseLabels) << "}\n";
+    }
+    if (!nicUnavailabilityCauseLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"nic_unavailability_cause\",\"label\":"
+                    << JsonRawArray(nicUnavailabilityCauseLabels) << "}\n";
+    }
+    if (!bottleneckLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"bottleneck\",\"label\":"
+                    << JsonRawArray(bottleneckLabels) << "}\n";
+    }
+    if (!congestionPatternLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"data_flow_congestion_pattern\",\"label\":"
+                    << JsonRawArray(congestionPatternLabels) << "}\n";
+    }
+    if (!channelSaturationCauseLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"channel_saturation_cause\",\"label\":"
+                    << JsonRawArray(channelSaturationCauseLabels) << "}\n";
+    }
+    if (!bandwidthConstraintLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"data_flow_bandwidth_constraint\",\"label\":"
+                    << JsonRawArray(bandwidthConstraintLabels) << "}\n";
+    }
+    if (!flowFailureCauseLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"data_flow_failure_cause\",\"label\":"
+                    << JsonRawArray(flowFailureCauseLabels) << "}\n";
+    }
 
     (void)totalThroughputMbps;
     (void)averageDelayMs;
