@@ -139,10 +139,10 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0017
-    question: Does node $target_node_id$ become disabled, enter a routing-failed state, or remain unchanged after node $event_node_id$ fails?
+    question: Does node $target_node_id$ become disabled or remain unchanged after node $event_node_id$ fails?
     answer:
       type: enum
-      values: [unchanged, routing_failed, disabled]
+      values: [unchanged, disabled]
 
   - id: TE0018
     question: Does node $target_node_id$ recover or remain unchanged after node $event_node_id$ recovers?

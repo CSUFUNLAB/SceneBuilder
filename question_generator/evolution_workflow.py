@@ -144,7 +144,7 @@ _QUESTION_RULES = {
 
 _EXPECTED_ANSWER_VALUES = {
     "TE0001": ("unchanged", "decrease"),
-    "TE0017": ("unchanged", "routing_failed", "disabled"),
+    "TE0017": ("unchanged", "disabled"),
     "TE0018": ("recovered", "unchanged"),
     "TE0023": ("saturated", "not_saturated"),
     "TE0024": ("recovered", "not_recovered"),
@@ -951,12 +951,6 @@ def _create_evolved_scene(
             event["before_demand_mbps"] = before_demand
             event["after_demand_mbps"] = float(row["demand_mbps"])
 
-    _recompute_routing_failed_nodes(
-        destination / "routing_matrix.csv",
-        nodes,
-        channels,
-        nics,
-    )
     _write_csv(destination / "nodes.csv", node_fields, nodes)
     _write_csv(destination / "channels.csv", channel_fields, channels)
     _write_csv(destination / "nics.csv", nic_fields, nics)
@@ -974,69 +968,6 @@ def _create_evolved_scene(
         nics,
         traffic,
     )
-
-
-def _recompute_routing_failed_nodes(
-    routing_matrix_file: Path,
-    nodes: list[dict[str, str]],
-    channels: list[dict[str, str]],
-    nics: list[dict[str, str]],
-) -> None:
-    for node in nodes:
-        if str(node.get("state", "normal")) == "routing_failed":
-            node["state"] = "normal"
-    with routing_matrix_file.open("r", encoding="utf-8-sig", newline="") as handle:
-        matrix = [row for row in csv.reader(handle)]
-
-    node_by_id = {str(row["node_id"]): row for row in nodes}
-    channel_by_id = {str(row["channel_id"]): row for row in channels}
-    nic_by_node_interface = {
-        (str(row["node"]), int(float(row["interface_index"]))): row
-        for row in nics
-    }
-    disabled_channels = {
-        str(row["channel_id"])
-        for row in channels
-        if str(row.get("state", "normal")) == "disabled"
-    }
-    disabled_channels.update(
-        str(row["channel_id"])
-        for row in nics
-        if str(row.get("state", "normal")) == "disabled"
-    )
-    ordered_node_ids = [str(row["node_id"]) for row in nodes]
-    if len(matrix) != len(ordered_node_ids):
-        raise ValueError("routing_matrix.csv row count does not match nodes.csv")
-
-    for source_index, source_id in enumerate(ordered_node_ids):
-        source = node_by_id[source_id]
-        if str(source.get("state", "normal")) == "disabled":
-            continue
-        for raw_interface_index in matrix[source_index]:
-            try:
-                interface_index = int(raw_interface_index)
-            except ValueError as exc:
-                raise ValueError("routing_matrix.csv contains a non-integer value") from exc
-            if interface_index <= 0:
-                continue
-            nic = nic_by_node_interface.get((source_id, interface_index))
-            if nic is None:
-                raise ValueError(
-                    f"No NIC for route interface {source_id}:{interface_index}"
-                )
-            channel_id = str(nic["channel_id"])
-            channel = channel_by_id.get(channel_id)
-            if channel is None:
-                raise ValueError(f"No channel row for routed channel {channel_id}")
-            src = str(channel["src"])
-            dst = str(channel["dst"])
-            peer_id = dst if source_id == src else src
-            if (
-                channel_id in disabled_channels
-                or str(node_by_id[peer_id].get("state", "normal")) == "disabled"
-            ):
-                source["state"] = "routing_failed"
-                break
 
 
 def _update_evolution_metadata(
@@ -1106,11 +1037,6 @@ def _update_evolution_metadata(
     )
     fault_generation["fault_count"] = len(physical_faults)
     fault_generation["faulted_entities"] = physical_faults
-    fault_generation["derived_routing_failed_nodes"] = [
-        str(row["node_id"])
-        for row in nodes
-        if str(row.get("state", "normal")) == "routing_failed"
-    ]
     summary = metadata.setdefault("summary", {})
     summary["fault_scenario"] = fault_generation["selected_scenario"]
     summary["fault_count"] = len(physical_faults)

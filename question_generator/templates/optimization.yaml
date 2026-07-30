@@ -18,7 +18,7 @@ templates:
       type: path
 
   - id: TO0004
-    question: How should the routing table of node $node_id$ be modified to repair its routing failure?
+    question: How should the routing table of node $node_id$ be modified to replace entries made unusable by physical faults?
     answer:
       type: route_entries
       item_fields: [source_node_id, destination_node_id]

@@ -378,56 +378,14 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
     return next(iter(possible_causes)) if len(possible_causes) == 1 else None
 
 
-def _node_routes_through_fault(
-    scene: SceneData,
-    node: EntityRecord,
-    physical_fault_id: str,
-) -> bool | None:
-    routes = node.relations.get("routes")
-    if not isinstance(routes, list):
-        return None
-
-    failed_channel = scene.entity("channel", physical_fault_id)
-    failed_node = scene.entity("node", physical_fault_id)
-    if failed_channel is None and failed_node is None:
-        return None
-
-    for route in routes:
-        if not isinstance(route, dict):
-            return None
-        destinations = route.get("destination_nodes")
-        if not isinstance(destinations, list) or not destinations:
-            return None
-        if failed_node is not None:
-            next_hop = route.get("next_hop")
-            if next_hop is not None and str(next_hop) == physical_fault_id:
-                return True
-            continue
-
-        egress_interface = route.get("egress_interface")
-        if egress_interface is None:
-            continue
-        nic = scene.entity("nic", str(egress_interface))
-        if (
-            nic is not None
-            and str(nic.relations.get("channel", "")) == physical_fault_id
-        ):
-            return True
-    return False
-
-
 def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
     physical_fault_id = _infer_unique_physical_fault(scene)
-    if physical_fault_id == node.entity_id:
-        return "disabled"
     if physical_fault_id is not None:
-        routes_through_fault = _node_routes_through_fault(
-            scene,
-            node,
-            physical_fault_id,
+        return (
+            "disabled"
+            if physical_fault_id == node.entity_id
+            else "normal"
         )
-        if routes_through_fault:
-            return "routing_failed"
 
     rx_packets = _number(node.properties, "rx_packets")
     tx_packets = _number(node.properties, "tx_packets")

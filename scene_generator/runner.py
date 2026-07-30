@@ -10,7 +10,7 @@ from .cleaner import reset_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
-from .generators.faults import apply_scene_faults, derive_routing_failed_nodes
+from .generators.faults import apply_scene_faults
 from .generators.nics import NIC_FIELDS, generate_nics, resolve_queue_policy_selection
 from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
 from .generators.routing import generate_routing_matrix
@@ -201,9 +201,6 @@ def _build_metadata(
             "selected_scenario": str(fault_metadata.get("selected_scenario", "normal")),
             "fault_count": int(fault_metadata.get("fault_count", 0)),
             "faulted_entities": list(fault_metadata.get("faulted_entities", [])),
-            "derived_routing_failed_nodes": list(
-                fault_metadata.get("derived_routing_failed_nodes", [])
-            ),
         },
         "traffic_matrix": dict(traffic_metadata.get("traffic_matrix", {})),
         "flow_feature": dict(traffic_metadata.get("flow_feature", {})),
@@ -293,14 +290,6 @@ def _generate_single_scene(
         config.fault_generation,
         fault_rng,
     )
-    fault_metadata["derived_routing_failed_nodes"] = derive_routing_failed_nodes(
-        nodes_rows,
-        channel_rows,
-        nics_rows,
-        routing_map,
-        ordered_nodes(graph),
-    )
-
     traffic_rows, traffic_metadata = generate_traffic(graph, config, rng, include_metadata=True)
     traffic_rows, traffic_constraints = apply_hard_traffic_constraints(
         traffic_rows,

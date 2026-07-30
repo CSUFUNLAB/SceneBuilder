@@ -3,10 +3,10 @@ question_type: analysis
 
 templates:
   - id: TA0001
-    question: What is the current status of node $node_id$ (normal, disabled, or routing_failed)?
+    question: What is the current status of node $node_id$ (normal or disabled)?
     answer:
       type: enum
-      values: [normal, disabled, routing_failed]
+      values: [normal, disabled]
 
   - id: TA0002
     question: What is the current status of channel $channel_id$ (normal, disabled, degraded, or saturated)?

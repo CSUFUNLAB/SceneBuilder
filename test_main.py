@@ -2,6 +2,9 @@ from pathlib import Path
 
 import main as scene_builder
 import pytest
+from question_generator import evidence
+from question_generator.scene import EntityRecord, SceneData
+from question_generator.templates import load_template_bundle
 
 
 def _make_scene(path: Path) -> None:
@@ -189,3 +192,81 @@ def test_require_completed_twins_remains_strict_by_default(
         match=r"1 evo scene\(s\) do not have complete Twin outputs",
     ):
         scene_builder._require_completed_twins(dataset_root, "evo")
+
+
+def test_node_state_templates_only_allow_normal_and_disabled() -> None:
+    project_root = Path(__file__).resolve().parent
+    analysis = load_template_bundle(
+        project_root / "question_generator" / "templates" / "analysis.yaml",
+        "analysis",
+    )
+    evolution = load_template_bundle(
+        project_root / "question_generator" / "templates" / "evolution.yaml",
+        "evolution",
+    )
+
+    analysis_by_id = {
+        template.template_id: template for template in analysis.templates
+    }
+    evolution_by_id = {
+        template.template_id: template for template in evolution.templates
+    }
+
+    assert analysis_by_id["TA0001"].answer_values == (
+        "normal",
+        "disabled",
+    )
+    assert evolution_by_id["TE0017"].answer_values == (
+        "unchanged",
+        "disabled",
+    )
+
+
+def test_unusable_route_does_not_change_node_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    node = EntityRecord(
+        entity_type="node",
+        entity_id="N0001",
+        label="",
+        properties={"rx_packets": 0, "tx_packets": 0},
+        relations={
+            "interfaces": ["N0001:IF000001"],
+            "routes": [
+                {
+                    "destination_nodes": ["N0002"],
+                    "egress_interface": "N0001:IF000001",
+                    "next_hop": "N0002",
+                }
+            ],
+        },
+    )
+    scene = SceneData(
+        "scene",
+        tmp_path / "twin.jsonl",
+        [
+            node,
+            EntityRecord(
+                entity_type="nic",
+                entity_id="N0001:IF000001",
+                label="",
+                properties={},
+                relations={"node": "N0001", "channel": "C0001"},
+            ),
+            EntityRecord(
+                entity_type="channel",
+                entity_id="C0001",
+                label="",
+                properties={},
+                relations={"connects": ["N0001:IF000001"]},
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        evidence,
+        "_infer_unique_physical_fault",
+        lambda _: "C0001",
+    )
+
+    assert evidence.infer_node_state(scene, node) == "normal"

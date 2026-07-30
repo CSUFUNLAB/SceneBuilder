@@ -182,10 +182,10 @@ std::string
 RequiredNodeState(const std::map<std::string, std::string>& row)
 {
     const std::string state = Required(row, "state");
-    if (state != "normal" && state != "disabled" && state != "routing_failed")
+    if (state != "normal" && state != "disabled")
     {
         throw std::runtime_error("Unsupported node state: " + state +
-                                 ". Expected normal, disabled, or routing_failed");
+                                 ". Expected normal or disabled");
     }
     return state;
 }

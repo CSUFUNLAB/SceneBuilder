@@ -156,8 +156,7 @@ def validate_scene_config(config: "SceneConfig") -> None:
     if "node_state_probabilities" in config.fault_generation:
         raise ValueError(
             "fault_generation.node_state_probabilities has been removed; "
-            "sampled node faults are always disabled, while routing_failed is "
-            "derived from stale routes after physical faults"
+            "sampled node faults are always disabled"
         )
     _ensure_channel_fault_config(config.fault_generation)
     _ensure_nic_fault_config(config.fault_generation)
