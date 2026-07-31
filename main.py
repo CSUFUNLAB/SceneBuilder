@@ -18,6 +18,7 @@ import tempfile
 import time
 from typing import Callable, Sequence
 
+from dataset.splitter import split_generated_dataset
 from question_generator.config import (
     QUESTION_CATEGORIES,
     load_config as load_question_config,
@@ -39,6 +40,9 @@ from scene_generator.runner import run as generate_scenes
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
+DEFAULT_DATASET_SPLIT_CONFIG = (
+    PROJECT_ROOT / "configs" / "dataset_split.yaml"
+)
 TWIN_FILE_NAME = "twin.jsonl"
 LABEL_FILE_NAME = "labels.jsonl"
 REQUIRED_BASE_SCENE_FILES = {
@@ -55,7 +59,8 @@ DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 TWIN_TYPES = ("origin", "evo", "opt")
 SCENES_DIR_NAME = "scenes"
-COMMANDS = ("generate", "twin", "questions", "clean")
+INPUT_DIR_NAME = "input"
+COMMANDS = ("generate", "twin", "questions", "split", "clean")
 
 
 class SceneBuilderArgumentParser(argparse.ArgumentParser):
@@ -140,6 +145,26 @@ def build_parser() -> argparse.ArgumentParser:
     questions_parser.add_argument(
         "--scene-root",
         help="Override the scenes_root in the question configuration.",
+    )
+    split_parser = subparsers.add_parser(
+        "split",
+        help=(
+            "Split generated questions by template into task-specific "
+            "training and test datasets"
+        ),
+    )
+    split_parser.add_argument(
+        "-c",
+        "--config",
+        dest="dataset_split_config",
+        default=str(DEFAULT_DATASET_SPLIT_CONFIG),
+        help="Dataset split YAML config",
+    )
+    split_parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=None,
+        help="Override train_ratio from the dataset split config.",
     )
     clean_parser = subparsers.add_parser("clean", help="Remove generated scene directories")
     clean_parser.add_argument("-c", "--config", dest="scene_config", required=True)
@@ -382,6 +407,7 @@ def write_event_group(path: Path, events: list[dict]) -> None:
 
 def build_twin_jobs(
     scene: Path,
+    twin_output_root: Path,
     event_work_root: Path,
     event_groups: int,
     events_per_group: int,
@@ -389,7 +415,9 @@ def build_twin_jobs(
     event_list: str,
     dry_run: bool,
 ) -> list[tuple[int, Path | None, Path]]:
-    jobs: list[tuple[int, Path | None, Path]] = [(0, None, scene / TWIN_FILE_NAME)]
+    jobs: list[tuple[int, Path | None, Path]] = [
+        (0, None, twin_output_root / f"{scene.name}.jsonl")
+    ]
     if event_groups == 0:
         return jobs
     if not LEGACY_RUNTIME_EVENTS_ENABLED:
@@ -411,25 +439,46 @@ def build_twin_jobs(
         event_file = scene_event_work_dir / f"{group_id}.jsonl"
         if not dry_run:
             write_event_group(event_file, sampled_events)
-        jobs.append((group_id, event_file, scene / f"twin_{group_id}.jsonl"))
+        jobs.append(
+            (
+                group_id,
+                event_file,
+                twin_output_root / f"{scene.name}_{group_id}.jsonl",
+            )
+        )
     return jobs
 
 
-def label_path_for_twin(twin_file: Path) -> Path:
+def generated_label_path_for_twin(twin_file: Path) -> Path:
     if twin_file.name == TWIN_FILE_NAME:
         return twin_file.with_name(LABEL_FILE_NAME)
-    suffix = twin_file.stem.removeprefix("twin_")
-    return twin_file.with_name(f"labels_{suffix}.jsonl")
+    if twin_file.stem.startswith("twin_"):
+        suffix = twin_file.stem.removeprefix("twin_")
+        return twin_file.with_name(f"labels_{suffix}.jsonl")
+    return twin_file.with_name(f"{twin_file.stem}_labels.jsonl")
 
 
-def clear_twin_outputs(scene_paths: Sequence[Path], dry_run: bool) -> tuple[Path, ...]:
+# Kept for callers that used the former helper name.
+label_path_for_twin = generated_label_path_for_twin
+
+
+def clear_twin_outputs(
+    scene_paths: Sequence[Path],
+    twin_output_root: Path,
+    dry_run: bool,
+) -> tuple[Path, ...]:
     if dry_run:
         return ()
 
     removed: list[Path] = []
     for scene in scene_paths:
-        twin_file = scene / TWIN_FILE_NAME
-        for output_file in (twin_file, scene / LABEL_FILE_NAME):
+        twin_file = twin_output_root / f"{scene.name}.jsonl"
+        for output_file in (
+            twin_file,
+            generated_label_path_for_twin(twin_file),
+            scene / LABEL_FILE_NAME,
+            scene / TWIN_FILE_NAME,
+        ):
             if output_file.is_file():
                 output_file.unlink()
                 removed.append(output_file)
@@ -473,6 +522,7 @@ def ns3_run_argument(
 def run_twins(
     scene_root: str | Path,
     *,
+    twin_output_root: str | Path | None = None,
     scenes: Sequence[Path] | None = None,
     ns3_root: str | Path = DEFAULT_NS3_ROOT,
     program: str = "TwinGenerate",
@@ -489,6 +539,13 @@ def run_twins(
 ) -> TwinGenerationResult:
     event_groups, events_per_group = resolve_event_sampling(event_groups, events_per_group)
     resolved_scene_root = Path(scene_root).expanduser().resolve()
+    resolved_twin_output_root = (
+        Path(twin_output_root).expanduser().resolve()
+        if twin_output_root is not None
+        else resolved_scene_root.parent / SCENES_DIR_NAME
+        if resolved_scene_root.name == INPUT_DIR_NAME
+        else resolved_scene_root
+    )
     resolved_ns3_root = Path(ns3_root).expanduser().resolve()
     ns3_executable = resolved_ns3_root / "ns3"
     if not ns3_executable.is_file():
@@ -504,7 +561,13 @@ def run_twins(
     if before_output_reset is not None and not dry_run:
         before_output_reset()
 
-    removed_twin_files = clear_twin_outputs(scene_paths, dry_run)
+    if not dry_run:
+        resolved_twin_output_root.mkdir(parents=True, exist_ok=True)
+    removed_twin_files = clear_twin_outputs(
+        scene_paths,
+        resolved_twin_output_root,
+        dry_run,
+    )
     if not dry_run:
         print(f"Removed {len(removed_twin_files)} existing twin file(s).", flush=True)
 
@@ -533,6 +596,7 @@ def run_twins(
             try:
                 jobs = build_twin_jobs(
                     scene,
+                    resolved_twin_output_root,
                     event_work_root,
                     event_groups,
                     events_per_group,
@@ -569,12 +633,27 @@ def run_twins(
                     cwd=resolved_ns3_root,
                 )
                 if rc == 0 and not dry_run:
-                    expected_files = (result_file, label_path_for_twin(result_file))
+                    generated_label_file = generated_label_path_for_twin(
+                        result_file
+                    )
+                    expected_files = (result_file, generated_label_file)
                     missing_file = next((path for path in expected_files if not path.is_file()), None)
                     if missing_file is not None:
                         print(f"ns-3 did not create the expected output file: {missing_file}", file=sys.stderr)
                         rc = 1
+                    elif generated_label_file != scene / LABEL_FILE_NAME:
+                        shutil.move(
+                            generated_label_file,
+                            scene / LABEL_FILE_NAME,
+                        )
                 if rc != 0:
+                    if not dry_run:
+                        for partial_output in (
+                            result_file,
+                            generated_label_path_for_twin(result_file),
+                        ):
+                            if partial_output.is_file():
+                                partial_output.unlink()
                     failures.append((f"{scene.name} group={group_id}", rc))
                     if not continue_on_error:
                         break
@@ -589,7 +668,10 @@ def run_twins(
             print(f"  {label} (exit code {rc})", file=sys.stderr)
     else:
         action = "Prepared" if dry_run else "Generated"
-        print(f"\n{action} {len(generated_files)} twin file(s) inside scene directories.")
+        print(
+            f"\n{action} {len(generated_files)} twin file(s) in "
+            f"{resolved_twin_output_root}."
+        )
 
     return TwinGenerationResult(tuple(generated_files), tuple(failures))
 
@@ -613,10 +695,12 @@ def _run_twin_stage(
     scene_root: Path,
     scenes: Sequence[Path] | None = None,
     *,
+    twin_output_root: Path | None = None,
     before_output_reset: Callable[[], None] | None = None,
 ) -> TwinGenerationResult:
     return run_twins(
         scene_root,
+        twin_output_root=twin_output_root,
         scenes=scenes,
         ns3_root=args.ns3_root,
         program=args.program,
@@ -633,23 +717,79 @@ def _run_twin_stage(
     )
 
 
-def _group_scenes_root(scenes_root: Path, group: str) -> Path:
+def _group_root(scenes_root: Path, group: str) -> Path:
     if (
-        scenes_root.name == SCENES_DIR_NAME
+        scenes_root.name in {SCENES_DIR_NAME, INPUT_DIR_NAME}
         and scenes_root.parent.name in TWIN_TYPES
     ):
         if scenes_root.parent.name != group:
             raise ValueError(
                 f"scenes_root points to {scenes_root.parent.name}, not {group}"
             )
-        return scenes_root
+        return scenes_root.parent
     if scenes_root.name in TWIN_TYPES:
         if scenes_root.name != group:
             raise ValueError(
                 f"scenes_root points to {scenes_root.name}, not {group}"
             )
-        return scenes_root / SCENES_DIR_NAME
-    return scenes_root / group / SCENES_DIR_NAME
+        return scenes_root
+    return scenes_root / group
+
+
+def _group_input_root(scenes_root: Path, group: str) -> Path:
+    return _group_root(scenes_root, group) / INPUT_DIR_NAME
+
+
+def _group_scenes_root(scenes_root: Path, group: str) -> Path:
+    return _group_root(scenes_root, group) / SCENES_DIR_NAME
+
+
+def _prepare_group_layout(
+    scenes_root: Path,
+    group: str,
+    *,
+    dry_run: bool = False,
+) -> tuple[Path, Path]:
+    group_root = _group_root(scenes_root, group)
+    input_root = group_root / INPUT_DIR_NAME
+    twin_root = group_root / SCENES_DIR_NAME
+    if dry_run:
+        if input_root.is_dir():
+            return input_root, twin_root
+        if twin_root.is_dir() and any(
+            is_scene_dir(entry) for entry in twin_root.iterdir()
+        ):
+            return twin_root, twin_root
+        return input_root, twin_root
+
+    input_root.mkdir(parents=True, exist_ok=True)
+    twin_root.mkdir(parents=True, exist_ok=True)
+
+    migrated: list[Path] = []
+    for entry in sorted(twin_root.iterdir(), key=lambda path: path.name):
+        if not entry.is_dir():
+            continue
+        if not is_scene_dir(entry):
+            raise ValueError(
+                "The scenes directory may contain only flat Twin files; "
+                f"cannot migrate unrecognized directory: {entry}"
+            )
+        destination = input_root / entry.name
+        if destination.exists():
+            raise ValueError(
+                f"Cannot migrate legacy scene because the input exists: "
+                f"{destination}"
+            )
+        shutil.move(entry, destination)
+        migrated.append(destination)
+    if migrated:
+        print(
+            f"Migrated {len(migrated)} legacy {group} scene input "
+            f"director{'y' if len(migrated) == 1 else 'ies'} to "
+            f"{input_root}.",
+            flush=True,
+        )
+    return input_root, twin_root
 
 
 def _configured_scenes_root(
@@ -664,27 +804,30 @@ def _configured_scenes_root(
 
 
 def _clear_dependent_evolution_outputs(
-    origin_scenes_root: Path,
+    origin_input_root: Path,
     evolution_output_file: Path,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    dataset_root = origin_scenes_root.parent.parent
-    evolution_scenes_root = (
-        dataset_root / "evo" / SCENES_DIR_NAME
+    dataset_root = origin_input_root.parent.parent
+    evolution_roots = (
+        dataset_root / "evo" / INPUT_DIR_NAME,
+        dataset_root / "evo" / SCENES_DIR_NAME,
     )
-    if evolution_scenes_root.is_symlink():
-        raise ValueError(
-            "Refusing to clear a symbolic-link evolution scenes root: "
-            f"{evolution_scenes_root}"
-        )
-    if evolution_scenes_root.exists() and not evolution_scenes_root.is_dir():
-        raise NotADirectoryError(
-            f"Evolution scenes root is not a directory: {evolution_scenes_root}"
-        )
 
     removed_scene_entries: list[Path] = []
-    if evolution_scenes_root.is_dir():
+    for evolution_root in evolution_roots:
+        if evolution_root.is_symlink():
+            raise ValueError(
+                "Refusing to clear a symbolic-link evolution root: "
+                f"{evolution_root}"
+            )
+        if evolution_root.exists() and not evolution_root.is_dir():
+            raise NotADirectoryError(
+                f"Evolution root is not a directory: {evolution_root}"
+            )
+        if not evolution_root.is_dir():
+            continue
         for entry in sorted(
-            evolution_scenes_root.iterdir(),
+            evolution_root.iterdir(),
             key=lambda path: path.name,
         ):
             if entry.is_symlink() or entry.is_file():
@@ -740,9 +883,15 @@ def _require_completed_twins(
     *,
     allow_partial: bool = False,
 ) -> tuple[Path, list[Path]]:
-    group_root = _group_scenes_root(scenes_root, group)
+    input_root = _group_input_root(scenes_root, group)
+    twin_root = _group_scenes_root(scenes_root, group)
+    discovery_root = input_root
+    if not discovery_root.is_dir():
+        # Read-only compatibility for outputs generated before input/scenes
+        # were separated.
+        discovery_root = twin_root
     try:
-        scenes = discover_scenes(group_root)
+        scenes = discover_scenes(discovery_root)
     except ValueError as exc:
         raise ValueError(
             f"No {group} scenes are available; run "
@@ -751,13 +900,13 @@ def _require_completed_twins(
     complete = [
         scene
         for scene in scenes
-        if (scene / TWIN_FILE_NAME).is_file()
+        if _twin_file_for_scene(twin_root, scene).is_file()
         and (scene / LABEL_FILE_NAME).is_file()
     ]
     incomplete = [
         scene
         for scene in scenes
-        if not (scene / TWIN_FILE_NAME).is_file()
+        if not _twin_file_for_scene(twin_root, scene).is_file()
         or not (scene / LABEL_FILE_NAME).is_file()
     ]
     if incomplete and not allow_partial:
@@ -767,7 +916,7 @@ def _require_completed_twins(
         )
     if not complete:
         raise ValueError(
-            f"No {group} scenes have complete twin.jsonl and labels.jsonl "
+            f"No {group} scenes have complete Twin and labels.jsonl "
             f"outputs; run 'python main.py twin {group}' first"
         )
     if incomplete:
@@ -776,7 +925,14 @@ def _require_completed_twins(
             f"skipping {len(incomplete)} incomplete scene(s).",
             flush=True,
         )
-    return group_root, complete
+    return twin_root, complete
+
+
+def _twin_file_for_scene(twin_root: Path, scene: Path) -> Path:
+    flat_file = twin_root / f"{scene.name}.jsonl"
+    if flat_file.is_file() or scene.parent.name == INPUT_DIR_NAME:
+        return flat_file
+    return scene / TWIN_FILE_NAME
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -796,6 +952,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(scene_dir)
             return 0
 
+        if args.command == "split":
+            result = split_generated_dataset(
+                args.dataset_split_config,
+                train_ratio=args.train_ratio,
+            )
+            print(
+                f"Dataset split complete: train_ratio={result.train_ratio:g}"
+            )
+            print(f"Train output: {result.train_output_root}")
+            print(f"Test output: {result.test_output_root}")
+            for task in result.tasks:
+                print(
+                    f"{task.task_type}: "
+                    f"{task.source_questions} source question(s), "
+                    f"{task.train_questions} train / "
+                    f"{task.test_questions} test, "
+                    f"{task.train_scenes} train scene(s) / "
+                    f"{task.test_scenes} test scene(s)"
+                )
+            return 0
+
         if args.command == "twin":
             scenes_root_override = (
                 _resolve_project_path(args.scene_root)
@@ -808,9 +985,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"Twin type: {args.twin_type}", flush=True)
             if args.twin_type == "origin":
-                origin_scenes_root = _group_scenes_root(
-                    scenes_root,
-                    "origin",
+                origin_input_root, origin_scenes_root = (
+                    _prepare_group_layout(
+                        scenes_root,
+                        "origin",
+                        dry_run=args.dry_run,
+                    )
                 )
                 question_categories = load_question_config(
                     args.question_config
@@ -824,13 +1004,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 def invalidate_origin_dependents() -> None:
                     removed_analysis_artifacts = _clear_question_outputs(
-                        origin_scenes_root,
+                        origin_input_root,
                         analysis_output_file,
                         "analysis",
                     )
                     removed_scenes, removed_artifacts = (
                         _clear_dependent_evolution_outputs(
-                            origin_scenes_root,
+                            origin_input_root,
                             evolution_output_file,
                         )
                     )
@@ -848,7 +1028,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 result = _run_twin_stage(
                     args,
-                    origin_scenes_root,
+                    origin_input_root,
+                    twin_output_root=origin_scenes_root,
                     before_output_reset=invalidate_origin_dependents,
                 )
                 return 0 if result.complete else 1
@@ -863,6 +1044,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "Evolution Twin generation does not support --stop-time; "
                         "original and evolved Twins must use the same duration"
                     )
+                _prepare_group_layout(scenes_root, "origin")
+                _prepare_group_layout(scenes_root, "evo")
                 preparation = prepare_evolution_scenes(
                     args.question_config,
                     scenes_root=scenes_root,
@@ -874,16 +1057,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 result = _run_twin_stage(
                     args,
-                    preparation.scenes_root,
+                    _group_input_root(scenes_root, "evo"),
                     [plan.evolved_scene_dir for plan in preparation.plans],
+                    twin_output_root=_group_scenes_root(
+                        scenes_root,
+                        "evo",
+                    ),
                 )
                 print(
                     f"Prepared {len(preparation.plans)} evolution scene(s)"
                 )
                 return 0 if result.complete else 1
+            optimization_input_root, optimization_scenes_root = (
+                _prepare_group_layout(
+                    scenes_root,
+                    "opt",
+                    dry_run=args.dry_run,
+                )
+            )
             result = _run_twin_stage(
                 args,
-                _group_scenes_root(scenes_root, "opt"),
+                optimization_input_root,
+                twin_output_root=optimization_scenes_root,
             )
             return 0 if result.complete else 1
 
@@ -913,7 +1108,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.question_config,
                     scenes_root=original_scenes_root,
                     scene_files=[
-                        scene / TWIN_FILE_NAME
+                        _twin_file_for_scene(
+                            original_scenes_root,
+                            scene,
+                        )
                         for scene in completed_scenes
                     ],
                     question_type="analysis",
@@ -928,13 +1126,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _print_question_result(result)
                 return 0
-            optimization_root, _ = _require_completed_twins(
+            optimization_root, completed_scenes = _require_completed_twins(
                 configured_root,
                 "opt",
             )
             result = generate_questions(
                 args.question_config,
                 scenes_root=optimization_root,
+                scene_files=[
+                    _twin_file_for_scene(
+                        optimization_root,
+                        scene,
+                    )
+                    for scene in completed_scenes
+                ],
                 question_type=args.question_type,
             )
             _print_question_result(result)

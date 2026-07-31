@@ -173,10 +173,6 @@ def _generate_category(
 
     generator = _generator_for(category_config.name)
     questions: list[GeneratedQuestion] = []
-    scene_directories = tuple(dict.fromkeys(scene_file.parent for scene_file in scene_files))
-    questions_by_scene: dict[Path, list[GeneratedQuestion]] = {
-        scene_directory: [] for scene_directory in scene_directories
-    }
     counts: list[GenerationCount] = []
     question_number = next_question_number
 
@@ -203,7 +199,6 @@ def _generate_category(
                     scene_name=scene.scene_name,
                 )
                 questions.append(question)
-                questions_by_scene[scene_file.parent].append(question)
                 question_number += 1
                 generated_count += 1
                 if generated_count == requested_count:
@@ -219,17 +214,11 @@ def _generate_category(
             )
 
     _write_questions(category_config.output_file, questions)
-    scene_output_files: list[Path] = []
-    for scene_directory, scene_questions in questions_by_scene.items():
-        scene_output_file = scene_directory / f"{category_config.name}_questions.jsonl"
-        _write_questions(scene_output_file, scene_questions)
-        if scene_questions:
-            scene_output_files.append(scene_output_file)
     return (
         CategoryRunResult(
             category=category_config.name,
             output_file=category_config.output_file,
-            scene_output_files=tuple(scene_output_files),
+            scene_output_files=(),
             generated_count=len(questions),
             counts=tuple(counts),
         ),

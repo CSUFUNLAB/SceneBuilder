@@ -111,6 +111,8 @@ python main.py twin opt
 
 ### 3. 生成问题
 
+python main.py questions -t analysis
+
 ```bash
 python main.py questions -t analysis -c configs/question_generator.yaml
 ```

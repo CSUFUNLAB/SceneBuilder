@@ -32,6 +32,7 @@ DERIVATION_KIND = "evolution"
 ORIGINAL_SCENES_DIR_NAME = "origin"
 EVOLUTION_SCENES_DIR_NAME = "evo"
 SCENES_DIR_NAME = "scenes"
+INPUT_DIR_NAME = "input"
 NUMERIC_UNCHANGED_RELATIVE_TOLERANCE = 0.01
 EXACT_NUMERIC_METRICS = frozenset({"lost_packets"})
 SCENE_NAME_PATTERN = re.compile(
@@ -176,11 +177,12 @@ class EvolutionPlan:
     evolved_scene_id: str
     original_scene_file: Path
     evolved_scene_file: Path
+    evolved_input_dir: Path
     event: dict[str, Any]
 
     @property
     def evolved_scene_dir(self) -> Path:
-        return self.evolved_scene_file.parent
+        return self.evolved_input_dir
 
 
 @dataclass(frozen=True)
@@ -214,17 +216,25 @@ def prepare_evolution_scenes(
     )
     _clear_previous_evolution_outputs(root, category.output_file)
 
+    original_input_root = (
+        root / ORIGINAL_SCENES_DIR_NAME / INPUT_DIR_NAME
+    )
     original_scenes_root = (
         root / ORIGINAL_SCENES_DIR_NAME / SCENES_DIR_NAME
+    )
+    evolution_input_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME
     )
     evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
     source_directories = [
         path.parent
-        for path in sorted(original_scenes_root.glob("*/metadata.json"))
+        for path in sorted(original_input_root.glob("*/metadata.json"))
         if not _is_evolution_scene(path.parent)
-        and (path.parent / "twin.jsonl").is_file()
+        and (
+            original_scenes_root / f"{path.parent.name}.jsonl"
+        ).is_file()
         and (path.parent / "labels.jsonl").is_file()
     ]
     sources = [_load_source_scene(path) for path in source_directories]
@@ -271,7 +281,7 @@ def prepare_evolution_scenes(
                 scene_id_width,
                 event_scenario_id,
             )
-            evolved_scene_dir = evolution_scenes_root / evolved_scene_id
+            evolved_scene_dir = evolution_input_root / evolved_scene_id
             if evolved_scene_dir.exists():
                 raise ValueError(
                     f"Refusing to overwrite unrecognized scene directory: {evolved_scene_dir}"
@@ -296,8 +306,15 @@ def prepare_evolution_scenes(
                     event_type=event_type,
                     original_scene_id=source.scene_dir.name,
                     evolved_scene_id=evolved_scene_id,
-                    original_scene_file=source.scene_dir / "twin.jsonl",
-                    evolved_scene_file=evolved_scene_dir / "twin.jsonl",
+                    original_scene_file=(
+                        original_scenes_root
+                        / f"{source.scene_dir.name}.jsonl"
+                    ),
+                    evolved_scene_file=(
+                        evolution_scenes_root
+                        / f"{evolved_scene_id}.jsonl"
+                    ),
+                    evolved_input_dir=evolved_scene_dir,
                     event=event,
                 )
             )
@@ -337,12 +354,11 @@ def generate_evolution_questions(
         )
     export_question_template(category)
     _clear_evolution_question_outputs(
-        root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME,
+        root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME,
         category.output_file,
     )
 
     questions: list[GeneratedQuestion] = []
-    questions_by_scene: dict[Path, list[GeneratedQuestion]] = {}
     generated_by_target: dict[tuple[str, str], int] = {}
     rng = random.Random(config.seed)
     original_scene_cache: dict[Path, SceneData] = {}
@@ -422,20 +438,11 @@ def generate_evolution_questions(
                 )
                 question_number += 1
                 questions.append(question)
-                questions_by_scene.setdefault(
-                    plan.evolved_scene_dir,
-                    [],
-                ).append(question)
             generated_by_target[(template.template_id, target_label)] = len(
                 selected_candidates
             )
 
     _write_questions(category.output_file, questions)
-    output_files: list[Path] = []
-    for scene_dir, scene_questions in questions_by_scene.items():
-        output_file = scene_dir / "evolution_questions.jsonl"
-        _write_questions(output_file, scene_questions)
-        output_files.append(output_file)
     counts = tuple(
         GenerationCount(
             template_id=template.template_id,
@@ -455,7 +462,7 @@ def generate_evolution_questions(
     category_result = CategoryRunResult(
         category="evolution",
         output_file=category.output_file,
-        scene_output_files=tuple(output_files),
+        scene_output_files=(),
         generated_count=len(questions),
         counts=counts,
     )
@@ -1375,7 +1382,10 @@ def _load_evolution_plans(
     root: Path,
     event_types: tuple[EvolutionEventType, ...],
 ) -> list[EvolutionPlan]:
-    evolution_root = (
+    evolution_input_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME
+    )
+    evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
     event_type_by_id = {
@@ -1383,7 +1393,9 @@ def _load_evolution_plans(
         for event_type in event_types
     }
     plans: list[EvolutionPlan] = []
-    for metadata_file in sorted(evolution_root.glob("*/metadata.json")):
+    for metadata_file in sorted(
+        evolution_input_root.glob("*/metadata.json")
+    ):
         with metadata_file.open("r", encoding="utf-8-sig") as handle:
             metadata = json.load(handle)
         derivation = metadata.get("derivation")
@@ -1428,10 +1440,12 @@ def _load_evolution_plans(
                     root
                     / ORIGINAL_SCENES_DIR_NAME
                     / SCENES_DIR_NAME
-                    / original_scene_id
-                    / "twin.jsonl"
+                    / f"{original_scene_id}.jsonl"
                 ),
-                evolved_scene_file=metadata_file.parent / "twin.jsonl",
+                evolved_scene_file=(
+                    evolution_scenes_root / f"{evolved_scene_id}.jsonl"
+                ),
+                evolved_input_dir=metadata_file.parent,
                 event=dict(event),
             )
         )
@@ -1455,20 +1469,26 @@ def _clear_previous_evolution_outputs(root: Path, global_output: Path) -> None:
         global_output.unlink()
     if not root.is_dir():
         raise ValueError(f"scenes_root is not a directory: {root}")
-    original_scenes_root = (
-        root / ORIGINAL_SCENES_DIR_NAME / SCENES_DIR_NAME
+    original_input_root = (
+        root / ORIGINAL_SCENES_DIR_NAME / INPUT_DIR_NAME
+    )
+    evolution_input_root = (
+        root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME
     )
     evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
-    original_scenes_root.mkdir(parents=True, exist_ok=True)
+    original_input_root.mkdir(parents=True, exist_ok=True)
+    evolution_input_root.mkdir(parents=True, exist_ok=True)
     evolution_scenes_root.mkdir(parents=True, exist_ok=True)
-    for scene_dir in list(evolution_scenes_root.iterdir()):
+    for scene_dir in list(evolution_input_root.iterdir()):
         if not scene_dir.is_dir():
             continue
         if _is_evolution_scene(scene_dir):
             _remove_evolution_scene(scene_dir)
-    for local_output in original_scenes_root.glob(
+    for twin_file in evolution_scenes_root.glob("*.jsonl"):
+        twin_file.unlink()
+    for local_output in original_input_root.glob(
         "*/evolution_questions.jsonl"
     ):
         local_output.unlink()

@@ -97,11 +97,24 @@ class SceneData:
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "SceneData":
         source_file = Path(path)
-        label_file = source_file.with_name(
-            "labels.jsonl"
-            if source_file.name == "twin.jsonl"
-            else f"labels_{source_file.stem.removeprefix('twin_')}.jsonl"
-        )
+        if (
+            source_file.parent.name == "scenes"
+            and source_file.name != "twin.jsonl"
+        ):
+            scene_name = source_file.stem
+            label_file = (
+                source_file.parent.parent
+                / "input"
+                / scene_name
+                / "labels.jsonl"
+            )
+        else:
+            scene_name = source_file.parent.name
+            label_file = source_file.with_name(
+                "labels.jsonl"
+                if source_file.name == "twin.jsonl"
+                else f"labels_{source_file.stem.removeprefix('twin_')}.jsonl"
+            )
         entity_labels: dict[str, str] = {}
         bottlenecks: list[tuple[str, str]] = []
         congestion_patterns: list[tuple[str, str]] = []
@@ -280,7 +293,6 @@ class SceneData:
                         relations=dict(relations),
                     )
                 )
-        scene_name = source_file.parent.name
         return cls(
             scene_name,
             source_file,
@@ -348,10 +360,19 @@ def discover_scene_files(root: str | Path) -> list[Path]:
         raise ValueError(f"scenes_root is not a directory: {scene_root}")
 
     files = list(scene_root.rglob("twin.jsonl"))
-    if (scene_root / "twin.jsonl").is_file():
-        files.append(scene_root / "twin.jsonl")
+    files.extend(
+        path
+        for path in scene_root.rglob("scenes/*.jsonl")
+        if not path.stem.endswith("_labels")
+    )
+    if scene_root.name == "scenes":
+        files.extend(
+            path
+            for path in scene_root.glob("*.jsonl")
+            if not path.stem.endswith("_labels")
+        )
     files = list(dict.fromkeys(files))
     files.sort(key=lambda path: str(path.relative_to(scene_root)))
     if not files:
-        raise ValueError(f"No scene twin.jsonl files found under {scene_root}")
+        raise ValueError(f"No scene Twin files found under {scene_root}")
     return files

@@ -16,6 +16,7 @@ _SCENE_MARKER_FILES = {
 }
 _SCENE_GROUP_DIR_NAMES = {"origin", "evo", "opt"}
 _SCENES_DIR_NAME = "scenes"
+_INPUT_DIR_NAME = "input"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -41,6 +42,9 @@ def clean_output_root(output_root: str | Path) -> tuple[Path, list[Path]]:
         if child.name not in _SCENE_GROUP_DIR_NAMES or not child.is_dir():
             continue
         scene_roots = [child]
+        nested_input_root = child / _INPUT_DIR_NAME
+        if nested_input_root.is_dir():
+            scene_roots.append(nested_input_root)
         nested_scenes_root = child / _SCENES_DIR_NAME
         if nested_scenes_root.is_dir():
             scene_roots.append(nested_scenes_root)
@@ -53,6 +57,14 @@ def clean_output_root(output_root: str | Path) -> tuple[Path, list[Path]]:
                     continue
                 shutil.rmtree(scene_dir)
                 removed.append(scene_dir)
+        if nested_scenes_root.is_dir():
+            for twin_file in sorted(
+                nested_scenes_root.glob("*.jsonl"),
+                key=lambda path: path.name,
+            ):
+                if twin_file.is_file() or twin_file.is_symlink():
+                    twin_file.unlink()
+                    removed.append(twin_file)
 
     return output_root, removed
 

@@ -1,0 +1,9 @@
+seed: 42
+train_ratio: 0.8
+
+# Question files and generated scene roots are resolved from this config.
+question_config: question_generator.yaml
+
+# These paths are independent and may be changed separately.
+train_output_root: ../../STN-Runtime/datasets/scene_tasks/train
+test_output_root: ../../STN-Runtime/datasets/scene_tasks/test

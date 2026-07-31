@@ -26,7 +26,7 @@ from .writers.matrix_writer import write_matrix_csv
 
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 ORIGINAL_SCENES_DIR_NAME = "origin"
-SCENES_DIR_NAME = "scenes"
+INPUT_DIR_NAME = "input"
 
 
 def _sanitize_name(value: str) -> str:
@@ -52,7 +52,7 @@ def _build_scene_dir(config, selected: SelectedTopology, scene_index: int, total
     return (
         config.output_root
         / ORIGINAL_SCENES_DIR_NAME
-        / SCENES_DIR_NAME
+        / INPUT_DIR_NAME
         / scene_name
     )
 
@@ -373,7 +373,7 @@ def run(config_path: str | Path) -> list[Path]:
     (
         config.output_root
         / ORIGINAL_SCENES_DIR_NAME
-        / SCENES_DIR_NAME
+        / INPUT_DIR_NAME
     ).mkdir(parents=True, exist_ok=True)
     root_rng = RandomManager(config.seed)
 
