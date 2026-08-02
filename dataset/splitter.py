@@ -35,7 +35,6 @@ class DatasetSplitConfig:
     question_config: Path
     train_output_root: Path
     test_output_root: Path
-    train_ratio: float
     seed: int
 
 
@@ -71,13 +70,6 @@ def load_dataset_split_config(
     if not isinstance(raw, dict):
         raise ValueError("Dataset split config must be a mapping.")
 
-    train_ratio = raw.get("train_ratio", 0.8)
-    if (
-        isinstance(train_ratio, bool)
-        or not isinstance(train_ratio, (int, float))
-        or not 0 < float(train_ratio) < 1
-    ):
-        raise ValueError("train_ratio must be a number in (0, 1).")
     seed = raw.get("seed", 42)
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer.")
@@ -98,7 +90,6 @@ def load_dataset_split_config(
             path.parent,
             "test_output_root",
         ),
-        train_ratio=float(train_ratio),
         seed=seed,
     )
     _validate_output_roots(config)
@@ -108,16 +99,13 @@ def load_dataset_split_config(
 def split_generated_dataset(
     config_path: str | Path,
     *,
-    train_ratio: float | None = None,
+    train_ratio: float,
 ) -> DatasetSplitResult:
     config = load_dataset_split_config(config_path)
-    effective_ratio = (
-        config.train_ratio
-        if train_ratio is None
-        else _validate_ratio(train_ratio)
-    )
+    effective_ratio = _validate_ratio(train_ratio)
     question_config = load_question_config(config.question_config)
     _validate_outputs_outside_sources(config, question_config)
+    _ensure_output_roots_empty(config)
 
     train_stage = _create_stage(config.train_output_root)
     test_stage = _create_stage(config.test_output_root)
@@ -296,6 +284,9 @@ def _write_task_dataset(
     *,
     question_config: QuestionGeneratorConfig,
 ) -> int:
+    if not records:
+        return 0
+
     task_root = output_root / task_type
     scenes_root = task_root / SCENES_DIR_NAME
     scenes_root.mkdir(parents=True, exist_ok=True)
@@ -433,6 +424,30 @@ def _validate_outputs_outside_sources(
             )
 
 
+def _ensure_output_roots_empty(
+    config: DatasetSplitConfig,
+) -> None:
+    for label, output_root in (
+        ("train_output_root", config.train_output_root),
+        ("test_output_root", config.test_output_root),
+    ):
+        if output_root.is_symlink():
+            raise ValueError(
+                f"{label} must not be a symbolic link: {output_root}"
+            )
+        if not output_root.exists():
+            continue
+        if not output_root.is_dir():
+            raise ValueError(
+                f"{label} must be a directory: {output_root}"
+            )
+        if next(output_root.iterdir(), None) is not None:
+            raise ValueError(
+                f"{label} is not empty: {output_root}; clear it explicitly "
+                "before running split"
+            )
+
+
 def _create_stage(output_root: Path) -> Path:
     output_root.parent.mkdir(parents=True, exist_ok=True)
     return Path(
@@ -449,5 +464,10 @@ def _replace_output_root(stage: Path, output_root: Path) -> None:
             raise ValueError(
                 f"Dataset output root must be a directory: {output_root}"
             )
-        shutil.rmtree(output_root)
+        if next(output_root.iterdir(), None) is not None:
+            raise ValueError(
+                f"Dataset output root became non-empty during split: "
+                f"{output_root}"
+            )
+        output_root.rmdir()
     stage.replace(output_root)

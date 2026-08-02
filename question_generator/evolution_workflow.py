@@ -22,6 +22,7 @@ from .models import (
 from .runner import (
     CategoryRunResult,
     QuestionGenerationResult,
+    ensure_question_outputs_absent,
     export_question_template,
 )
 from .scene import EntityRecord, SceneData
@@ -214,7 +215,9 @@ def prepare_evolution_scenes(
         if scenes_root is not None
         else config.scenes_root
     )
-    _clear_previous_evolution_outputs(root, category.output_file)
+    if not root.is_dir():
+        raise ValueError(f"scenes_root is not a directory: {root}")
+    _ensure_evolution_outputs_absent(root, category)
 
     original_input_root = (
         root / ORIGINAL_SCENES_DIR_NAME / INPUT_DIR_NAME
@@ -244,6 +247,8 @@ def prepare_evolution_scenes(
             "complete twin.jsonl and labels.jsonl outputs; run "
             "'python main.py twin origin' first"
         )
+    evolution_input_root.mkdir(parents=True, exist_ok=True)
+    evolution_scenes_root.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(config.seed)
     options = _evolution_options(category)
@@ -340,6 +345,7 @@ def generate_evolution_questions(
         if scenes_root is not None
         else config.scenes_root
     )
+    ensure_question_outputs_absent(category)
     template_bundle = load_template_bundle(
         category.template_file,
         "evolution",
@@ -353,10 +359,6 @@ def generate_evolution_questions(
             "'python main.py twin evo' first"
         )
     export_question_template(category)
-    _clear_evolution_question_outputs(
-        root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME,
-        category.output_file,
-    )
 
     questions: list[GeneratedQuestion] = []
     generated_by_target: dict[tuple[str, str], int] = {}
@@ -1344,8 +1346,6 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
 
 def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
     if not questions:
-        if path.is_file():
-            path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_jsonl(path, [question.to_dict() for question in questions])
@@ -1452,51 +1452,38 @@ def _load_evolution_plans(
     return plans
 
 
-def _clear_evolution_question_outputs(
-    evolution_root: Path,
-    global_output: Path,
+def _ensure_evolution_outputs_absent(
+    root: Path,
+    category: CategoryConfig,
 ) -> None:
-    if global_output.is_file():
-        global_output.unlink()
-    if not evolution_root.is_dir():
-        return
-    for local_output in evolution_root.glob("*/evolution_questions.jsonl"):
-        local_output.unlink()
-
-
-def _clear_previous_evolution_outputs(root: Path, global_output: Path) -> None:
-    if global_output.is_file():
-        global_output.unlink()
-    if not root.is_dir():
-        raise ValueError(f"scenes_root is not a directory: {root}")
-    original_input_root = (
-        root / ORIGINAL_SCENES_DIR_NAME / INPUT_DIR_NAME
-    )
     evolution_input_root = (
         root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME
     )
     evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
-    original_input_root.mkdir(parents=True, exist_ok=True)
-    evolution_input_root.mkdir(parents=True, exist_ok=True)
-    evolution_scenes_root.mkdir(parents=True, exist_ok=True)
-    for scene_dir in list(evolution_input_root.iterdir()):
-        if not scene_dir.is_dir():
-            continue
-        if _is_evolution_scene(scene_dir):
-            _remove_evolution_scene(scene_dir)
-    for twin_file in evolution_scenes_root.glob("*.jsonl"):
-        twin_file.unlink()
-    for local_output in original_input_root.glob(
-        "*/evolution_questions.jsonl"
-    ):
-        local_output.unlink()
-
-
-def _remove_evolution_scene(scene_dir: Path) -> None:
-    if scene_dir.is_dir() and _is_evolution_scene(scene_dir):
-        shutil.rmtree(scene_dir)
+    candidates = [
+        category.output_file,
+        category.exported_template_file,
+    ]
+    for output_root in (evolution_input_root, evolution_scenes_root):
+        if output_root.is_dir():
+            candidates.extend(output_root.iterdir())
+        elif output_root.exists() or output_root.is_symlink():
+            candidates.append(output_root)
+    existing = next(
+        (
+            path
+            for path in candidates
+            if path.exists() or path.is_symlink()
+        ),
+        None,
+    )
+    if existing is not None:
+        raise ValueError(
+            f"Evolution output already exists: {existing}; run "
+            "'python main.py clean twin' first"
+        )
 
 
 def _next_scene_id(root: Path) -> tuple[int, int]:

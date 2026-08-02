@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Callable, Sequence
+from typing import Sequence
 
 from dataset.splitter import split_generated_dataset
 from question_generator.config import (
@@ -30,15 +30,17 @@ from question_generator.evolution_workflow import (
 from question_generator.runner import (
     QuestionGenerationResult,
     clean_question_outputs,
+    ensure_question_outputs_absent,
     run as generate_questions,
 )
-from scene_generator.cleaner import clean
+from scene_generator.cleaner import reset_output_root
 from scene_generator.config import load_config as load_scene_config
 from scene_generator.runner import run as generate_scenes
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
+DEFAULT_SCENE_CONFIG = PROJECT_ROOT / "configs" / "example.yaml"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 DEFAULT_DATASET_SPLIT_CONFIG = (
     PROJECT_ROOT / "configs" / "dataset_split.yaml"
@@ -121,19 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
         "questions",
         help="Generate questions from completed Twins",
     )
-    question_action = questions_parser.add_mutually_exclusive_group(required=True)
-    question_action.add_argument(
+    questions_parser.add_argument(
         "-t",
         "--type",
         dest="question_type",
+        required=True,
         choices=QUESTION_CATEGORIES,
         help="Question type to generate.",
-    )
-    question_action.add_argument(
-        "--clean",
-        dest="clean_questions",
-        action="store_true",
-        help="Remove global and per-scene question JSONL files, then exit.",
     )
     questions_parser.add_argument(
         "-c",
@@ -161,13 +157,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Dataset split YAML config",
     )
     split_parser.add_argument(
+        "-r",
         "--train-ratio",
         type=float,
-        default=None,
-        help="Override train_ratio from the dataset split config.",
+        required=True,
+        help="Required training-question ratio in the open interval (0, 1).",
     )
-    clean_parser = subparsers.add_parser("clean", help="Remove generated scene directories")
-    clean_parser.add_argument("-c", "--config", dest="scene_config", required=True)
+    clean_parser = subparsers.add_parser(
+        "clean",
+        help="Explicitly clean all outputs, Twins, or questions",
+    )
+    clean_parser.add_argument(
+        "clean_type",
+        nargs="?",
+        choices=("twin", "questions"),
+        help=(
+            "Omit to clean all generated outputs; choose twin or questions "
+            "to clean only that layer and its dependents."
+        ),
+    )
+    clean_parser.add_argument(
+        "-c",
+        "--config",
+        dest="clean_config",
+        help=(
+            "Scene config for full clean, or question config for twin/"
+            "questions clean."
+        ),
+    )
+    clean_parser.add_argument(
+        "--scene-root",
+        help="Override scenes_root for twin/questions clean.",
+    )
     return parser
 
 
@@ -462,15 +483,11 @@ def generated_label_path_for_twin(twin_file: Path) -> Path:
 label_path_for_twin = generated_label_path_for_twin
 
 
-def clear_twin_outputs(
+def existing_twin_outputs(
     scene_paths: Sequence[Path],
     twin_output_root: Path,
-    dry_run: bool,
 ) -> tuple[Path, ...]:
-    if dry_run:
-        return ()
-
-    removed: list[Path] = []
+    existing: list[Path] = []
     for scene in scene_paths:
         twin_file = twin_output_root / f"{scene.name}.jsonl"
         for output_file in (
@@ -479,24 +496,9 @@ def clear_twin_outputs(
             scene / LABEL_FILE_NAME,
             scene / TWIN_FILE_NAME,
         ):
-            if output_file.is_file():
-                output_file.unlink()
-                removed.append(output_file)
-
-        legacy_directory = scene / "twin"
-        if not legacy_directory.is_dir():
-            continue
-        legacy_files = [legacy_directory / "0.jsonl"]
-        legacy_files.extend(legacy_directory.glob("[1-9]*.jsonl"))
-        legacy_files.extend(legacy_directory.glob("*_events.jsonl"))
-        for legacy_file in dict.fromkeys(legacy_files):
-            if legacy_file.is_file():
-                legacy_file.unlink()
-                removed.append(legacy_file)
-        if not any(legacy_directory.iterdir()):
-            legacy_directory.rmdir()
-
-    return tuple(removed)
+            if output_file.is_file() or output_file.is_symlink():
+                existing.append(output_file)
+    return tuple(dict.fromkeys(existing))
 
 
 def ns3_run_argument(
@@ -535,7 +537,6 @@ def run_twins(
     events_per_group: int = 0,
     event_seed: int = 1,
     event_list: str = "events.jsonl",
-    before_output_reset: Callable[[], None] | None = None,
 ) -> TwinGenerationResult:
     event_groups, events_per_group = resolve_event_sampling(event_groups, events_per_group)
     resolved_scene_root = Path(scene_root).expanduser().resolve()
@@ -548,8 +549,6 @@ def run_twins(
     )
     resolved_ns3_root = Path(ns3_root).expanduser().resolve()
     ns3_executable = resolved_ns3_root / "ns3"
-    if not ns3_executable.is_file():
-        raise ValueError(f"ns-3 launcher does not exist: {ns3_executable}")
 
     scene_paths = [Path(path).resolve() for path in scenes] if scenes is not None else discover_scenes(resolved_scene_root)
     invalid_scenes = [path for path in scene_paths if not is_scene_dir(path)]
@@ -558,18 +557,19 @@ def run_twins(
     if not scene_paths:
         raise ValueError("No generated scenes were provided for twin generation")
 
-    if before_output_reset is not None and not dry_run:
-        before_output_reset()
-
-    if not dry_run:
-        resolved_twin_output_root.mkdir(parents=True, exist_ok=True)
-    removed_twin_files = clear_twin_outputs(
+    existing_outputs = existing_twin_outputs(
         scene_paths,
         resolved_twin_output_root,
-        dry_run,
     )
+    if existing_outputs:
+        raise ValueError(
+            f"Twin output already exists: {existing_outputs[0]}; run "
+            "'python main.py clean twin' first"
+        )
+    if not ns3_executable.is_file():
+        raise ValueError(f"ns-3 launcher does not exist: {ns3_executable}")
     if not dry_run:
-        print(f"Removed {len(removed_twin_files)} existing twin file(s).", flush=True)
+        resolved_twin_output_root.mkdir(parents=True, exist_ok=True)
 
     if not no_build:
         rc = run_command(
@@ -696,7 +696,6 @@ def _run_twin_stage(
     scenes: Sequence[Path] | None = None,
     *,
     twin_output_root: Path | None = None,
-    before_output_reset: Callable[[], None] | None = None,
 ) -> TwinGenerationResult:
     return run_twins(
         scene_root,
@@ -713,7 +712,6 @@ def _run_twin_stage(
         events_per_group=args.events_per_group,
         event_seed=args.event_seed,
         event_list=args.event_list,
-        before_output_reset=before_output_reset,
     )
 
 
@@ -753,6 +751,18 @@ def _prepare_group_layout(
     group_root = _group_root(scenes_root, group)
     input_root = group_root / INPUT_DIR_NAME
     twin_root = group_root / SCENES_DIR_NAME
+    symbolic_root = next(
+        (
+            root
+            for root in (group_root, input_root, twin_root)
+            if root.is_symlink()
+        ),
+        None,
+    )
+    if symbolic_root is not None:
+        raise ValueError(
+            f"Refusing to use a symbolic-link scene root: {symbolic_root}"
+        )
     if dry_run:
         if input_root.is_dir():
             return input_root, twin_root
@@ -763,10 +773,18 @@ def _prepare_group_layout(
         return input_root, twin_root
 
     input_root.mkdir(parents=True, exist_ok=True)
-    twin_root.mkdir(parents=True, exist_ok=True)
+    if twin_root.exists() and not twin_root.is_dir():
+        raise NotADirectoryError(
+            f"Twin output root is not a directory: {twin_root}"
+        )
 
     migrated: list[Path] = []
-    for entry in sorted(twin_root.iterdir(), key=lambda path: path.name):
+    entries = (
+        sorted(twin_root.iterdir(), key=lambda path: path.name)
+        if twin_root.is_dir()
+        else []
+    )
+    for entry in entries:
         if not entry.is_dir():
             continue
         if not is_scene_dir(entry):
@@ -803,78 +821,163 @@ def _configured_scenes_root(
     )
 
 
-def _clear_dependent_evolution_outputs(
-    origin_input_root: Path,
-    evolution_output_file: Path,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    dataset_root = origin_input_root.parent.parent
-    evolution_roots = (
-        dataset_root / "evo" / INPUT_DIR_NAME,
-        dataset_root / "evo" / SCENES_DIR_NAME,
-    )
+def _ensure_twin_outputs_absent_before_layout(
+    scenes_root: Path,
+    group: str,
+) -> None:
+    input_root = _group_input_root(scenes_root, group)
+    twin_root = _group_scenes_root(scenes_root, group)
+    candidates: list[Path] = []
 
-    removed_scene_entries: list[Path] = []
-    for evolution_root in evolution_roots:
-        if evolution_root.is_symlink():
-            raise ValueError(
-                "Refusing to clear a symbolic-link evolution root: "
-                f"{evolution_root}"
+    if twin_root.is_dir():
+        candidates.extend(
+            path
+            for path in twin_root.iterdir()
+            if path.is_file() or path.is_symlink()
+        )
+    for raw_root in (input_root, twin_root):
+        if not raw_root.is_dir():
+            continue
+        for metadata_file in raw_root.rglob("metadata.json"):
+            scene_dir = metadata_file.parent
+            candidates.extend(
+                (
+                    scene_dir / TWIN_FILE_NAME,
+                    scene_dir / LABEL_FILE_NAME,
+                    scene_dir / "twin",
+                )
             )
-        if evolution_root.exists() and not evolution_root.is_dir():
-            raise NotADirectoryError(
-                f"Evolution root is not a directory: {evolution_root}"
-            )
+            candidates.extend(scene_dir.glob("twin_[0-9]*.jsonl"))
+            candidates.extend(scene_dir.glob("labels_*.jsonl"))
+
+    existing = next(
+        (
+            path
+            for path in candidates
+            if path.exists() or path.is_symlink()
+        ),
+        None,
+    )
+    if existing is not None:
+        raise ValueError(
+            f"Twin output already exists: {existing}; run "
+            "'python main.py clean twin' first"
+        )
+
+
+def _clean_twin_layer(
+    question_config: str | Path,
+    scenes_root: Path,
+) -> tuple[Path, ...]:
+    if scenes_root.is_symlink():
+        raise ValueError(
+            f"Refusing to clean a symbolic-link scenes_root: {scenes_root}"
+        )
+    layer_roots = tuple(
+        root
+        for group in TWIN_TYPES
+        for root in (
+            _group_input_root(scenes_root, group),
+            _group_scenes_root(scenes_root, group),
+        )
+    )
+    symbolic_root = next(
+        (root for root in layer_roots if root.is_symlink()),
+        None,
+    )
+    if symbolic_root is not None:
+        raise ValueError(
+            f"Refusing to clean a symbolic-link layer root: {symbolic_root}"
+        )
+    invalid_root = next(
+        (
+            root
+            for root in layer_roots
+            if root.exists() and not root.is_dir()
+        ),
+        None,
+    )
+    if invalid_root is not None:
+        raise NotADirectoryError(
+            f"Twin layer root is not a directory: {invalid_root}"
+        )
+
+    question_cleanup = clean_question_outputs(
+        question_config,
+        scenes_root=scenes_root,
+    )
+    removed: list[Path] = list(question_cleanup.removed_files)
+
+    for group in ("origin", "opt"):
+        input_root = _group_input_root(scenes_root, group)
+        if input_root.is_dir():
+            for metadata_file in sorted(input_root.rglob("metadata.json")):
+                scene_dir = metadata_file.parent
+                for pattern in (
+                    LABEL_FILE_NAME,
+                    TWIN_FILE_NAME,
+                    "labels_*.jsonl",
+                    "twin_[0-9]*.jsonl",
+                ):
+                    for artifact in sorted(scene_dir.glob(pattern)):
+                        if artifact.is_file() or artifact.is_symlink():
+                            artifact.unlink()
+                            removed.append(artifact)
+                legacy_twin_root = scene_dir / "twin"
+                if legacy_twin_root.is_symlink():
+                    legacy_twin_root.unlink()
+                    removed.append(legacy_twin_root)
+                elif legacy_twin_root.is_dir():
+                    shutil.rmtree(legacy_twin_root)
+                    removed.append(legacy_twin_root)
+
+        twin_root = _group_scenes_root(scenes_root, group)
+        if twin_root.is_dir():
+            for artifact in sorted(
+                twin_root.iterdir(),
+                key=lambda path: path.name,
+            ):
+                if artifact.is_file() or artifact.is_symlink():
+                    artifact.unlink()
+                    removed.append(artifact)
+                elif artifact.is_dir() and is_scene_dir(artifact):
+                    for pattern in (
+                        TWIN_FILE_NAME,
+                        LABEL_FILE_NAME,
+                        "labels_*.jsonl",
+                        "twin_[0-9]*.jsonl",
+                    ):
+                        for legacy_output in artifact.glob(pattern):
+                            if legacy_output.is_file():
+                                legacy_output.unlink()
+                                removed.append(legacy_output)
+                    legacy_twin_root = artifact / "twin"
+                    if legacy_twin_root.is_symlink():
+                        legacy_twin_root.unlink()
+                        removed.append(legacy_twin_root)
+                    elif legacy_twin_root.is_dir():
+                        shutil.rmtree(legacy_twin_root)
+                        removed.append(legacy_twin_root)
+
+    for evolution_root in (
+        _group_input_root(scenes_root, "evo"),
+        _group_scenes_root(scenes_root, "evo"),
+    ):
         if not evolution_root.is_dir():
             continue
-        for entry in sorted(
+        for artifact in sorted(
             evolution_root.iterdir(),
             key=lambda path: path.name,
         ):
-            if entry.is_symlink() or entry.is_file():
-                entry.unlink()
-            elif entry.is_dir():
-                shutil.rmtree(entry)
+            if artifact.is_file() or artifact.is_symlink():
+                artifact.unlink()
+            elif artifact.is_dir():
+                shutil.rmtree(artifact)
             else:
-                entry.unlink()
-            removed_scene_entries.append(entry)
-
-    removed_question_artifacts: list[Path] = []
-    question_artifacts = (
-        evolution_output_file,
-        evolution_output_file.parent / "question_template.yaml",
-    )
-    for artifact in dict.fromkeys(question_artifacts):
-        if artifact.is_symlink() or artifact.is_file():
-            artifact.unlink()
-            removed_question_artifacts.append(artifact)
-
-    return tuple(removed_scene_entries), tuple(removed_question_artifacts)
-
-
-def _clear_question_outputs(
-    scenes_root: Path,
-    output_file: Path,
-    question_type: str,
-) -> tuple[Path, ...]:
-    removed: list[Path] = []
-    if scenes_root.is_dir():
-        for local_output in sorted(
-            scenes_root.glob(f"*/{question_type}_questions.jsonl"),
-            key=lambda path: str(path),
-        ):
-            if local_output.is_symlink() or local_output.is_file():
-                local_output.unlink()
-                removed.append(local_output)
-
-    global_artifacts = (
-        output_file,
-        output_file.parent / "question_template.yaml",
-    )
-    for artifact in dict.fromkeys(global_artifacts):
-        if artifact.is_symlink() or artifact.is_file():
-            artifact.unlink()
+                artifact.unlink()
             removed.append(artifact)
-    return tuple(removed)
+
+    return tuple(dict.fromkeys(removed))
 
 
 def _require_completed_twins(
@@ -941,8 +1044,53 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.command == "clean":
-            output_root, removed = clean(args.scene_config)
-            print(f"Removed {len(removed)} scene directories from {output_root}")
+            if args.clean_type is None:
+                config_path = (
+                    args.clean_config
+                    if args.clean_config is not None
+                    else DEFAULT_SCENE_CONFIG
+                )
+                scene_config = load_scene_config(config_path)
+                output_root, removed = reset_output_root(
+                    scene_config.output_root
+                )
+                print(
+                    f"Removed {len(removed)} top-level generated output "
+                    f"entr{'y' if len(removed) == 1 else 'ies'} from "
+                    f"{output_root}"
+                )
+                return 0
+
+            question_config = (
+                args.clean_config
+                if args.clean_config is not None
+                else DEFAULT_QUESTION_CONFIG
+            )
+            scenes_root_override = (
+                _resolve_project_path(args.scene_root)
+                if args.scene_root
+                else None
+            )
+            if args.clean_type == "questions":
+                result = clean_question_outputs(
+                    question_config,
+                    scenes_root=scenes_root_override,
+                )
+                print(
+                    f"Removed {len(result.removed_files)} question "
+                    "artifact(s)"
+                )
+                return 0
+
+            scenes_root = _configured_scenes_root(
+                question_config,
+                scenes_root_override,
+            )
+            removed = _clean_twin_layer(
+                question_config,
+                scenes_root,
+            )
+            print(f"Removed {len(removed)} Twin-layer artifact(s)")
             return 0
 
         if args.command == "generate":
@@ -985,6 +1133,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"Twin type: {args.twin_type}", flush=True)
             if args.twin_type == "origin":
+                _ensure_twin_outputs_absent_before_layout(
+                    scenes_root,
+                    "origin",
+                )
                 origin_input_root, origin_scenes_root = (
                     _prepare_group_layout(
                         scenes_root,
@@ -992,45 +1144,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         dry_run=args.dry_run,
                     )
                 )
-                question_categories = load_question_config(
-                    args.question_config
-                ).categories
-                evolution_output_file = question_categories[
-                    "evolution"
-                ].output_file
-                analysis_output_file = question_categories[
-                    "analysis"
-                ].output_file
-
-                def invalidate_origin_dependents() -> None:
-                    removed_analysis_artifacts = _clear_question_outputs(
-                        origin_input_root,
-                        analysis_output_file,
-                        "analysis",
-                    )
-                    removed_scenes, removed_artifacts = (
-                        _clear_dependent_evolution_outputs(
-                            origin_input_root,
-                            evolution_output_file,
-                        )
-                    )
-                    print(
-                        "Invalidated "
-                        f"{len(removed_analysis_artifacts)} analysis question "
-                        "artifact(s), "
-                        f"{len(removed_scenes)} evolution scene entr"
-                        f"{'y' if len(removed_scenes) == 1 else 'ies'} "
-                        "and "
-                        f"{len(removed_artifacts)} evolution question "
-                        "artifact(s).",
-                        flush=True,
-                    )
 
                 result = _run_twin_stage(
                     args,
                     origin_input_root,
                     twin_output_root=origin_scenes_root,
-                    before_output_reset=invalidate_origin_dependents,
                 )
                 return 0 if result.complete else 1
             if args.twin_type == "evo":
@@ -1043,9 +1161,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError(
                         "Evolution Twin generation does not support --stop-time; "
                         "original and evolved Twins must use the same duration"
-                    )
-                _prepare_group_layout(scenes_root, "origin")
-                _prepare_group_layout(scenes_root, "evo")
+                )
                 preparation = prepare_evolution_scenes(
                     args.question_config,
                     scenes_root=scenes_root,
@@ -1068,6 +1184,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Prepared {len(preparation.plans)} evolution scene(s)"
                 )
                 return 0 if result.complete else 1
+            _ensure_twin_outputs_absent_before_layout(
+                scenes_root,
+                "opt",
+            )
             optimization_input_root, optimization_scenes_root = (
                 _prepare_group_layout(
                     scenes_root,
@@ -1084,17 +1204,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "questions":
             scenes_root = _resolve_project_path(args.scene_root) if args.scene_root else None
-            if args.clean_questions:
-                result = clean_question_outputs(args.question_config, scenes_root=scenes_root)
-                print(
-                    f"Removed {len(result.removed_files)} question file(s) "
-                    f"from {result.scene_count} scene(s)"
-                )
-                return 0
             print(f"Question type: {args.question_type}", flush=True)
             configured_root = _configured_scenes_root(
                 args.question_config,
                 scenes_root,
+            )
+            question_config = load_question_config(
+                args.question_config
+            )
+            ensure_question_outputs_absent(
+                question_config.categories[args.question_type]
             )
             if args.question_type == "analysis":
                 original_scenes_root, completed_scenes = (

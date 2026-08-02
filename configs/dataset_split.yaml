@@ -1,5 +1,4 @@
 seed: 42
-train_ratio: 0.8
 
 # Question files and generated scene roots are resolved from this config.
 question_config: question_generator.yaml

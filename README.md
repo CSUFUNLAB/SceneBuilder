@@ -1,14 +1,251 @@
 # SceneBuilder
 
-SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置转换为可供 ns-3 读取的网络场景，运行内置的 ns-3.44 仿真生成数字孪生体，并可进一步从孪生体生成带标签的问题数据。
+SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置转换为可供 ns-3 读取的网络
+场景，运行内置的 ns-3.44 仿真生成数字孪生体，并从孪生体生成带标签的问题数据。所有
+步骤统一通过项目根目录的 `main.py` 执行。
 
-整个流程分为三个阶段：
+## 运行指令
 
-1. **场景生成**：生成节点、信道、网卡、路由和流量等静态输入。
-2. **Twin 生成**：按 `origin`、`evo` 或 `opt` 类型运行 ns-3。
-3. **问题生成**：只读取已经完成的 Twin 和标签，生成具体问题。
+完整流程依次运行：
 
-所有步骤统一通过项目根目录的 `main.py` 执行。
+```bash
+cd /home/SceneBuilder
+
+# 1. 生成原始场景输入
+python main.py generate -c configs/example.yaml
+
+# 2. 生成原始 Twin
+python main.py twin origin
+
+# 3. 生成分析问题
+python main.py questions -t analysis -c configs/question_generator.yaml
+
+# 4. 生成演化场景及 Twin
+python main.py twin evo
+
+# 5. 生成演化问题
+python main.py questions -t evolution -c configs/question_generator.yaml
+
+# 6. 按问题划分训练集和测试集
+python main.py split -c configs/dataset_split.yaml -r 0.8
+```
+
+命令格式为：
+
+```bash
+python main.py <模式> [选项]
+```
+
+可用模式：
+
+- `generate`：生成网络场景的原始输入。
+- `twin`：生成 `origin`、`evo` 或 `opt` Twin。
+- `questions`：从已有 Twin 和标签生成问题。
+- `split`：按问题模板分别划分训练集和测试集。
+- `clean`：清理场景配置对应的已有场景。
+
+### 1. 生成场景
+
+```bash
+python main.py generate -c configs/example.yaml
+```
+
+场景原始输入生成到配置文件的 `output_root`，示例配置对应：
+
+```text
+/home/SceneBuilder/generated_scenes/origin/input
+```
+
+一次生成的场景数量为：
+
+```text
+符合 max_topology_nodes 限制的拓扑数量 x scenes_per_topology
+```
+
+`generate` 不会覆盖或清理任何已有内容。只要配置指定的 `output_root` 中已经存在文件
+或目录，命令就会立即停止并提示先运行：
+
+```bash
+python main.py clean
+```
+
+清理后才能重新生成场景。
+
+### 2. 生成 Twin
+
+生成原始 Twin：
+
+```bash
+python main.py twin origin
+```
+
+原始场景输入从 `origin/input/<scene_id>/` 读取，生成的 Twin 扁平保存为
+`origin/scenes/<scene_id>.jsonl`，标签保存到对应的
+`origin/input/<scene_id>/labels.jsonl`。`origin/scenes` 中只保存 Twin 文件。
+
+Twin 命令不会删除或覆盖已有 Twin、标签、演化派生场景或问题。只要目标输出已经存在，
+命令就会停止并提示先运行 `python main.py clean twin`。旧版
+`origin/scenes/<scene_id>/` 中仍有 Twin 时会在迁移前拒绝执行；显式清理 Twin 后，
+下一次 `twin origin` 才会把保留下来的原始输入迁移到 `origin/input/<scene_id>/`。
+
+生成演化场景及 Twin：
+
+```bash
+python main.py twin evo
+```
+
+该命令从具有完整原始 Twin 和标签的 origin 场景中随机抽样，读取
+`question_generator/templates/evolution.yaml` 中独立定义的 `events`，将事件施加到
+复制的静态输入并写入 `evo/input/<scene_id>/`，然后将演化 Twin 写入
+`evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和网卡的故障/恢复、数据流负载的
+增加/降低以及新增数据流，共九类事件。
+
+生成优化场景 Twin：
+
+```bash
+python main.py twin opt
+```
+
+该命令处理 `opt/input` 中已经存在的优化场景；当前优化场景构造逻辑尚未实现。
+
+### 3. 生成问题
+
+分析问题：
+
+```bash
+python main.py questions -t analysis -c configs/question_generator.yaml
+```
+
+演化问题：
+
+```bash
+python main.py questions -t evolution -c configs/question_generator.yaml
+```
+
+优化问题：
+
+```bash
+python main.py questions -t optimization -c configs/question_generator.yaml
+```
+
+`-c` 默认使用 `configs/question_generator.yaml`。也可以覆盖场景数据根目录：
+
+```bash
+python main.py questions -t analysis \
+  -c configs/question_generator.yaml \
+  --scene-root generated_scenes
+```
+
+分析问题允许使用部分完成的 origin Twin；命令会报告已使用和跳过的场景数。只有没有
+任何完整场景时才会要求先运行 `python main.py twin origin`。演化问题要求先完成
+`python main.py twin evo`，通过比较变更前后的 Twin 生成实际满足目标变化的问题。
+
+问题生成不会删除或覆盖已有问题列表和导出模板。目标问题输出已经存在时，命令会立即
+停止并提示先运行：
+
+```bash
+python main.py clean questions
+```
+
+问题模板使用稳定的 `template_id`：分析、演化和优化模板分别使用 `TA`、`TE`、`TO`
+前缀。每道具体问题使用独立的 `question_id`，格式为 `Q00000001`；同一个模板可以生成
+多道具体问题。
+
+### 4. 划分训练集和测试集
+
+划分比例必须在每次运行时显式输入。例如按 80%/20% 划分：
+
+```bash
+python main.py split \
+  -c configs/dataset_split.yaml \
+  -r 0.8
+```
+
+配置文件默认是 `configs/dataset_split.yaml`，可以省略 `-c`，但不能省略比例：
+
+```bash
+python main.py split -r 0.8
+```
+
+`configs/dataset_split.yaml` 配置：
+
+- `question_config`：问题列表和生成场景根目录所使用的问题配置。
+- `train_output_root`：训练集输出目录。
+- `test_output_root`：测试集输出目录。
+- `seed`：可复现划分所使用的随机种子。
+
+`-r` 是 `--train-ratio` 的简写，必须在 `0` 和 `1` 之间；配置文件不提供默认划分比例。
+
+`train_output_root` 和 `test_output_root` 必须都不存在或为空。任一输出目录非空时，
+`split` 会在创建临时数据前直接停止，不会删除或覆盖已有数据集；需要先显式清空对应目录
+或在配置中改用新的输出路径。
+
+划分以问题为单位，并在每个任务内按 `template_id` 分层处理，不按场景整体划分。同一
+场景可以因为不同问题同时出现在训练集和测试集中。输出按
+`analysis/evolution/optimization` 分任务，每个任务目录包含该任务的问题列表和
+`scenes/`；其中 `scenes/` 直接保存问题涉及的 `<scene_id>.jsonl` Twin，不创建场景子目录，
+也不复制原始输入、标签或其他文件。某个训练或测试分片中没有对应任务的问题时，不创建
+该任务目录。
+
+默认配置输出到：
+
+```text
+/home/STN-Runtime/datasets/scene_tasks/
+├── train/
+│   ├── analysis/
+│   ├── evolution/
+│   └── optimization/
+└── test/
+    ├── analysis/
+    ├── evolution/
+    └── optimization/
+```
+
+### 5. 分层清理
+
+清理全部生成内容：
+
+```bash
+python main.py clean
+```
+
+该命令使用默认的 `configs/example.yaml`，清空其 `output_root` 中的场景输入、Twin、
+标签、演化派生输入和问题输出。使用其他场景配置时：
+
+```bash
+python main.py clean -c configs/example.yaml
+```
+
+只清理 Twin 层及其下游问题：
+
+```bash
+python main.py clean twin
+```
+
+该命令保留 `origin/input` 和 `opt/input` 中的原始场景输入，删除 origin/opt Twin 和
+标签、全部 `evo/input` 与 `evo/scenes`，并删除所有问题列表和导出模板。使用其他问题
+配置时可增加 `-c <question_config>`。
+
+只清理问题：
+
+```bash
+python main.py clean questions
+```
+
+该命令只删除分析、演化和优化问题列表、导出模板以及兼容旧目录时发现的局部问题文件，
+不删除场景输入、Twin 或标签。
+
+所有生成命令都不会自动调用这些清理操作；清理只能由上述显式命令触发。
+
+查看帮助：
+
+```bash
+python main.py --help
+python main.py twin --help
+python main.py questions --help
+python main.py split --help
+python main.py clean --help
+```
 
 ## 环境准备
 
@@ -35,139 +272,6 @@ cd /home/SceneBuilder/ns-3.44
 cd /home/SceneBuilder
 ```
 
-## 使用方法
-
-命令格式为：
-
-```bash
-python main.py <模式> [选项]
-```
-
-必须明确指定以下一种模式：
-
-- `generate`：生成网络场景。
-- `twin`：生成指定类型的 Twin。
-- `questions`：从已有 Twin 和标签生成问题。
-- `clean`：清理场景配置对应的已有场景目录。
-
-不指定模式或输入错误模式时，程序会列出全部可用模式并提示查看帮助。
-
-### 1. 生成场景
-
-```bash
-python main.py generate -c configs/example.yaml
-```
-
-场景会生成到配置文件的 `output_root`，当前示例配置对应：
-
-```text
-/home/SceneBuilder/generated_scenes/origin/scenes
-```
-
-一次生成的场景数量为：
-
-```text
-符合 max_topology_nodes 限制的拓扑数量 x scenes_per_topology
-```
-
-注意：重新执行场景生成时，会完整清空配置指定的 `output_root`，包括此前生成的
-`origin`、`evo`、`opt` 场景、Twin、问题文件和问题模板，然后只创建并生成新的
-`origin/scenes`。请勿将 `output_root` 指向需要保留其他文件的目录。
-
-### 2. 生成 Twin
-
-原始场景 Twin：
-
-```bash
-python main.py twin origin
-```
-
-重新生成 origin Twin 会先删除全局及各场景内的分析问题输出、分析问题导出模板，清空
-`evo/scenes`，并删除已有的演化问题输出及其导出模板。这些内容依赖旧的 origin Twin，
-必须重新运行对应的问题生成命令；演化数据还必须先重新运行 `twin evo`。
-
-演化场景及 Twin：
-
-```bash
-python main.py twin evo
-```
-
-该命令只从 `origin/scenes` 中同时具有 `twin.jsonl` 和 `labels.jsonl` 的场景里随机抽样；
-缺少完整 Twin 输出的场景会被跳过，只有一个可用场景都没有时才会提示先运行
-`python main.py twin origin`。它会读取 `question_generator/templates/evolution.yaml`
-中独立定义的 `events` 目录，按每种事件从符合条件的原场景中随机抽样；原场景在本次
-抽样中不重复使用。随后，命令将事件直接施加到复制出的静态场景上，并在 `evo/scenes`
-中生成 Twin。当前目录包含节点、信道和网卡的故障/恢复、数据流负载的增加/降低，以及新增
-数据流，共九类事件。新增流事件会选择一个静态路由可达且尚无现有流的源宿节点对，
-分配新的流 ID，并按配置范围随机生成需求带宽。
-
-优化场景 Twin：
-
-```bash
-python main.py twin opt
-```
-
-该命令处理 `opt` 中已经存在的优化场景；当前优化场景构造逻辑尚未实现。
-
-### 3. 生成问题
-
-python main.py questions -t analysis
-
-```bash
-python main.py questions -t analysis -c configs/question_generator.yaml
-```
-
-问题类型必须明确指定为以下一种：
-
-- `analysis`：分析类问题。
-- `evolution`：演化类问题。
-- `optimization`：优化类问题。
-
-运行时会显示本次生成的问题类型。`-c` 表示问题生成配置；不填写时默认使用 `configs/question_generator.yaml`。例如使用默认配置生成分析类问题：
-
-```bash
-python main.py questions -t analysis
-```
-
-也可以覆盖孪生体场景目录：
-
-```bash
-python main.py questions -t analysis \
-  -c configs/question_generator.yaml \
-  --scene-root generated_scenes
-```
-
-分析问题生成器按照模板逐项生成问题。对于枚举标签，会尽量在不同标签之间均分数量；如果现有场景无法满足某个标签，程序会保留已经生成的问题并报告缺少的数量。
-
-问题模板使用 YAML。每一种具体问题都有独立且稳定的 `template_id`：分析模板使用
-`TA0001`、`TA0002` 等编号，演化模板使用 `TE0001`、`TE0002` 等编号，优化模板预留
-`TO` 前缀。`template_id` 表示问题类型；生成后的每一道具体问题仍使用独立的
-`question_id`，格式为 `Q00000001`。因此，同一个 `template_id` 可以生成多个不同的
-`question_id`。
-
-分析问题只读取 `origin/scenes` 中同时具有 `twin.jsonl` 和 `labels.jsonl` 的完整场景。
-允许在 `twin origin` 尚未处理完全部场景时生成问题；命令会报告已使用和跳过的场景数。
-只有一个完整场景都没有时，才会提示先运行 `python main.py twin origin`。
-
-生成演化问题时使用：
-
-```bash
-python main.py questions -t evolution -c configs/question_generator.yaml
-```
-
-该命令不会创建场景或运行 ns-3；它要求先运行 `python main.py twin evo`。生成器读取
-`evo/scenes` 中的事件元数据和 Twin，比较对应的原场景 Twin，再按目标标签寻找实际满足变化的
-实体。例如生成 `increase` 标签时，只有确实观测到对应指标升高的实体才会写入问题。
-一个演化场景可以为不同模板提供多道问题。
-
-### 4. 清理场景
-
-```bash
-python main.py clean -c configs/example.yaml
-```
-
-该命令只删除配置所对应 `output_root` 下可识别的场景目录，不删除其他普通文件或目录。
-
 ## 输出结构
 
 ```text
@@ -175,33 +279,38 @@ generated_scenes/
 ├── origin/
 │   ├── question_template.yaml
 │   ├── analysis_questions.jsonl
+│   ├── input/
+│   │   └── <original_scene_id>/
+│   │       ├── metadata.json
+│   │       ├── nodes.csv
+│   │       ├── channels.csv
+│   │       ├── nics.csv
+│   │       ├── routing_matrix.csv
+│   │       ├── traffic.jsonl
+│   │       └── labels.jsonl
 │   └── scenes/
-│       └── <original_scene_id>/
-│           ├── metadata.json
-│           ├── nodes.csv
-│           ├── channels.csv
-│           ├── nics.csv
-│           ├── routing_matrix.csv
-│           ├── traffic.jsonl
-│           ├── twin.jsonl
-│           ├── labels.jsonl
-│           └── analysis_questions.jsonl
+│       └── <original_scene_id>.jsonl
 ├── evo/
 │   ├── question_template.yaml
 │   ├── evolution_questions.jsonl
+│   ├── input/
+│   │   └── <evolved_scene_id>/
+│   │       └── 与原场景相同的输入文件及 labels.jsonl
 │   └── scenes/
-│       └── <evolved_scene_id>/
-│           └── 与原场景相同的场景文件
+│       └── <evolved_scene_id>.jsonl
 └── opt/
     ├── question_template.yaml
     ├── optimization_questions.jsonl
+    ├── input/
+    │   └── <optimization_scene_id>/
+    │       └── 优化场景输入及 labels.jsonl
     └── scenes/
-        └── <optimization_scene_id>/
-            └── 优化场景文件
+        └── <optimization_scene_id>.jsonl
 ```
 
-普通场景生成始终写入 `origin/scenes`；`twin evo` 基于其中的原场景创建新场景，并只写入
-`evo/scenes`。演化场景名末尾使用事件场景 ID，例如
+普通场景生成始终写入 `origin/input`，`twin origin` 将 Twin 写入 `origin/scenes`。
+`twin evo` 基于原场景创建新输入并分别写入 `evo/input` 和 `evo/scenes`。三个
+`scenes/` 目录都只保存以场景名命名的 Twin JSONL 文件。演化场景名末尾使用事件场景 ID，例如
 `example_id2001_York_t2s_evo_E00000001`。三个目录中的数字场景 ID 共用同一编号空间。
 
 场景输入文件的作用：
@@ -213,13 +322,14 @@ generated_scenes/
 - `routing_matrix.csv`：物理故障发生前，按初始完整拓扑计算出的静态出口接口索引；初始拓扑不可达时为 `-1`。后续物理故障不会重算或改写该文件。
 - `traffic.jsonl`：场景中的数据流及其需求和流量模型。
 
-`twin.jsonl` 是 ns-3 输出的数字孪生体。每行表示一个实体，例如节点、网卡、信道或数据流，包含实体 ID、属性和关系，不包含标签。
+`scenes/<scene_id>.jsonl` 是 ns-3 输出的数字孪生体。每行表示一个实体，例如节点、
+网卡、信道或数据流，包含实体 ID、属性和关系，不包含标签。
 
 数据流的 `demand_mbps` 和 `throughput_mbps` 都采用应用层有效载荷口径；
 `throughput_mbps` 不包含 IPv4 和 UDP 头部。信道和网卡的带宽统计仍表示网络实际承载的
 数据量，因此保留相应协议开销。
 
-`labels.jsonl` 独立保存能够由分析问题生成器直接使用的答案。节点、网卡、信道和数据流
+`input/<scene_id>/labels.jsonl` 独立保存能够由分析问题生成器直接使用的答案。节点、网卡、信道和数据流
 状态分别写在 `node_state`、`nic_state`、`channel_state`、`data_flow_state` 行中，每行的
 `label` 都是由 `{entity_id, label}` 构成的列表。节点状态只包含 `normal` 或
 `disabled`。路由项是否可用不改变节点状态。没有对应问题模板的全网状态不写入
@@ -273,7 +383,7 @@ generated_scenes/
 分析问题的实体状态候选仅限数据流覆盖范围：节点必须出现在至少一条流的路径中，链路必须属于至少一条流的 `path_channels`，网卡必须属于这些路径链路。未被任何流经过的实体不会被抽取。数据流实体通过 `path_nodes` 和 `path_channels` 显式保存故障前静态路由确定的完整路径；物理故障不会使这两个字段缩短、清空或改为备用路径。
 
 分析问题采用“标签或推导二选一”的规则：只要答案已经写入 `labels.jsonl`，问题生成器就
-直接使用，不再从 `twin.jsonl` 重复推导或交叉校验。当前十一类分析标签与模板一一对应：
+直接使用，不再从对应的 Twin 文件重复推导或交叉校验。当前十一类分析标签与模板一一对应：
 
 | 标签类型 | 问题模板 |
 | --- | --- |
@@ -309,10 +419,9 @@ generated_scenes/
 - `evolved_scene_id`：基于原场景生成的新场景 ID。
 - `scene_name`：为兼容通用问题读取逻辑，值与 `evolved_scene_id` 相同。
 
-局部的 `evolution_questions.jsonl` 只写在对应的新场景中，可以包含该场景支持的多道演化
-问题；原场景不保存这些问题。新场景的 `metadata.json` 会记录来源场景、事件场景 ID 和
-静态变更内容。所有问题类型都只在至少生成一道问题时创建 JSONL；问题列表为空时不会保留
-空文件。
+不再为每个场景单独写问题文件；每种任务只保留由 `output_file` 指定的全局问题列表。
+演化场景的 `input/<scene_id>/metadata.json` 会记录来源场景、事件场景 ID 和静态变更
+内容。所有问题类型都只在至少生成一道问题时创建 JSONL；问题列表为空时不会保留空文件。
 
 ## 配置说明
 
@@ -351,8 +460,8 @@ generated_scenes/
 - `enabled`：是否启用对应的问题类别。
 
 每次成功生成某一类问题时，生成器会把该类 `template_file` 原样复制到问题文件同目录的
-`question_template.yaml`。因此 `origin`、`evo` 和 `opt` 都是包含问题列表、原始模板和
-`scenes/` 的自包含数据集目录，下游可以直接从模板的 `answer` 字段读取输出约束。
+`question_template.yaml`。因此 `origin`、`evo` 和 `opt` 都包含问题列表、原始模板、
+`input/` 和 `scenes/`，下游可以直接从模板的 `answer` 字段读取输出约束。
 
 模板文件是 `schema_version: 1` 的 YAML。所有任务的 `templates` 使用相同结构，每项只
 包含唯一的 `id`、问题文本 `question` 和答案契约 `answer`。分析、演化和优化模板 ID
@@ -388,17 +497,10 @@ generated_scenes/
 `twin evo` 不支持 `--stop-time`。变更前后 Twin 必须使用相同的场景仿真时长，才能直接比较
 吞吐量、丢包数和平均时延。
 
-查看全部命令参数：
-
-```bash
-python main.py --help
-python main.py twin --help
-python main.py questions --help
-```
-
 ## 当前约定
 
 - 运行时事件功能当前处于禁用状态。场景表示一个固定网络状态，ns-3 不会在仿真途中注入事件。
 - `twin evo` 构造变更前和变更后的独立场景；演化问题命令只比较已经生成的两个 Twin。
-- 每个场景当前生成一个基础孪生体文件 `twin.jsonl` 和一个标签文件 `labels.jsonl`。
+- 每个场景生成一个 `scenes/<scene_id>.jsonl` Twin 和一个
+  `input/<scene_id>/labels.jsonl` 标签文件。
 - 场景生成和 ns-3 仿真均串行执行，避免同时运行多个大规模仿真任务。

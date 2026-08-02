@@ -6,7 +6,6 @@ from pathlib import Path
 
 import networkx as nx
 
-from .cleaner import reset_output_root
 from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
@@ -357,6 +356,22 @@ def _generate_single_scene(
 
 def run(config_path: str | Path) -> list[Path]:
     config = load_config(config_path)
+    if config.output_root.exists():
+        if config.output_root.is_symlink():
+            raise ValueError(
+                f"Refusing to generate into a symbolic-link output_root: "
+                f"{config.output_root}"
+            )
+        if not config.output_root.is_dir():
+            raise NotADirectoryError(
+                f"output_root is not a directory: {config.output_root}"
+            )
+        existing_output = next(config.output_root.iterdir(), None)
+        if existing_output is not None:
+            raise ValueError(
+                "Generated scene output already exists under "
+                f"{config.output_root}; run 'python main.py clean' first"
+            )
     eligible_topologies: list[tuple[SelectedTopology, nx.Graph]] = []
     for selected in collect_topologies(config):
         parsed_graph = load_topology(selected)
@@ -369,7 +384,6 @@ def run(config_path: str | Path) -> list[Path]:
         )
 
     total_scene_count = len(eligible_topologies) * int(config.scenes_per_topology)
-    reset_output_root(config.output_root)
     (
         config.output_root
         / ORIGINAL_SCENES_DIR_NAME

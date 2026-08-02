@@ -90,7 +90,11 @@ def clean_question_outputs(
 ) -> QuestionCleanupResult:
     config = load_config(config_path)
     root = Path(scenes_root).expanduser().resolve() if scenes_root is not None else config.scenes_root
-    scene_directories = _discover_scene_directories_for_cleanup(root)
+    scene_directories = (
+        _discover_scene_directories_for_cleanup(root)
+        if root.is_dir()
+        else []
+    )
     removed = _clear_scene_question_files(scene_directories)
 
     for category in config.categories.values():
@@ -108,6 +112,35 @@ def clean_question_outputs(
         scene_count=len(scene_directories),
         removed_files=tuple(removed),
     )
+
+
+def ensure_question_outputs_absent(
+    category_config: CategoryConfig,
+) -> None:
+    artifacts = [
+        category_config.output_file,
+        category_config.exported_template_file,
+    ]
+    group_root = category_config.output_file.parent
+    if group_root.is_dir():
+        artifacts.extend(
+            group_root.rglob(
+                f"{category_config.name}_questions.jsonl"
+            )
+        )
+    existing = next(
+        (
+            path
+            for path in dict.fromkeys(artifacts)
+            if path.is_file() or path.is_symlink()
+        ),
+        None,
+    )
+    if existing is not None:
+        raise ValueError(
+            f"Question output already exists: {existing}; run "
+            "'python main.py clean questions' first"
+        )
 
 
 def _generator_for(category: str) -> QuestionCategoryGenerator:
@@ -139,8 +172,6 @@ def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[s
 
 def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
     if not questions:
-        if path.is_file():
-            path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_name(f".{path.name}.tmp")
@@ -245,10 +276,8 @@ def run(
     else:
         category_configs = [category for category in config.categories.values() if category.enabled]
 
-    _clear_scene_question_files(
-        _discover_scene_directories_for_cleanup(root),
-        tuple(category.name for category in category_configs),
-    )
+    for category_config in category_configs:
+        ensure_question_outputs_absent(category_config)
     if scene_files is None:
         selected_scene_files = discover_scene_files(root)
     else:
