@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import random
 import re
 import select
@@ -14,32 +14,14 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from typing import Sequence
 
-from question_generator.config import (
-    QUESTION_CATEGORIES,
-    load_config as load_question_config,
-)
-from question_generator.evolution_workflow import (
-    generate_evolution_questions,
-    prepare_evolution_scenes,
-)
-from question_generator.runner import (
-    QuestionGenerationResult,
-    clean_question_outputs,
-    ensure_question_outputs_absent,
-    run as generate_questions,
-)
-from question_generator.splitter import split_generated_dataset
-from scene_generator.cleaner import reset_output_root
-from scene_generator.config import load_config as load_scene_config
-from scene_generator.runner import run as generate_scenes
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3.44"
+DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3"
 DEFAULT_SCENE_CONFIG = PROJECT_ROOT / "configs" / "example.yaml"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 DEFAULT_DATASET_SPLIT_CONFIG = (
@@ -59,10 +41,41 @@ PROGRESS_RE = re.compile(
 )
 DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
+QUESTION_CATEGORIES = ("analysis", "evolution", "optimization")
 TWIN_TYPES = ("origin", "evo", "opt")
 SCENES_DIR_NAME = "scenes"
 INPUT_DIR_NAME = "input"
-COMMANDS = ("generate", "twin", "questions", "split", "clean")
+COMMANDS = ("initial", "generate", "twin", "questions", "split", "clean")
+
+
+def _load_project_dependencies() -> None:
+    global QuestionGenerationResult
+    global clean_question_outputs
+    global ensure_question_outputs_absent
+    global generate_evolution_questions
+    global generate_questions
+    global generate_scenes
+    global load_question_config
+    global load_scene_config
+    global prepare_evolution_scenes
+    global reset_output_root
+    global split_generated_dataset
+
+    from question_generator.config import load_config as load_question_config
+    from question_generator.evolution_workflow import (
+        generate_evolution_questions,
+        prepare_evolution_scenes,
+    )
+    from question_generator.runner import (
+        QuestionGenerationResult,
+        clean_question_outputs,
+        ensure_question_outputs_absent,
+        run as generate_questions,
+    )
+    from question_generator.splitter import split_generated_dataset
+    from scene_generator.cleaner import reset_output_root
+    from scene_generator.config import load_config as load_scene_config
+    from scene_generator.runner import run as generate_scenes
 
 
 class SceneBuilderArgumentParser(argparse.ArgumentParser):
@@ -86,6 +99,15 @@ class TwinGenerationResult:
         return not self.failures
 
 
+@dataclass(frozen=True)
+class Ns3InitializationResult:
+    archive: Path
+    source_prefix: PurePosixPath
+    destination: Path
+    extracted_entries: int
+    skipped_entries: int
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = SceneBuilderArgumentParser(
         prog="SceneBuilder",
@@ -96,6 +118,19 @@ def build_parser() -> argparse.ArgumentParser:
         dest="command",
         required=True,
         metavar="{" + ",".join(COMMANDS) + "}",
+    )
+
+    initial_parser = subparsers.add_parser(
+        "initial",
+        help="Extract an ns-3 source archive into the project",
+    )
+    initial_parser.add_argument(
+        "archive",
+        nargs="?",
+        help=(
+            "Path to an ns-3 source archive, for example "
+            "./ns-allinone-3.48.tar.bz2. Prompts when omitted."
+        ),
     )
 
     generate_parser = subparsers.add_parser("generate", help="Generate network scenes")
@@ -227,6 +262,217 @@ def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--events-per-group", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--event-seed", type=int, default=1, help=argparse.SUPPRESS)
     parser.add_argument("--event-list", default="events.jsonl", help=argparse.SUPPRESS)
+
+
+def _archive_member_path(member: tarfile.TarInfo) -> PurePosixPath:
+    path = PurePosixPath(member.name)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Unsafe path in ns-3 archive: {member.name}")
+    return path
+
+
+def _find_ns3_source_prefix(
+    members: Sequence[tarfile.TarInfo],
+) -> tuple[PurePosixPath, PurePosixPath]:
+    members_by_path: dict[PurePosixPath, list[tarfile.TarInfo]] = {}
+    for member in members:
+        path = _archive_member_path(member)
+        members_by_path.setdefault(path, []).append(member)
+
+    candidates: list[tuple[PurePosixPath, PurePosixPath]] = []
+    for path, path_members in members_by_path.items():
+        if path.name != "ns3" or not any(member.isfile() for member in path_members):
+            continue
+        prefix = path.parent
+        if (
+            prefix / "CMakeLists.txt" in members_by_path
+            and prefix / "VERSION" in members_by_path
+        ):
+            candidates.append((prefix, path))
+
+    if not candidates:
+        raise ValueError(
+            "The archive does not contain an ns-3 source root with ns3, "
+            "CMakeLists.txt, and VERSION"
+        )
+    if len(candidates) > 1:
+        roots = ", ".join(str(prefix) for prefix, _ in candidates)
+        raise ValueError(f"The archive contains multiple ns-3 source roots: {roots}")
+    return candidates[0]
+
+
+def _validate_relative_symlink(
+    member_path: PurePosixPath,
+    link_name: str,
+) -> None:
+    link_path = PurePosixPath(link_name)
+    if link_path.is_absolute():
+        raise ValueError(
+            f"Unsafe absolute symbolic link in ns-3 archive: "
+            f"{member_path} -> {link_name}"
+        )
+
+    resolved_parts: list[str] = list(member_path.parent.parts)
+    for part in link_path.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not resolved_parts:
+                raise ValueError(
+                    f"Symbolic link escapes the ns-3 destination: "
+                    f"{member_path} -> {link_name}"
+                )
+            resolved_parts.pop()
+        else:
+            resolved_parts.append(part)
+
+
+def _ensure_safe_parent(destination: Path, target: Path) -> None:
+    relative_parent = target.parent.relative_to(destination)
+    current = destination
+    for part in relative_parent.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError(
+                f"Refusing to extract through a symbolic-link directory: {current}"
+            )
+        if current.exists():
+            if not current.is_dir():
+                raise NotADirectoryError(
+                    f"Archive output parent is not a directory: {current}"
+                )
+            continue
+        current.mkdir()
+
+
+def _extract_ns3_member(
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    relative_path: PurePosixPath,
+    destination: Path,
+) -> bool:
+    target = destination.joinpath(*relative_path.parts)
+    if target.exists() or target.is_symlink():
+        return False
+
+    _ensure_safe_parent(destination, target)
+    safe_mode = member.mode & 0o755
+
+    if member.isdir():
+        target.mkdir()
+        target.chmod(safe_mode or 0o755)
+        return True
+
+    if member.issym():
+        os.symlink(member.linkname, target)
+        return True
+
+    source = archive.extractfile(member)
+    if source is None:
+        raise ValueError(f"Cannot read archive member: {member.name}")
+    try:
+        with source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
+        target.chmod(safe_mode or 0o644)
+        os.utime(target, (member.mtime, member.mtime))
+    except BaseException:
+        if target.exists() and not target.is_symlink():
+            target.unlink()
+        raise
+    return True
+
+
+def initialize_ns3(
+    archive_value: str | Path | None,
+    destination: str | Path = DEFAULT_NS3_ROOT,
+) -> Ns3InitializationResult:
+    destination_path = Path(destination).expanduser()
+    if destination_path.is_symlink():
+        raise ValueError(
+            f"Refusing to initialize a symbolic-link ns-3 directory: "
+            f"{destination_path}"
+        )
+    destination_path = destination_path.resolve()
+    launcher = destination_path / "ns3"
+    if launcher.exists() or launcher.is_symlink():
+        raise ValueError(
+            f"ns-3 has already been initialized: {launcher}; "
+            "the initial command cannot be run again"
+        )
+
+    raw_archive = str(archive_value).strip() if archive_value is not None else ""
+    if not raw_archive:
+        try:
+            raw_archive = input("请输入 ns-3 压缩包路径: ").strip()
+        except EOFError as exc:
+            raise ValueError("No ns-3 archive path was provided") from exc
+    if not raw_archive:
+        raise ValueError("ns-3 archive path cannot be empty")
+
+    archive_path = Path(raw_archive).expanduser().resolve()
+    if not archive_path.is_file():
+        raise FileNotFoundError(f"ns-3 archive does not exist: {archive_path}")
+
+    try:
+        archive = tarfile.open(archive_path, mode="r:*")
+    except tarfile.TarError as exc:
+        raise ValueError(f"Invalid or unsupported ns-3 archive: {archive_path}") from exc
+
+    with archive:
+        members = archive.getmembers()
+        source_prefix, launcher_member_path = _find_ns3_source_prefix(members)
+        selected: list[tuple[tarfile.TarInfo, PurePosixPath]] = []
+        for member in members:
+            member_path = _archive_member_path(member)
+            try:
+                relative_path = member_path.relative_to(source_prefix)
+            except ValueError:
+                continue
+            if relative_path == PurePosixPath("."):
+                continue
+            if not (
+                member.isdir()
+                or member.isfile()
+                or member.islnk()
+                or member.issym()
+            ):
+                raise ValueError(
+                    f"Unsupported special file in ns-3 archive: {member.name}"
+                )
+            if member.issym():
+                _validate_relative_symlink(relative_path, member.linkname)
+            selected.append((member, relative_path))
+
+        if not selected:
+            raise ValueError("The ns-3 source root in the archive is empty")
+
+        relative_launcher = launcher_member_path.relative_to(source_prefix)
+        selected.sort(key=lambda item: item[1] == relative_launcher)
+        destination_path.mkdir(parents=True, exist_ok=True)
+        extracted_entries = 0
+        skipped_entries = 0
+        for member, relative_path in selected:
+            if _extract_ns3_member(
+                archive,
+                member,
+                relative_path,
+                destination_path,
+            ):
+                extracted_entries += 1
+            else:
+                skipped_entries += 1
+
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        raise ValueError(
+            f"Initialization did not create an executable ns-3 launcher: {launcher}"
+        )
+    return Ns3InitializationResult(
+        archive=archive_path,
+        source_prefix=source_prefix,
+        destination=destination_path,
+        extracted_entries=extracted_entries,
+        skipped_entries=skipped_entries,
+    )
 
 
 def _resolve_project_path(value: str | Path) -> Path:
@@ -1043,6 +1289,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command == "initial":
+            result = initialize_ns3(args.archive)
+            print(f"Initialized ns-3 in {result.destination}")
+            print(f"Archive: {result.archive}")
+            print(f"Source root: {result.source_prefix}")
+            print(
+                f"Extracted {result.extracted_entries} archive entry/entries; "
+                f"skipped {result.skipped_entries} existing entry/entries"
+            )
+            print("Next, configure and build ns-3:")
+            print(f"  cd {result.destination}")
+            print("  ./ns3 configure -d debug --enable-examples --disable-tests")
+            print("  ./ns3 build TwinGenerate")
+            return 0
+
+        _load_project_dependencies()
+
         if args.command == "clean":
             if args.clean_type is None:
                 config_path = (

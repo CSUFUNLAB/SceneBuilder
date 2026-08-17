@@ -3,18 +3,19 @@ generated_scenes/
 .pytest_cache/
 __pycache__/
 *.py[cod]
+*.tar.bz2
 =
 
 scene_generator/__pycache__
 tests/*
 tests/__pycache__
 
-ns-3.44/*
-!ns-3.44/.gitignore
-!ns-3.44/scratch/
-!ns-3.44/scratch/**
+ns-3/*
+!ns-3/.gitignore
+!ns-3/scratch/
+!ns-3/scratch/**
 
-!ns-3.44/contrib/
-!ns-3.44/contrib/**
+!ns-3/contrib/
+!ns-3/contrib/**
 
 analysis_questions.jsonl

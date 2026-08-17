@@ -1,7 +1,7 @@
 # SceneBuilder
 
 SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置转换为可供 ns-3 读取的网络
-场景，运行内置的 ns-3.44 仿真生成数字孪生体，并从孪生体生成带标签的问题数据。所有
+场景，运行内置的 ns-3.48 仿真生成数字孪生体，并从孪生体生成带标签的问题数据。所有
 步骤统一通过项目根目录的 `main.py` 执行。
 
 ## 运行指令
@@ -9,7 +9,10 @@ SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置�
 完整流程依次运行：
 
 ```bash
-cd /home/SceneBuilder
+cd /home/lb/STN/SceneBuilder
+
+# 0. 首次克隆后初始化 ns-3（只运行一次）
+python main.py initial ./ns-allinone-3.48.tar.bz2
 
 # 1. 生成原始场景输入
 python main.py generate -c configs/example.yaml
@@ -38,11 +41,31 @@ python main.py <模式> [选项]
 
 可用模式：
 
+- `initial`：首次克隆后，把指定的 ns-3 压缩包解压到项目的 `ns-3` 目录。
 - `generate`：生成网络场景的原始输入。
 - `twin`：生成 `origin`、`evo` 或 `opt` Twin。
 - `questions`：从已有 Twin 和标签生成问题。
 - `split`：按问题模板分别划分训练集和测试集。
 - `clean`：清理场景配置对应的已有场景。
+
+### 0. 初始化 ns-3
+
+首次从 Git 克隆项目后，传入 ns-3 压缩包路径：
+
+```bash
+python main.py initial ./ns-allinone-3.48.tar.bz2
+```
+
+如果省略路径，命令会提示输入：
+
+```bash
+python main.py initial
+请输入 ns-3 压缩包路径: ./ns-allinone-3.48.tar.bz2
+```
+
+命令会自动识别压缩包内的 ns-3 源码根目录，将内容解压到项目的 `ns-3/`，并跳过
+Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。如果 `ns-3/ns3` 已经存在，
+命令会拒绝再次初始化，避免混合不同版本的源码。
 
 ### 1. 生成场景
 
@@ -53,7 +76,7 @@ python main.py generate -c configs/example.yaml
 场景原始输入生成到配置文件的 `output_root`，示例配置对应：
 
 ```text
-/home/SceneBuilder/generated_scenes/origin/input
+/home/lb/STN/SceneBuilder/generated_scenes/origin/input
 ```
 
 一次生成的场景数量为：
@@ -241,6 +264,7 @@ python main.py clean questions
 
 ```bash
 python main.py --help
+python main.py initial --help
 python main.py twin --help
 python main.py questions --help
 python main.py split --help
@@ -249,10 +273,13 @@ python main.py clean --help
 
 ## 环境准备
 
+先按“初始化 ns-3”一节解压源码。`initial` 只使用 Python 标准库，因此可以在安装项目
+依赖之前执行。
+
 安装 Python 依赖：
 
 ```bash
-cd /home/SceneBuilder
+cd /home/lb/STN/SceneBuilder
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -261,7 +288,7 @@ pip install -r requirements.txt
 首次使用 ns-3 时进行配置和编译：
 
 ```bash
-cd /home/SceneBuilder/ns-3.44
+cd /home/lb/STN/SceneBuilder/ns-3
 ./ns3 configure -d debug --enable-examples --disable-tests
 ./ns3 build TwinGenerate
 ```
@@ -269,7 +296,7 @@ cd /home/SceneBuilder/ns-3.44
 之后返回项目根目录运行 SceneBuilder：
 
 ```bash
-cd /home/SceneBuilder
+cd /home/lb/STN/SceneBuilder
 ```
 
 ## 输出结构
