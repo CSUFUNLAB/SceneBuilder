@@ -18,7 +18,6 @@ import tempfile
 import time
 from typing import Sequence
 
-from dataset.splitter import split_generated_dataset
 from question_generator.config import (
     QUESTION_CATEGORIES,
     load_config as load_question_config,
@@ -33,6 +32,7 @@ from question_generator.runner import (
     ensure_question_outputs_absent,
     run as generate_questions,
 )
+from question_generator.splitter import split_generated_dataset
 from scene_generator.cleaner import reset_output_root
 from scene_generator.config import load_config as load_scene_config
 from scene_generator.runner import run as generate_scenes

@@ -3,65 +3,65 @@ question_type: analysis
 
 templates:
   - id: TA0001
-    question: What is the current status of node $node_id$ (normal or disabled)?
+    question: Is node $node_id$ normal or disabled?
     answer:
       type: enum
       values: [normal, disabled]
 
   - id: TA0002
-    question: What is the current status of channel $channel_id$ (normal, disabled, degraded, or saturated)?
+    question: Is channel $channel_id$ normal, disabled, degraded, or saturated?
     answer:
       type: enum
       values: [normal, disabled, degraded, saturated]
 
   - id: TA0003
-    question: What is the current status of interface $nic_id$ (normal, disabled, or saturated)?
+    question: Is interface $nic_id$ normal, disabled, or saturated?
     answer:
       type: enum
       values: [normal, disabled, saturated]
 
   - id: TA0004
-    question: What is the current status of data flow $data_flow_id$ (normal, unstable, degraded, or failed)?
+    question: Is data flow $data_flow_id$ normal, unstable, degraded, or failed?
     answer:
       type: enum
       values: [normal, unstable, degraded, failed]
 
   - id: TA0005
-    question: "What constrains the bandwidth on the path of data flow $data_flow_id$: insufficient original capacity on its bottleneck channel or traffic congestion?"
+    question: Is data flow $data_flow_id$ limited by channel capacity or traffic congestion?
     answer:
       type: enum
       values: [insufficient_channel_capacity, traffic_congestion]
 
   - id: TA0006
-    question: "What is the congestion pattern on the path of data flow $data_flow_id$: a single-channel bottleneck or multi-channel saturation?"
+    question: Does data flow $data_flow_id$ have one bottleneck channel or multiple saturated channels?
     answer:
       type: enum
       values: [single_channel_bottleneck, multi_channel_saturation]
 
   - id: TA0007
-    question: "What causes channel $channel_id$ to become saturated: a single large data flow or the aggregate load of multiple data flows?"
+    question: Is channel $channel_id$ saturated by one large data flow or multiple data flows?
     answer:
       type: enum
       values: [single_large_flow, multiple_flow_aggregation]
 
   - id: TA0008
-    question: Which channel is the bottleneck on the path of data flow $data_flow_id$?
+    question: Which channel bottlenecks data flow $data_flow_id$?
     answer:
       type: channel_id
 
   - id: TA0009
-    question: Which failed node or failed channel causes data flow $data_flow_id$ to fail?
+    question: Which failed node or channel caused data flow $data_flow_id$ to fail?
     answer:
       type: entity_id
 
   - id: TA0010
-    question: "What causes channel $channel_id$ to be unavailable: a failure of a connected endpoint node or a fault in the channel or one of its interfaces?"
+    question: Is channel $channel_id$ unavailable because an endpoint node failed or because of a channel-side fault?
     answer:
       type: enum
       values: [connected_node_fault, channel_or_interface_fault]
 
   - id: TA0011
-    question: "What causes interface $nic_id$ to be unavailable: a failure of a node connected by its channel or a fault in the interface or its channel?"
+    question: Is interface $nic_id$ unavailable because a connected node failed or because of a fault on its attached channel?
     answer:
       type: enum
       values: [connected_node_fault, channel_or_interface_fault]

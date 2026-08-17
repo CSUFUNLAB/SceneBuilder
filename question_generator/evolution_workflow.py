@@ -558,6 +558,16 @@ def _evolution_options(category: CategoryConfig) -> dict[str, object]:
         if lower <= 0 or upper < lower:
             raise ValueError(f"evolution options.{name} is invalid")
         options[name] = (lower, upper)
+    increase_lower, _ = options["load_increase_multiplier_range"]
+    if increase_lower <= 1.0:
+        raise ValueError(
+            "evolution options.load_increase_multiplier_range must be strictly greater than 1"
+        )
+    _, decrease_upper = options["load_decrease_multiplier_range"]
+    if decrease_upper >= 1.0:
+        raise ValueError(
+            "evolution options.load_decrease_multiplier_range must be strictly between 0 and 1"
+        )
     probability = float(options["related_target_probability"])
     if not 0 <= probability <= 1:
         raise ValueError("evolution options.related_target_probability must be in [0, 1]")
@@ -1430,6 +1440,21 @@ def _load_evolution_plans(
             or evolved_scene_id != metadata_file.parent.name
         ):
             continue
+        if event_spec.change in {"load_increase", "load_decrease"}:
+            multiplier = _finite_number(event.get("multiplier"))
+            direction_is_valid = (
+                multiplier is not None
+                and (
+                    (event_spec.change == "load_increase" and multiplier > 1.0)
+                    or (event_spec.change == "load_decrease" and multiplier < 1.0)
+                )
+            )
+            if not direction_is_valid:
+                raise ValueError(
+                    f"{metadata_file}: {event_spec.change} requires a "
+                    f"{'greater-than-1' if event_spec.change == 'load_increase' else 'less-than-1'} "
+                    "multiplier; clean and regenerate the evolution scenes"
+                )
         plans.append(
             EvolutionPlan(
                 event_scenario_id=event_scenario_id,

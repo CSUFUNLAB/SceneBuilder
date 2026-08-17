@@ -1,30 +1,101 @@
 schema_version: 1
 question_type: optimization
 
+# Alternatives are generated internally and are not listed in the question.
+# Emit a question only when exactly one feasible path or action optimizes the
+# stated objective; skip scenes with no feasible solution or tied optima.
 templates:
   - id: TO0001
-    question: What new path should data flow $data_flow_id$ use to improve its throughput?
+    question: Which path gives data flow $data_flow_id$ the highest throughput?
     answer:
       type: path
 
   - id: TO0002
-    question: What new path should data flow $data_flow_id$ use to reduce its average delay?
-    answer:
-      type: path
-
-  - id: TO0003
-    question: What new path should data flow $data_flow_id$ use to reduce its packet loss?
+    question: Which path gives data flow $data_flow_id$ the lowest average delay?
     answer:
       type: path
 
   - id: TO0004
-    question: How should the routing table of node $node_id$ be modified to replace entries made unusable by physical faults?
+    question: Which path gives data flow $data_flow_id$ the fewest hops?
     answer:
-      type: route_entries
-      item_fields: [source_node_id, destination_node_id]
+      type: path
 
   - id: TO0005
-    question: Which channel should be expanded, and to what capacity, to satisfy the demand of data flow $data_flow_id$?
+    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest throughput increase?
     answer:
-      type: channel_capacity
-      fields: [channel_id, capacity_mbps]
+      type: channel_id
+
+  - id: TO0006
+    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest delay reduction?
+    answer:
+      type: channel_id
+
+  - id: TO0007
+    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest packet-loss reduction?
+    answer:
+      type: channel_id
+
+  - id: TO0008
+    question: Which path gives data flow $data_flow_id$ the greatest bottleneck residual bandwidth?
+    answer:
+      type: path
+
+  - id: TO0009
+    question: Which path gives data flow $data_flow_id$ the lowest maximum directional channel utilization?
+    answer:
+      type: path
+
+  - id: TO0010
+    question: Which path gives data flow $data_flow_id$ the fewest saturated channels?
+    answer:
+      type: path
+
+  - id: TO0011
+    question: Which next hop gives node $node_id$ the shortest valid route to node $destination_node_id$?
+    answer:
+      type: entity_id
+
+  - id: TO0012
+    question: Which next hop gives node $node_id$ the route with the greatest bottleneck residual bandwidth to node $destination_node_id$?
+    answer:
+      type: entity_id
+
+  - id: TO0013
+    question: Which failed node or channel should be repaired first to restore data flow $data_flow_id$?
+    answer:
+      type: entity_id
+
+  - id: TO0014
+    question: Which failed node or channel should be repaired first to give data flow $data_flow_id$ the largest throughput increase?
+    answer:
+      type: entity_id
+
+  - id: TO0015
+    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel produces the largest increase in total network throughput?
+    answer:
+      type: channel_id
+
+  - id: TO0016
+    question: Which path gives data flow $data_flow_id$ the lowest delay without reducing its current throughput?
+    answer:
+      type: path
+
+  - id: TO0017
+    question: Which path gives data flow $data_flow_id$ the lowest packet loss without reducing its current throughput?
+    answer:
+      type: path
+
+  - id: TO0018
+    question: Which path gives data flow $data_flow_id$ the highest throughput without increasing its current delay?
+    answer:
+      type: path
+
+  - id: TO0019
+    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel reduces the number of saturated channels the most?
+    answer:
+      type: channel_id
+
+  - id: TO0020
+    question: Which unavailable channel should be repaired first to restore reachability from node $node_id$ to the most destinations?
+    answer:
+      type: channel_id

@@ -43,157 +43,157 @@ events:
 
 templates:
   - id: TE0001
-    question: Does the throughput of data flow $target_data_flow_id$ decrease or remain unchanged after node $event_node_id$ fails?
+    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s throughput decrease or stay unchanged?
     answer:
       type: enum
       values: [unchanged, decrease]
 
   - id: TE0002
-    question: Does the packet loss count of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after node $event_node_id$ fails?
+    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s packet loss increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0003
-    question: Does the throughput of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after node $event_node_id$ recovers?
+    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0004
-    question: Does the average delay of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after node $event_node_id$ recovers?
+    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0005
-    question: Does the throughput of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after channel $event_channel_id$ fails?
+    question: If channel $event_channel_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0006
-    question: Does the packet loss count of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after channel $event_channel_id$ fails?
+    question: If channel $event_channel_id$ fails, will data flow $target_data_flow_id$'s packet loss increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0007
-    question: Does the throughput of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after channel $event_channel_id$ recovers?
+    question: If channel $event_channel_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0008
-    question: Does the average delay of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after channel $event_channel_id$ recovers?
+    question: If channel $event_channel_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0009
-    question: Does the throughput of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after interface $event_nic_id$ fails?
+    question: If interface $event_nic_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0010
-    question: Does the packet loss count of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after interface $event_nic_id$ fails?
+    question: If interface $event_nic_id$ fails, will data flow $target_data_flow_id$'s packet loss increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0011
-    question: Does the throughput of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after interface $event_nic_id$ recovers?
+    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0012
-    question: Does the average delay of data flow $target_data_flow_id$ increase, decrease, or remain unchanged after interface $event_nic_id$ recovers?
+    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0013
-    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0014
-    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its demand is multiplied by $event_rate_multiplier$?
+    question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will its delay increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0015
-    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0016
-    question: Does the average delay of data flow $event_data_flow_id$ increase, decrease, or remain unchanged after its demand is multiplied by $event_rate_multiplier$?
+    question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will its delay increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0017
-    question: Does node $target_node_id$ become disabled or remain unchanged after node $event_node_id$ fails?
+    question: If node $event_node_id$ fails, will node $target_node_id$ become disabled or stay unchanged?
     answer:
       type: enum
       values: [unchanged, disabled]
 
   - id: TE0018
-    question: Does node $target_node_id$ recover or remain unchanged after node $event_node_id$ recovers?
+    question: If node $event_node_id$ recovers, will node $target_node_id$ recover or stay unchanged?
     answer:
       type: enum
       values: [recovered, unchanged]
 
   - id: TE0023
-    question: Is channel $target_channel_id$ saturated or unsaturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: Will channel $target_channel_id$ be saturated if data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value?
     answer:
       type: enum
       values: [saturated, not_saturated]
 
   - id: TE0024
-    question: Does channel $target_channel_id$ recover from saturation or remain saturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: Will channel $target_channel_id$ recover from saturation if data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value?
     answer:
       type: enum
       values: [recovered, not_recovered]
 
   - id: TE0025
-    question: Is interface $target_nic_id$ saturated or unsaturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: Will interface $target_nic_id$ be saturated if data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value?
     answer:
       type: enum
       values: [saturated, not_saturated]
 
   - id: TE0026
-    question: Does interface $target_nic_id$ recover from saturation or remain saturated after the demand of data flow $event_data_flow_id$ is multiplied by $event_rate_multiplier$?
+    question: Will interface $target_nic_id$ recover from saturation if data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value?
     answer:
       type: enum
       values: [recovered, not_recovered]
 
   - id: TE0027
-    question: After data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ with a demand of $event_demand_mbps$ Mbps, does it operate normally, become unstable or degraded, or fail?
+    question: Will data flow $event_data_flow_id$ be normal, unstable, degraded, or failed if it is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
     answer:
       type: enum
       values: [normal, unstable, degraded, failed]
 
   - id: TE0028
-    question: Does the maximum directional carried bandwidth of channel $target_channel_id$ increase, decrease, or remain unchanged after data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ with a demand of $event_demand_mbps$ Mbps?
+    question: If data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
     answer:
       type: enum
       values: [increase, unchanged, decrease]
 
   - id: TE0029
-    question: Is channel $target_channel_id$ saturated or unsaturated after data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ with a demand of $event_demand_mbps$ Mbps?
+    question: Will channel $target_channel_id$ be saturated if data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
     answer:
       type: enum
       values: [saturated, not_saturated]
 
   - id: TE0030
-    question: Is interface $target_nic_id$ saturated or unsaturated after data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ with a demand of $event_demand_mbps$ Mbps?
+    question: Will interface $target_nic_id$ be saturated if data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
     answer:
       type: enum
       values: [saturated, not_saturated]
