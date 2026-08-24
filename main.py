@@ -475,6 +475,18 @@ def initialize_ns3(
     )
 
 
+def _require_ns3_initialized(destination: str | Path | None = None) -> None:
+    ns3_root = Path(
+        destination if destination is not None else DEFAULT_NS3_ROOT
+    ).expanduser().resolve()
+    launcher = ns3_root / "ns3"
+    if not launcher.is_file() or not os.access(launcher, os.X_OK):
+        raise ValueError(
+            "ns-3 尚未初始化，请先运行: "
+            "python main.py initial <ns-3压缩包路径>"
+        )
+
+
 def _resolve_project_path(value: str | Path) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
@@ -1303,6 +1315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("  ./ns3 configure -d debug --enable-examples --disable-tests")
             print("  ./ns3 build TwinGenerate")
             return 0
+
+        if args.command == "generate":
+            _require_ns3_initialized()
+        elif args.command == "twin":
+            _require_ns3_initialized(args.ns3_root)
 
         _load_project_dependencies()
 
