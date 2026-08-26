@@ -114,6 +114,12 @@ _QUESTION_RULES = {
     ),
     "TE0017": EvolutionQuestionRule("node_failure", "node", "status"),
     "TE0018": EvolutionQuestionRule("node_recovery", "node", "status"),
+    "TE0020": EvolutionQuestionRule(
+        "flow_load_increase", "data_flow", "numeric", "lost_packets"
+    ),
+    "TE0022": EvolutionQuestionRule(
+        "flow_load_decrease", "data_flow", "numeric", "lost_packets"
+    ),
     "TE0023": EvolutionQuestionRule(
         "flow_load_increase", "channel", "saturation_outcome"
     ),
@@ -145,14 +151,20 @@ _QUESTION_RULES = {
 
 
 _EXPECTED_ANSWER_VALUES = {
-    "TE0001": ("unchanged", "decrease"),
+    "TE0001": ("increase", "unchanged", "decrease"),
+    "TE0004": ("increase", "unchanged"),
+    "TE0012": ("increase", "unchanged"),
+    "TE0014": ("increase", "unchanged"),
+    "TE0016": ("unchanged", "decrease"),
     "TE0017": ("unchanged", "disabled"),
     "TE0018": ("recovered", "unchanged"),
+    "TE0020": ("increase", "unchanged"),
+    "TE0022": ("unchanged", "decrease"),
     "TE0023": ("saturated", "not_saturated"),
     "TE0024": ("recovered", "not_recovered"),
     "TE0025": ("saturated", "not_saturated"),
     "TE0026": ("recovered", "not_recovered"),
-    "TE0027": ("normal", "unstable", "degraded", "failed"),
+    "TE0027": ("normal", "unstable"),
     "TE0029": ("saturated", "not_saturated"),
     "TE0030": ("saturated", "not_saturated"),
 }
@@ -168,6 +180,8 @@ class EvolutionSourceScene:
     routing_matrix: tuple[tuple[int, ...], ...]
     physical_faults: tuple[dict[str, str], ...]
     public_nic_id_by_raw_id: dict[str, str]
+    saturated_flow_ids: tuple[str, ...]
+    normal_flow_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -240,12 +254,18 @@ def prepare_evolution_scenes(
         ).is_file()
         and (path.parent / "labels.jsonl").is_file()
     ]
-    sources = [_load_source_scene(path) for path in source_directories]
+    sources = [
+        _load_source_scene(
+            path,
+            original_scenes_root / f"{path.name}.jsonl",
+        )
+        for path in source_directories
+    ]
     if not sources:
         raise ValueError(
             "Evolution generation requires at least one origin scene with "
             "complete twin.jsonl and labels.jsonl outputs; run "
-            "'python main.py twin origin' first"
+            "'python main.py twin -t origin' first"
         )
     evolution_input_root.mkdir(parents=True, exist_ok=True)
     evolution_scenes_root.mkdir(parents=True, exist_ok=True)
@@ -259,7 +279,24 @@ def prepare_evolution_scenes(
     for spec in template_bundle.event_types:
         event_type = spec.event_type_id
         used_source_scene_ids: set[str] = set()
-        for _ in range(scenes_per_event):
+        flow_classes: list[str | None] = [None] * scenes_per_event
+        if (
+            spec.entity_type == "data_flow"
+            and spec.change == "load_decrease"
+        ):
+            saturated_count = round(
+                scenes_per_event
+                * float(options["load_decrease_saturated_flow_ratio"])
+            )
+            flow_classes = [
+                *("saturated" for _ in range(saturated_count)),
+                *(
+                    "normal"
+                    for _ in range(scenes_per_event - saturated_count)
+                ),
+            ]
+            rng.shuffle(flow_classes)
+        for flow_class in flow_classes:
             candidates = [
                 source
                 for source in sources
@@ -268,11 +305,22 @@ def prepare_evolution_scenes(
             rng.shuffle(candidates)
             selected: tuple[EvolutionSourceScene, dict[str, Any]] | None = None
             for source in candidates:
-                event = _select_event(source, spec, rng, options)
+                event = _select_event(
+                    source,
+                    spec,
+                    rng,
+                    options,
+                    flow_class=flow_class,
+                )
                 if event is not None:
                     selected = source, event
                     break
             if selected is None:
+                if flow_class is not None:
+                    raise ValueError(
+                        "Unable to generate the requested number of "
+                        f"flow_load_decrease scenes for {flow_class} flows"
+                    )
                 break
             source, event = selected
             used_source_scene_ids.add(source.scene_dir.name)
@@ -356,7 +404,7 @@ def generate_evolution_questions(
     if not plans:
         raise ValueError(
             "No completed evolution scene pairs are available; run "
-            "'python main.py twin evo' first"
+            "'python main.py twin -t evolution' first"
         )
     export_question_template(category)
 
@@ -385,8 +433,12 @@ def generate_evolution_questions(
             template,
             category.questions_per_question,
         ):
-            candidates: list[tuple[EvolutionPlan, dict[str, str], bool]] = []
-            for plan in matching_plans:
+            shuffled_plans = list(matching_plans)
+            rng.shuffle(shuffled_plans)
+            selected_candidates: list[
+                tuple[EvolutionPlan, dict[str, str], bool]
+            ] = []
+            for plan in shuffled_plans:
                 try:
                     before = original_scene_cache.get(plan.original_scene_file)
                     if before is None:
@@ -396,37 +448,49 @@ def generate_evolution_questions(
                     if after is None:
                         after = SceneData.from_jsonl(plan.evolved_scene_file)
                         evolved_scene_cache[plan.evolved_scene_file] = after
-                    candidates.extend(
-                        (
-                            plan,
-                            replacements,
-                            related,
-                        )
-                        for replacements, related in _find_evidence_candidates(
-                            before,
-                            after,
-                            template,
-                            rule,
-                            event_type,
-                            plan.event,
-                            target_label,
-                        )
+                    scene_candidates = _find_evidence_candidates(
+                        before,
+                        after,
+                        template,
+                        rule,
+                        event_type,
+                        plan.event,
+                        target_label,
                     )
                 except (OSError, ValueError):
                     continue
-            related_candidates = [
-                candidate for candidate in candidates if candidate[2]
-            ]
-            other_candidates = [
-                candidate for candidate in candidates if not candidate[2]
-            ]
-            rng.shuffle(related_candidates)
-            rng.shuffle(other_candidates)
-            if rng.random() < related_probability:
-                candidates = [*related_candidates, *other_candidates]
-            else:
-                candidates = [*other_candidates, *related_candidates]
-            selected_candidates = candidates[:requested]
+
+                related_candidates = [
+                    candidate
+                    for candidate in scene_candidates
+                    if candidate[1]
+                ]
+                other_candidates = [
+                    candidate
+                    for candidate in scene_candidates
+                    if not candidate[1]
+                ]
+                prefer_related = rng.random() < related_probability
+                preferred = (
+                    related_candidates
+                    if prefer_related
+                    else other_candidates
+                )
+                fallback = (
+                    other_candidates
+                    if prefer_related
+                    else related_candidates
+                )
+                available = preferred or fallback
+                if not available:
+                    continue
+                replacements, related = rng.choice(available)
+                selected_candidates.append(
+                    (plan, replacements, related)
+                )
+                if len(selected_candidates) == requested:
+                    break
+
             for plan, replacements, _ in selected_candidates:
                 question = GeneratedQuestion(
                     question_id=f"Q{question_number:08d}",
@@ -536,6 +600,7 @@ def _evolution_options(category: CategoryConfig) -> dict[str, object]:
     options: dict[str, object] = {
         "load_increase_multiplier_range": (1.2, 2.0),
         "load_decrease_multiplier_range": (0.2, 0.8),
+        "load_decrease_saturated_flow_ratio": 0.5,
         "flow_addition_demand_mbps_range": (1.0, 100.0),
         "related_target_probability": 0.8,
         "scenes_per_event": 3,
@@ -572,6 +637,15 @@ def _evolution_options(category: CategoryConfig) -> dict[str, object]:
     if not 0 <= probability <= 1:
         raise ValueError("evolution options.related_target_probability must be in [0, 1]")
     options["related_target_probability"] = probability
+    saturated_flow_ratio = float(
+        options["load_decrease_saturated_flow_ratio"]
+    )
+    if not 0 <= saturated_flow_ratio <= 1:
+        raise ValueError(
+            "evolution options.load_decrease_saturated_flow_ratio must be "
+            "in [0, 1]"
+        )
+    options["load_decrease_saturated_flow_ratio"] = saturated_flow_ratio
     scenes_per_event = options["scenes_per_event"]
     if (
         isinstance(scenes_per_event, bool)
@@ -607,6 +681,8 @@ def _select_event(
     spec: EvolutionEventType,
     rng: random.Random,
     options: dict[str, object],
+    *,
+    flow_class: str | None = None,
 ) -> dict[str, Any] | None:
     if spec.entity_type == "data_flow" and spec.change == "addition":
         if source.physical_faults:
@@ -626,7 +702,12 @@ def _select_event(
             "feature_model": new_flow["feature_model"],
         }
 
-    event_entity = _choose_event_entity(source, spec, rng)
+    event_entity = _choose_event_entity(
+        source,
+        spec,
+        rng,
+        flow_class=flow_class,
+    )
     if event_entity is None:
         return None
     public_event_id, raw_event_id, state = event_entity
@@ -646,6 +727,8 @@ def _select_event(
         ]
         lower, upper = multiplier_range
         event["multiplier"] = rng.uniform(float(lower), float(upper))
+        if flow_class is not None:
+            event["source_flow_class"] = flow_class
 
     return event
 
@@ -750,6 +833,8 @@ def _choose_event_entity(
     source: EvolutionSourceScene,
     spec: EvolutionEventType,
     rng: random.Random,
+    *,
+    flow_class: str | None = None,
 ) -> tuple[str, str, str] | None:
     if spec.change in {"failure", "load_increase", "load_decrease"}:
         if source.physical_faults:
@@ -793,10 +878,21 @@ def _choose_event_entity(
             and str(row["nic_id"]) in source.public_nic_id_by_raw_id
         ]
     else:
+        allowed_flow_ids = (
+            set(source.saturated_flow_ids)
+            if flow_class == "saturated"
+            else set(source.normal_flow_ids)
+            if flow_class == "normal"
+            else None
+        )
         candidates = [
             (str(row["flow_id"]), str(row["flow_id"]), "normal")
             for row in source.traffic
             if float(row.get("demand_mbps", 0.0)) > 0
+            and (
+                allowed_flow_ids is None
+                or str(row["flow_id"]) in allowed_flow_ids
+            )
         ]
     return rng.choice(candidates) if candidates else None
 
@@ -846,7 +942,10 @@ def _target_placeholder(entity_type: str) -> str:
     }[entity_type]
 
 
-def _load_source_scene(scene_dir: Path) -> EvolutionSourceScene:
+def _load_source_scene(
+    scene_dir: Path,
+    twin_file: Path,
+) -> EvolutionSourceScene:
     nodes, _ = _read_csv(scene_dir / "nodes.csv")
     channels, _ = _read_csv(scene_dir / "channels.csv")
     nics, _ = _read_csv(scene_dir / "nics.csv")
@@ -855,6 +954,28 @@ def _load_source_scene(scene_dir: Path) -> EvolutionSourceScene:
         scene_dir / "routing_matrix.csv",
         len(nodes),
     )
+    twin = SceneData.from_jsonl(twin_file)
+    saturated_flow_ids: list[str] = []
+    normal_flow_ids: list[str] = []
+    for flow in twin.entities("data_flow"):
+        path_channels = [
+            twin.entity("channel", str(channel_id))
+            for channel_id in flow.relations.get("path_channels", [])
+        ]
+        path_nics = [
+            twin.entity("nic", str(nic_id))
+            for channel in path_channels
+            if channel is not None
+            for nic_id in channel.relations.get("connects", [])
+        ]
+        is_saturated = any(
+            entity is not None and entity.label == "saturated"
+            for entity in (*path_channels, *path_nics)
+        )
+        if is_saturated:
+            saturated_flow_ids.append(flow.entity_id)
+        elif flow.label == "normal":
+            normal_flow_ids.append(flow.entity_id)
 
     public_by_raw: dict[str, str] = {}
     for row in nics:
@@ -905,6 +1026,8 @@ def _load_source_scene(scene_dir: Path) -> EvolutionSourceScene:
         routing_matrix=routing_matrix,
         physical_faults=tuple(faults),
         public_nic_id_by_raw_id=public_by_raw,
+        saturated_flow_ids=tuple(saturated_flow_ids),
+        normal_flow_ids=tuple(normal_flow_ids),
     )
 
 
@@ -1226,6 +1349,20 @@ def _evaluate_target(
         before_value = max(before_values)
         after_value = max(after_values)
     else:
+        if rule.metric_name == "average_delay_ms":
+            before_rx_packets = _finite_number(
+                before_entity.properties.get("rx_packets")
+            )
+            after_rx_packets = _finite_number(
+                after_entity.properties.get("rx_packets")
+            )
+            if (
+                before_rx_packets is None
+                or after_rx_packets is None
+                or before_rx_packets <= 0
+                or after_rx_packets <= 0
+            ):
+                return None
         before_value = _finite_number(
             before_entity.properties.get(rule.metric_name)
         )
@@ -1507,7 +1644,7 @@ def _ensure_evolution_outputs_absent(
     if existing is not None:
         raise ValueError(
             f"Evolution output already exists: {existing}; run "
-            "'python main.py clean twin' first"
+            "'python main.py clean -o twin -t evolution' first"
         )
 
 

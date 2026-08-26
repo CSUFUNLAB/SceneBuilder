@@ -43,9 +43,24 @@ DISPLAY_REFRESH_INTERVAL = 5.0
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 QUESTION_CATEGORIES = ("analysis", "evolution", "optimization")
 TWIN_TYPES = ("origin", "evo", "opt")
+QUESTION_CATEGORY_BY_TWIN_TYPE = {
+    "origin": "analysis",
+    "evo": "evolution",
+    "opt": "optimization",
+}
+TWIN_COMMAND_TYPE_BY_TYPE = {
+    "origin": "origin",
+    "evo": "evolution",
+    "opt": "optimization",
+}
+TWIN_COMMAND_TYPES = tuple(TWIN_COMMAND_TYPE_BY_TYPE.values())
+TWIN_TYPE_BY_COMMAND_TYPE = {
+    command_type: twin_type
+    for twin_type, command_type in TWIN_COMMAND_TYPE_BY_TYPE.items()
+}
 SCENES_DIR_NAME = "scenes"
 INPUT_DIR_NAME = "input"
-COMMANDS = ("initial", "generate", "twin", "questions", "split", "clean")
+COMMANDS = ("initial", "scenes", "twin", "questions", "split", "clean")
 
 
 def _load_project_dependencies() -> None:
@@ -133,14 +148,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    generate_parser = subparsers.add_parser("generate", help="Generate network scenes")
-    generate_parser.add_argument("-c", "--config", dest="scene_config", required=True)
+    scenes_parser = subparsers.add_parser("scenes", help="Generate network scenes")
+    scenes_parser.add_argument("-c", "--config", dest="scene_config", required=True)
 
     twin_parser = subparsers.add_parser(
         "twin",
         help="Generate origin, evolution, or optimization Twins",
     )
-    twin_parser.add_argument("twin_type", choices=TWIN_TYPES)
+    twin_parser.add_argument(
+        "-t",
+        "--type",
+        dest="twin_type",
+        required=True,
+        choices=TWIN_COMMAND_TYPES,
+        help="Twin type to generate.",
+    )
     twin_parser.add_argument(
         "-c",
         "--config",
@@ -203,12 +225,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicitly clean all outputs, Twins, or questions",
     )
     clean_parser.add_argument(
-        "clean_type",
-        nargs="?",
-        choices=("twin", "questions"),
+        "-o",
+        "--object",
+        dest="clean_object",
+        choices=("scenes", "twin", "questions"),
         help=(
-            "Omit to clean all generated outputs; choose twin or questions "
-            "to clean only that layer and its dependents."
+            "Choose scenes, twin, or questions as the cleanup object. "
+            "Omit to clean all generated outputs."
+        ),
+    )
+    clean_parser.add_argument(
+        "-t",
+        "--type",
+        dest="clean_type",
+        choices=tuple(
+            dict.fromkeys((*TWIN_COMMAND_TYPES, *QUESTION_CATEGORIES))
+        ),
+        help=(
+            "For '-o twin', select origin/evolution/optimization; for "
+            "'-o questions', select analysis/evolution/optimization. "
+            "Omit to clean every type of the selected object."
         ),
     )
     clean_parser.add_argument(
@@ -216,13 +252,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         dest="clean_config",
         help=(
-            "Scene config for full clean, or question config for twin/"
-            "questions clean."
+            "Scene config for full/scenes clean, or question config when "
+            "cleaning Twins or questions."
         ),
     )
     clean_parser.add_argument(
         "--scene-root",
-        help="Override scenes_root for twin/questions clean.",
+        help="Override scenes_root when cleaning Twins or questions.",
     )
     return parser
 
@@ -822,7 +858,7 @@ def run_twins(
     if existing_outputs:
         raise ValueError(
             f"Twin output already exists: {existing_outputs[0]}; run "
-            "'python main.py clean twin' first"
+            "'python main.py clean -o twin' first"
         )
     if not ns3_executable.is_file():
         raise ValueError(f"ns-3 launcher does not exist: {ns3_executable}")
@@ -1119,21 +1155,26 @@ def _ensure_twin_outputs_absent_before_layout(
     if existing is not None:
         raise ValueError(
             f"Twin output already exists: {existing}; run "
-            "'python main.py clean twin' first"
+            "'python main.py clean -o twin -t "
+            f"{TWIN_COMMAND_TYPE_BY_TYPE[group]}' first"
         )
 
 
 def _clean_twin_layer(
     question_config: str | Path,
     scenes_root: Path,
+    twin_group: str | None = None,
 ) -> tuple[Path, ...]:
     if scenes_root.is_symlink():
         raise ValueError(
             f"Refusing to clean a symbolic-link scenes_root: {scenes_root}"
         )
+    if twin_group is not None and twin_group not in TWIN_TYPES:
+        raise ValueError(f"Unknown Twin group for cleanup: {twin_group}")
+    selected_groups = TWIN_TYPES if twin_group is None else (twin_group,)
     layer_roots = tuple(
         root
-        for group in TWIN_TYPES
+        for group in selected_groups
         for root in (
             _group_input_root(scenes_root, group),
             _group_scenes_root(scenes_root, group),
@@ -1163,10 +1204,18 @@ def _clean_twin_layer(
     question_cleanup = clean_question_outputs(
         question_config,
         scenes_root=scenes_root,
+        categories=tuple(
+            QUESTION_CATEGORY_BY_TWIN_TYPE[group]
+            for group in selected_groups
+        ),
     )
     removed: list[Path] = list(question_cleanup.removed_files)
 
-    for group in ("origin", "opt"):
+    for group in (
+        group
+        for group in selected_groups
+        if group in {"origin", "opt"}
+    ):
         input_root = _group_input_root(scenes_root, group)
         if input_root.is_dir():
             for metadata_file in sorted(input_root.rglob("metadata.json")):
@@ -1217,23 +1266,24 @@ def _clean_twin_layer(
                         shutil.rmtree(legacy_twin_root)
                         removed.append(legacy_twin_root)
 
-    for evolution_root in (
-        _group_input_root(scenes_root, "evo"),
-        _group_scenes_root(scenes_root, "evo"),
-    ):
-        if not evolution_root.is_dir():
-            continue
-        for artifact in sorted(
-            evolution_root.iterdir(),
-            key=lambda path: path.name,
+    if "evo" in selected_groups:
+        for evolution_root in (
+            _group_input_root(scenes_root, "evo"),
+            _group_scenes_root(scenes_root, "evo"),
         ):
-            if artifact.is_file() or artifact.is_symlink():
-                artifact.unlink()
-            elif artifact.is_dir():
-                shutil.rmtree(artifact)
-            else:
-                artifact.unlink()
-            removed.append(artifact)
+            if not evolution_root.is_dir():
+                continue
+            for artifact in sorted(
+                evolution_root.iterdir(),
+                key=lambda path: path.name,
+            ):
+                if artifact.is_file() or artifact.is_symlink():
+                    artifact.unlink()
+                elif artifact.is_dir():
+                    shutil.rmtree(artifact)
+                else:
+                    artifact.unlink()
+                removed.append(artifact)
 
     return tuple(dict.fromkeys(removed))
 
@@ -1244,6 +1294,7 @@ def _require_completed_twins(
     *,
     allow_partial: bool = False,
 ) -> tuple[Path, list[Path]]:
+    command_type = TWIN_COMMAND_TYPE_BY_TYPE[group]
     input_root = _group_input_root(scenes_root, group)
     twin_root = _group_scenes_root(scenes_root, group)
     discovery_root = input_root
@@ -1255,8 +1306,9 @@ def _require_completed_twins(
         scenes = discover_scenes(discovery_root)
     except ValueError as exc:
         raise ValueError(
-            f"No {group} scenes are available; run "
-            f"'python main.py twin {group}' first"
+            f"No {command_type} scenes are available; run "
+            "'python main.py twin -t "
+            f"{command_type}' first"
         ) from exc
     complete = [
         scene
@@ -1272,17 +1324,19 @@ def _require_completed_twins(
     ]
     if incomplete and not allow_partial:
         raise ValueError(
-            f"{len(incomplete)} {group} scene(s) do not have complete Twin "
-            f"outputs; run 'python main.py twin {group}' first"
+            f"{len(incomplete)} {command_type} scene(s) do not have complete Twin "
+            "outputs; run 'python main.py twin -t "
+            f"{command_type}' first"
         )
     if not complete:
         raise ValueError(
-            f"No {group} scenes have complete Twin and labels.jsonl "
-            f"outputs; run 'python main.py twin {group}' first"
+            f"No {command_type} scenes have complete Twin and labels.jsonl "
+            "outputs; run 'python main.py twin -t "
+            f"{command_type}' first"
         )
     if incomplete:
         print(
-            f"Using {len(complete)} completed {group} scene(s); "
+            f"Using {len(complete)} completed {command_type} scene(s); "
             f"skipping {len(incomplete)} incomplete scene(s).",
             flush=True,
         )
@@ -1316,15 +1370,50 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("  ./ns3 build TwinGenerate")
             return 0
 
-        if args.command == "generate":
+        if args.command == "scenes":
             _require_ns3_initialized()
         elif args.command == "twin":
             _require_ns3_initialized(args.ns3_root)
 
+        if args.command == "clean":
+            if (
+                args.clean_object == "scenes"
+                and args.clean_type is not None
+            ):
+                raise ValueError(
+                    "'clean -o scenes' does not accept '-t/--type'"
+                )
+            if (
+                args.clean_object == "twin"
+                and args.clean_type is not None
+                and args.clean_type not in TWIN_COMMAND_TYPES
+            ):
+                raise ValueError(
+                    "'clean -o twin -t' accepts only origin, evolution, "
+                    "or optimization"
+                )
+            if (
+                args.clean_object == "questions"
+                and args.clean_type is not None
+                and args.clean_type not in QUESTION_CATEGORIES
+            ):
+                raise ValueError(
+                    "'clean -o questions -t' accepts only analysis, "
+                    "evolution, or optimization"
+                )
+            if (
+                args.clean_object is None
+                and args.clean_type is not None
+            ):
+                raise ValueError(
+                    "'-t/--type' requires '-o/--object twin' or "
+                    "'-o/--object questions'"
+                )
+
         _load_project_dependencies()
 
         if args.command == "clean":
-            if args.clean_type is None:
+            if args.clean_object in {None, "scenes"}:
                 config_path = (
                     args.clean_config
                     if args.clean_config is not None
@@ -1351,17 +1440,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.scene_root
                 else None
             )
-            if args.clean_type == "questions":
+            if args.clean_object == "questions":
                 result = clean_question_outputs(
                     question_config,
                     scenes_root=scenes_root_override,
+                    categories=(args.clean_type,)
+                    if args.clean_type is not None
+                    else None,
+                )
+                scope = (
+                    f"{args.clean_type} "
+                    if args.clean_type is not None
+                    else ""
                 )
                 print(
-                    f"Removed {len(result.removed_files)} question "
+                    f"Removed {len(result.removed_files)} {scope}question "
                     "artifact(s)"
                 )
                 return 0
 
+            requested_twin_scope = args.clean_type
+            requested_twin_group = (
+                TWIN_TYPE_BY_COMMAND_TYPE[requested_twin_scope]
+                if requested_twin_scope is not None
+                else None
+            )
             scenes_root = _configured_scenes_root(
                 question_config,
                 scenes_root_override,
@@ -1369,11 +1472,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             removed = _clean_twin_layer(
                 question_config,
                 scenes_root,
+                requested_twin_group,
             )
-            print(f"Removed {len(removed)} Twin-layer artifact(s)")
+            scope = requested_twin_scope or "all"
+            print(
+                f"Removed {len(removed)} {scope} Twin-layer artifact(s)"
+            )
             return 0
 
-        if args.command == "generate":
+        if args.command == "scenes":
             scene_dirs = generate_scenes(args.scene_config)
             print(f"Generated {len(scene_dirs)} scene(s)")
             for scene_dir in scene_dirs:
@@ -1411,8 +1518,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.question_config,
                 scenes_root_override,
             )
+            twin_type = TWIN_TYPE_BY_COMMAND_TYPE[args.twin_type]
             print(f"Twin type: {args.twin_type}", flush=True)
-            if args.twin_type == "origin":
+            if twin_type == "origin":
                 _ensure_twin_outputs_absent_before_layout(
                     scenes_root,
                     "origin",
@@ -1431,7 +1539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     twin_output_root=origin_scenes_root,
                 )
                 return 0 if result.complete else 1
-            if args.twin_type == "evo":
+            if twin_type == "evo":
                 if args.dry_run:
                     raise ValueError(
                         "Evolution Twin generation does not support --dry-run "

@@ -1,5 +1,5 @@
 # Ignore generated outputs and caches anywhere in the repo.
-generated_scenes/
+generated/
 .pytest_cache/
 __pycache__/
 *.py[cod]

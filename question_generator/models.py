@@ -20,7 +20,7 @@ class QuestionTemplate:
 
     @property
     def has_id_answer(self) -> bool:
-        return self.answer_type in {"channel_id", "entity_id"}
+        return self.answer_type in {"node_id", "channel_id", "entity_id"}
 
     def render(self, replacements: dict[str, str]) -> str:
         rendered = self.question
@@ -43,10 +43,18 @@ class EvolutionEventType:
 
 
 @dataclass(frozen=True)
+class OptimizationActionType:
+    action_type_id: str
+    description: str
+    template_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class QuestionTemplateBundle:
     category: str
     templates: tuple[QuestionTemplate, ...]
     event_types: tuple[EvolutionEventType, ...] = ()
+    optimization_action_types: tuple[OptimizationActionType, ...] = ()
 
 
 @dataclass(frozen=True)

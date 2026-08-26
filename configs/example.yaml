@@ -1,4 +1,4 @@
-output_root: ../generated_scenes
+output_root: ../generated
 seed: 20260331
 scenes_per_topology: 10
 max_topology_nodes: 50

@@ -8,6 +8,7 @@ import yaml
 
 from .models import (
     EvolutionEventType,
+    OptimizationActionType,
     QuestionTemplate,
     QuestionTemplateBundle,
 )
@@ -17,6 +18,7 @@ SCHEMA_VERSION = 1
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
 _ANSWER_TYPES = {
     "enum",
+    "node_id",
     "channel_id",
     "entity_id",
     "path",
@@ -36,6 +38,9 @@ _TEMPLATE_ID_PREFIXES = {
     "evolution": "TE",
     "optimization": "TO",
 }
+_REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS = frozenset(
+    {"path_adjustment", "channel_expansion", "fault_repair"}
+)
 
 
 def _mapping(value: object, location: str) -> dict[str, Any]:
@@ -145,6 +150,98 @@ def _load_event_types(
     if not events:
         raise ValueError(f"{template_path}: evolution templates require events")
     return tuple(events)
+
+
+def _load_optimization_action_types(
+    raw_actions: object,
+    template_path: Path,
+    category: str,
+) -> tuple[OptimizationActionType, ...]:
+    if category != "optimization":
+        if raw_actions not in (None, []):
+            raise ValueError(
+                f"{template_path}: only optimization templates may define "
+                "actions"
+            )
+        return ()
+
+    actions: list[OptimizationActionType] = []
+    seen_ids: set[str] = set()
+    for index, raw_action in enumerate(
+        _list(raw_actions, f"{template_path}:actions"),
+        start=1,
+    ):
+        location = f"{template_path}:actions[{index}]"
+        action = _mapping(raw_action, location)
+        _reject_unknown(
+            action,
+            {"id", "description", "template_ids"},
+            location,
+        )
+        action_type_id = _identifier(action.get("id"), f"{location}.id")
+        if action_type_id in seen_ids:
+            raise ValueError(f"{location}.id duplicates {action_type_id}")
+        seen_ids.add(action_type_id)
+        description = _text(
+            action.get("description"),
+            f"{location}.description",
+        )
+        template_ids = tuple(
+            _identifier(value, f"{location}.template_ids")
+            for value in _list(
+                action.get("template_ids"),
+                f"{location}.template_ids",
+            )
+        )
+        if not template_ids:
+            raise ValueError(f"{location}.template_ids must not be empty")
+        if len(template_ids) != len(set(template_ids)):
+            raise ValueError(f"{location}.template_ids must be unique")
+        actions.append(
+            OptimizationActionType(
+                action_type_id=action_type_id,
+                description=description,
+                template_ids=template_ids,
+            )
+        )
+
+    actual_ids = {action.action_type_id for action in actions}
+    if actual_ids != _REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS:
+        raise ValueError(
+            f"{template_path}: optimization actions must be exactly "
+            f"{sorted(_REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS)}"
+        )
+    return tuple(actions)
+
+
+def _validate_optimization_action_coverage(
+    actions: tuple[OptimizationActionType, ...],
+    templates: tuple[QuestionTemplate, ...],
+    template_path: Path,
+) -> None:
+    template_ids = {template.template_id for template in templates}
+    assigned_to: dict[str, str] = {}
+    for action in actions:
+        for template_id in action.template_ids:
+            if template_id not in template_ids:
+                raise ValueError(
+                    f"{template_path}: action {action.action_type_id} "
+                    f"references unknown template {template_id}"
+                )
+            previous = assigned_to.get(template_id)
+            if previous is not None:
+                raise ValueError(
+                    f"{template_path}: template {template_id} belongs to "
+                    f"both {previous} and {action.action_type_id}"
+                )
+            assigned_to[template_id] = action.action_type_id
+
+    missing = sorted(template_ids - set(assigned_to))
+    if missing:
+        raise ValueError(
+            f"{template_path}: optimization templates missing an action: "
+            f"{missing}"
+        )
 
 
 def _load_answer(
@@ -287,7 +384,13 @@ def load_template_bundle(
     root = _mapping(raw, str(template_path))
     _reject_unknown(
         root,
-        {"schema_version", "question_type", "events", "templates"},
+        {
+            "schema_version",
+            "question_type",
+            "events",
+            "actions",
+            "templates",
+        },
         str(template_path),
     )
     if root.get("schema_version") != SCHEMA_VERSION:
@@ -308,15 +411,27 @@ def load_template_bundle(
         template_path,
         category,
     )
+    optimization_action_types = _load_optimization_action_types(
+        root.get("actions"),
+        template_path,
+        category,
+    )
     templates = _load_templates(
         root.get("templates", []),
         template_path,
         category,
     )
+    if category == "optimization":
+        _validate_optimization_action_coverage(
+            optimization_action_types,
+            templates,
+            template_path,
+        )
     return QuestionTemplateBundle(
         category=category,
         templates=templates,
         event_types=event_types,
+        optimization_action_types=optimization_action_types,
     )
 
 

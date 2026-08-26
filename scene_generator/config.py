@@ -316,7 +316,10 @@ def load_config(config_path: str | Path) -> SceneConfig:
 
     base_dir = path.parent
 
-    output_root = _resolve_path(base_dir, raw.get("output_root", "./generated_scenes"))
+    output_root = _resolve_path(
+        base_dir,
+        raw.get("output_root", "./generated"),
+    )
     seed = int(raw.get("seed", 0))
     scenes_per_topology = int(raw.get("scenes_per_topology", 100))
     max_topology_nodes = int(raw.get("max_topology_nodes", 50))

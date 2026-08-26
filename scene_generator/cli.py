@@ -12,9 +12,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("generate", "clean"),
-        default="generate",
-        help="Use 'generate' to build scenes or 'clean' to remove generated scene directories for the config output_root.",
+        choices=("scenes", "clean"),
+        default="scenes",
+        help="Use 'scenes' to build scenes or 'clean' to remove generated scene directories for the config output_root.",
     )
     parser.add_argument("-c", "--config", required=True, help="Path to YAML config file")
     return parser

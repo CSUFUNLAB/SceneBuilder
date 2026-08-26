@@ -75,7 +75,7 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
             raw.get(
                 "output_file",
                 (
-                    f"../generated_scenes/{QUESTION_DATASET_DIRS[name]}/"
+                    f"../generated/{QUESTION_DATASET_DIRS[name]}/"
                     f"{name}_questions.jsonl"
                 ),
             ),

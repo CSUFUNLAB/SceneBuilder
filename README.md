@@ -15,16 +15,16 @@ cd /home/lb/STN/SceneBuilder
 python main.py initial ./ns-allinone-3.48.tar.bz2
 
 # 1. 生成原始场景输入
-python main.py generate -c configs/example.yaml
+python main.py scenes -c configs/example.yaml
 
 # 2. 生成原始 Twin
-python main.py twin origin
+python main.py twin -t origin
 
 # 3. 生成分析问题
 python main.py questions -t analysis -c configs/question_generator.yaml
 
 # 4. 生成演化场景及 Twin
-python main.py twin evo
+python main.py twin -t evolution
 
 # 5. 生成演化问题
 python main.py questions -t evolution -c configs/question_generator.yaml
@@ -42,8 +42,8 @@ python main.py <模式> [选项]
 可用模式：
 
 - `initial`：首次克隆后，把指定的 ns-3 压缩包解压到项目的 `ns-3` 目录。
-- `generate`：生成网络场景的原始输入。
-- `twin`：生成 `origin`、`evo` 或 `opt` Twin。
+- `scenes`：生成网络场景的原始输入。
+- `twin`：生成 `origin`、`evolution` 或 `optimization` Twin。
 - `questions`：从已有 Twin 和标签生成问题。
 - `split`：按问题模板分别划分训练集和测试集。
 - `clean`：清理场景配置对应的已有场景。
@@ -65,19 +65,19 @@ python main.py initial
 
 命令会自动识别压缩包内的 ns-3 源码根目录，将内容解压到项目的 `ns-3/`，并跳过
 Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。如果 `ns-3/ns3` 已经存在，
-命令会拒绝再次初始化，避免混合不同版本的源码。尚未初始化时运行 `generate` 或
+命令会拒绝再次初始化，避免混合不同版本的源码。尚未初始化时运行 `scenes` 或
 `twin`，程序会停止并提示先执行 `initial`。
 
 ### 1. 生成场景
 
 ```bash
-python main.py generate -c configs/example.yaml
+python main.py scenes -c configs/example.yaml
 ```
 
 场景原始输入生成到配置文件的 `output_root`，示例配置对应：
 
 ```text
-/home/lb/STN/SceneBuilder/generated_scenes/origin/input
+/home/lb/STN/SceneBuilder/generated/origin/input
 ```
 
 一次生成的场景数量为：
@@ -86,7 +86,7 @@ python main.py generate -c configs/example.yaml
 符合 max_topology_nodes 限制的拓扑数量 x scenes_per_topology
 ```
 
-`generate` 不会覆盖或清理任何已有内容。只要配置指定的 `output_root` 中已经存在文件
+`scenes` 不会覆盖或清理任何已有内容。只要配置指定的 `output_root` 中已经存在文件
 或目录，命令就会立即停止并提示先运行：
 
 ```bash
@@ -100,7 +100,7 @@ python main.py clean
 生成原始 Twin：
 
 ```bash
-python main.py twin origin
+python main.py twin -t origin
 ```
 
 原始场景输入从 `origin/input/<scene_id>/` 读取，生成的 Twin 扁平保存为
@@ -108,14 +108,14 @@ python main.py twin origin
 `origin/input/<scene_id>/labels.jsonl`。`origin/scenes` 中只保存 Twin 文件。
 
 Twin 命令不会删除或覆盖已有 Twin、标签、演化派生场景或问题。只要目标输出已经存在，
-命令就会停止并提示先运行 `python main.py clean twin`。旧版
+命令就会停止并提示先清理对应分组，例如 `python main.py clean -o twin -t origin`。旧版
 `origin/scenes/<scene_id>/` 中仍有 Twin 时会在迁移前拒绝执行；显式清理 Twin 后，
-下一次 `twin origin` 才会把保留下来的原始输入迁移到 `origin/input/<scene_id>/`。
+下一次 `twin -t origin` 才会把保留下来的原始输入迁移到 `origin/input/<scene_id>/`。
 
 生成演化场景及 Twin：
 
 ```bash
-python main.py twin evo
+python main.py twin -t evolution
 ```
 
 该命令从具有完整原始 Twin 和标签的 origin 场景中随机抽样，读取
@@ -124,10 +124,15 @@ python main.py twin evo
 `evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和网卡的故障/恢复、数据流负载的
 增加/降低以及新增数据流，共九类事件。
 
+负载降低事件按原始 Twin 状态分层抽样。默认
+`load_decrease_saturated_flow_ratio: 0.5`：一半事件随机选择路径经过饱和信道或 NIC
+的流，另一半随机选择状态为 normal 且路径没有饱和信道/NIC 的流。每个 origin 场景在
+同一事件类型中最多使用一次，所选分类会写入事件元数据的 `source_flow_class`。
+
 生成优化场景 Twin：
 
 ```bash
-python main.py twin opt
+python main.py twin -t optimization
 ```
 
 该命令处理 `opt/input` 中已经存在的优化场景；当前优化场景构造逻辑尚未实现。
@@ -157,18 +162,21 @@ python main.py questions -t optimization -c configs/question_generator.yaml
 ```bash
 python main.py questions -t analysis \
   -c configs/question_generator.yaml \
-  --scene-root generated_scenes
+  --scene-root generated
 ```
 
 分析问题允许使用部分完成的 origin Twin；命令会报告已使用和跳过的场景数。只有没有
-任何完整场景时才会要求先运行 `python main.py twin origin`。演化问题要求先完成
-`python main.py twin evo`，通过比较变更前后的 Twin 生成实际满足目标变化的问题。
+任何完整场景时才会要求先运行 `python main.py twin -t origin`。演化问题要求先完成
+`python main.py twin -t evolution`，通过比较变更前后的 Twin 生成实际满足目标变化的问题。
+演化问题与分析问题采用相同的按答案挑选方式：针对每个模板及目标答案打乱对应事件的
+演化 Twin，逐个尝试生成问题；每个 Twin 对同一模板和答案最多贡献一道题，达到配置数量
+后立即停止，不会重复候选来补足不存在的答案。
 
 问题生成不会删除或覆盖已有问题列表和导出模板。目标问题输出已经存在时，命令会立即
 停止并提示先运行：
 
 ```bash
-python main.py clean questions
+python main.py clean -o questions
 ```
 
 问题模板使用稳定的 `template_id`：分析、演化和优化模板分别使用 `TA`、`TE`、`TO`
@@ -227,37 +235,72 @@ python main.py split -r 0.8
 
 ### 5. 分层清理
 
+`-o/--object` 指定清理对象 `scenes`、`twin` 或 `questions`。`twin` 和 `questions`
+可以再用 `-t/--type` 指定内部类型；省略 `-t` 会清理该对象下的全部类型。`scenes`
+没有下级类型，不能搭配 `-t`。
+
 清理全部生成内容：
 
 ```bash
 python main.py clean
+python main.py clean -o scenes
 ```
 
-该命令使用默认的 `configs/example.yaml`，清空其 `output_root` 中的场景输入、Twin、
-标签、演化派生输入和问题输出。使用其他场景配置时：
+两个命令行为相同：使用默认的 `configs/example.yaml`，清空其 `output_root` 中的场景
+输入、Twin、标签、演化派生输入和问题输出。场景是最上游数据，因此 `-o scenes` 不会
+保留下游产物。使用其他场景配置时：
 
 ```bash
-python main.py clean -c configs/example.yaml
+python main.py clean -o scenes -c configs/example.yaml
 ```
 
 只清理 Twin 层及其下游问题：
 
 ```bash
-python main.py clean twin
+python main.py clean -o twin
 ```
 
 该命令保留 `origin/input` 和 `opt/input` 中的原始场景输入，删除 origin/opt Twin 和
 标签、全部 `evo/input` 与 `evo/scenes`，并删除所有问题列表和导出模板。使用其他问题
 配置时可增加 `-c <question_config>`。
 
+也可以只清理指定的 Twin 分组及其对应问题：
+
+```bash
+python main.py clean -o twin -t origin
+python main.py clean -o twin -t evolution
+python main.py clean -o twin -t optimization
+```
+
+- `clean -o twin -t origin`：保留 `origin/input` 原始输入，删除 origin Twin、标签和 analysis
+  问题。
+- `clean -o twin -t evolution`：删除全部 `evo/input`、`evo/scenes` 和 evolution 问题，不影响
+  origin 和 opt。
+- `clean -o twin -t optimization`：保留 `opt/input` 原始输入，删除 opt Twin、标签和 optimization
+  问题。
+
+三个分组相互独立；清理 origin 不会自动删除已有 evolution，清理 evolution 也不会删除
+origin。
+
 只清理问题：
 
 ```bash
-python main.py clean questions
+python main.py clean -o questions
 ```
 
 该命令只删除分析、演化和优化问题列表、导出模板以及兼容旧目录时发现的局部问题文件，
 不删除场景输入、Twin 或标签。
+
+也可以只清理一种问题：
+
+```bash
+python main.py clean -o questions -t analysis
+python main.py clean -o questions -t evolution
+python main.py clean -o questions -t optimization
+```
+
+三个命令分别只删除 analysis、evolution 或 optimization 的问题列表和对应导出模板，
+不会删除其他类型的问题，也不会删除任何场景输入、Twin 或标签。
 
 所有生成命令都不会自动调用这些清理操作；清理只能由上述显式命令触发。
 
@@ -303,7 +346,7 @@ cd /home/lb/STN/SceneBuilder
 ## 输出结构
 
 ```text
-generated_scenes/
+generated/
 ├── origin/
 │   ├── question_template.yaml
 │   ├── analysis_questions.jsonl
@@ -336,8 +379,8 @@ generated_scenes/
         └── <optimization_scene_id>.jsonl
 ```
 
-普通场景生成始终写入 `origin/input`，`twin origin` 将 Twin 写入 `origin/scenes`。
-`twin evo` 基于原场景创建新输入并分别写入 `evo/input` 和 `evo/scenes`。三个
+普通场景生成始终写入 `origin/input`，`twin -t origin` 将 Twin 写入 `origin/scenes`。
+`twin -t evolution` 基于原场景创建新输入并分别写入 `evo/input` 和 `evo/scenes`。三个
 `scenes/` 目录都只保存以场景名命名的 Twin JSONL 文件。演化场景名末尾使用事件场景 ID，例如
 `example_id2001_York_t2s_evo_E00000001`。三个目录中的数字场景 ID 共用同一编号空间。
 
@@ -438,10 +481,10 @@ generated_scenes/
 数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
 
 问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。
-默认分析问题写入 `generated_scenes/origin/analysis_questions.jsonl`。
+默认分析问题写入 `generated/origin/analysis_questions.jsonl`。
 
 演化问题的总列表默认写入
-`generated_scenes/evo/evolution_questions.jsonl`。每条记录除通用字段外，还包含：
+`generated/evo/evolution_questions.jsonl`。每条记录除通用字段外，还包含：
 
 - `original_scene_id`：变更前的原场景 ID。
 - `evolved_scene_id`：基于原场景生成的新场景 ID。
@@ -494,10 +537,16 @@ generated_scenes/
 模板文件是 `schema_version: 1` 的 YAML。所有任务的 `templates` 使用相同结构，每项只
 包含唯一的 `id`、问题文本 `question` 和答案契约 `answer`。分析、演化和优化模板 ID
 分别使用 `TA`、`TE`、`TO` 前缀，后接四位数字；问题生成器根据模板 ID 选择对应生成规则。
-演化模板文件的 `events` 与 `templates` 相互独立：`events` 供 `twin evo` 构造演化场景
+演化模板文件的 `events` 与 `templates` 相互独立：`events` 供 `twin -t evolution` 构造演化场景
 和 Twin，`templates` 供 `questions -t evolution` 根据前后 Twin 的证据生成具体问题。
 每个事件条目包含 `id`、`entity_type`、`change` 和非空的 `description`；描述用于说明该
 事件对场景的具体修改语义。
+
+优化模板文件的 `actions` 将全部优化模板严格划分为 `path_adjustment`、
+`channel_expansion` 和 `fault_repair` 三类，每个动作通过 `template_ids` 声明覆盖范围。
+模板加载器要求三类动作同时存在，并保证每个 TO 模板恰好属于一类。生成问题时必须把
+候选路径、候选下一跳、候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
+真实改善或存在并列最优时不应生成问题。
 
 演化类的 `options.scenes_per_event` 使用一个正整数控制每类事件生成多少个场景；例如设置
 为 `3` 时，九类事件各生成 3 个场景，最多生成 27 个演化场景。该区域还可配置流量增减
@@ -506,7 +555,9 @@ generated_scenes/
 独立，可以复用同一个原场景，前面的事件不会消耗后续事件的候选场景。
 演化问题比较吞吐量、时延和信道承载带宽等连续数值时，变化绝对值不超过原值的 `1%`
 判定为 `unchanged`；`lost_packets` 属于整数计数，只有数值完全相等才判定为
-`unchanged`。
+`unchanged`。数据流在变更前或变更后没有成功接收数据包时，`average_delay_ms` 没有可比较
+意义，生成器不会用结果文件中的占位值 `0` 生成时延变化问题。每个模板的答案空间只保留
+当前静态路由、固定流量模型和对应事件机制能够产生的变化方向。
 当前已经实现分析类与演化类问题生成；优化类保留入口，但尚未启用完整生成逻辑。
 
 ## 常用选项
@@ -515,20 +566,20 @@ generated_scenes/
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
 - `--no-build`：跳过运行前的显式编译步骤。
 - `--continue-on-error`：单个场景失败后继续处理其他场景。
-- `--dry-run`：只打印将执行的 ns-3 命令。`twin evo` 会创建派生场景，因此不支持该选项。
+- `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 会创建派生场景，因此不支持该选项。
 - `questions --scene-root <路径>`：覆盖问题配置中的孪生体场景目录。
 
 `scaleFactor` 会按相同比例缩小仿真中的信道容量、流量需求和队列包数。Twin 中的速率会
 恢复到原网络口径，`queue_size_packets` 也仍表示原网络的队列容量；队列当前包数按队列
 占用比例恢复。队列至少保留一个仿真包。
 
-`twin evo` 不支持 `--stop-time`。变更前后 Twin 必须使用相同的场景仿真时长，才能直接比较
+`twin -t evolution` 不支持 `--stop-time`。变更前后 Twin 必须使用相同的场景仿真时长，才能直接比较
 吞吐量、丢包数和平均时延。
 
 ## 当前约定
 
 - 运行时事件功能当前处于禁用状态。场景表示一个固定网络状态，ns-3 不会在仿真途中注入事件。
-- `twin evo` 构造变更前和变更后的独立场景；演化问题命令只比较已经生成的两个 Twin。
+- `twin -t evolution` 构造变更前和变更后的独立场景；演化问题命令只比较已经生成的两个 Twin。
 - 每个场景生成一个 `scenes/<scene_id>.jsonl` Twin 和一个
   `input/<scene_id>/labels.jsonl` 标签文件。
 - 场景生成和 ns-3 仿真均串行执行，避免同时运行多个大规模仿真任务。

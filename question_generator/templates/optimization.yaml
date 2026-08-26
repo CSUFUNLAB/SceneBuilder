@@ -1,101 +1,122 @@
 schema_version: 1
 question_type: optimization
 
-# Alternatives are generated internally and are not listed in the question.
-# Emit a question only when exactly one feasible path or action optimizes the
-# stated objective; skip scenes with no feasible solution or tied optima.
+# Optimization scene construction and question generation share this action
+# catalog. Every template must belong to exactly one action type.
+actions:
+  - id: path_adjustment
+    description: Select exactly one explicitly listed operational candidate path or next hop while leaving topology, capacity, traffic demand, and physical state unchanged.
+    template_ids:
+      [TO0001, TO0002, TO0003, TO0004, TO0008, TO0009, TO0010, TO0011, TO0012, TO0016, TO0017, TO0018]
+  - id: channel_expansion
+    description: Double the configured bandwidth_mbps of exactly one explicitly listed normal channel while leaving all other scene inputs unchanged.
+    template_ids: [TO0005, TO0006, TO0007, TO0015, TO0019]
+  - id: fault_repair
+    description: Restore exactly one explicitly listed failed node or channel while leaving all other scene inputs unchanged.
+    template_ids: [TO0013, TO0014, TO0020]
+
+# Candidate alternatives are listed in each generated question. Emit a
+# question only when at least two feasible candidates exist, exactly one
+# candidate optimizes the objective beyond the configured tolerance, and that
+# candidate produces a real improvement over the baseline when improvement is
+# part of the question.
 templates:
   - id: TO0001
-    question: Which path gives data flow $data_flow_id$ the highest throughput?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the highest throughput?
     answer:
       type: path
 
   - id: TO0002
-    question: Which path gives data flow $data_flow_id$ the lowest average delay?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest average delay?
+    answer:
+      type: path
+
+  - id: TO0003
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest packet-loss rate?
     answer:
       type: path
 
   - id: TO0004
-    question: Which path gives data flow $data_flow_id$ the fewest hops?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the fewest hops?
     answer:
       type: path
 
   - id: TO0005
-    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest throughput increase?
+    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest throughput increase if its capacity is doubled?
     answer:
       type: channel_id
 
   - id: TO0006
-    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest delay reduction?
+    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest delay reduction if its capacity is doubled?
     answer:
       type: channel_id
 
   - id: TO0007
-    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel gives the largest packet-loss reduction?
+    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest packet-loss reduction if its capacity is doubled?
     answer:
       type: channel_id
 
   - id: TO0008
-    question: Which path gives data flow $data_flow_id$ the greatest bottleneck residual bandwidth?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the greatest bottleneck residual bandwidth?
     answer:
       type: path
 
   - id: TO0009
-    question: Which path gives data flow $data_flow_id$ the lowest maximum directional channel utilization?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest maximum directional channel utilization?
     answer:
       type: path
 
   - id: TO0010
-    question: Which path gives data flow $data_flow_id$ the fewest saturated channels?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the fewest saturated channels?
     answer:
       type: path
 
   - id: TO0011
-    question: Which next hop gives node $node_id$ the shortest valid route to node $destination_node_id$?
+    question: Among candidate next hops $candidate_next_hop_ids$, which next hop gives node $node_id$ the shortest valid route to node $destination_node_id$?
     answer:
-      type: entity_id
+      type: node_id
 
   - id: TO0012
-    question: Which next hop gives node $node_id$ the route with the greatest bottleneck residual bandwidth to node $destination_node_id$?
+    question: Among candidate next hops $candidate_next_hop_ids$, which next hop gives node $node_id$ the route with the greatest bottleneck residual bandwidth to node $destination_node_id$?
     answer:
-      type: entity_id
+      type: node_id
 
   - id: TO0013
-    question: Which failed node or channel should be repaired first to restore data flow $data_flow_id$?
+    question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel should be repaired to restore data flow $data_flow_id$?
     answer:
       type: entity_id
 
   - id: TO0014
-    question: Which failed node or channel should be repaired first to give data flow $data_flow_id$ the largest throughput increase?
+    question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel gives data flow $data_flow_id$ the largest throughput increase if repaired?
     answer:
       type: entity_id
 
   - id: TO0015
-    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel produces the largest increase in total network throughput?
+    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel produces the largest increase in total network throughput if its capacity is doubled?
     answer:
       type: channel_id
 
   - id: TO0016
-    question: Which path gives data flow $data_flow_id$ the lowest delay without reducing its current throughput?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest delay without reducing its current throughput?
     answer:
       type: path
 
   - id: TO0017
-    question: Which path gives data flow $data_flow_id$ the lowest packet loss without reducing its current throughput?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest packet-loss rate without reducing its current throughput?
     answer:
       type: path
 
   - id: TO0018
-    question: Which path gives data flow $data_flow_id$ the highest throughput without increasing its current delay?
+    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the highest throughput without increasing its current delay?
     answer:
       type: path
 
   - id: TO0019
-    question: If exactly one channel on data flow $data_flow_id$'s current path can have its capacity doubled, which channel reduces the number of saturated channels the most?
+    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel reduces the total number of saturated channels the most if its capacity is doubled?
     answer:
       type: channel_id
 
   - id: TO0020
-    question: Which unavailable channel should be repaired first to restore reachability from node $node_id$ to the most destinations?
+    question: Among unavailable-channel repair candidates $candidate_channel_ids$, which channel restores reachability from node $node_id$ to the most destinations if repaired?
     answer:
       type: channel_id

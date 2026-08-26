@@ -43,10 +43,10 @@ events:
 
 templates:
   - id: TE0001
-    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s throughput decrease or stay unchanged?
+    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
     answer:
       type: enum
-      values: [unchanged, decrease]
+      values: [increase, unchanged, decrease]
 
   - id: TE0002
     question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s packet loss increase, decrease, or stay unchanged?
@@ -61,10 +61,10 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0004
-    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
+    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s delay increase or stay unchanged?
     answer:
       type: enum
-      values: [increase, unchanged, decrease]
+      values: [increase, unchanged]
 
   - id: TE0005
     question: If channel $event_channel_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
@@ -109,10 +109,10 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0012
-    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
+    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s delay increase or stay unchanged?
     answer:
       type: enum
-      values: [increase, unchanged, decrease]
+      values: [increase, unchanged]
 
   - id: TE0013
     question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
@@ -121,10 +121,10 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0014
-    question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will its delay increase, decrease, or stay unchanged?
+    question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will its delay increase or stay unchanged?
     answer:
       type: enum
-      values: [increase, unchanged, decrease]
+      values: [increase, unchanged]
 
   - id: TE0015
     question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
@@ -133,10 +133,10 @@ templates:
       values: [increase, unchanged, decrease]
 
   - id: TE0016
-    question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will its delay increase, decrease, or stay unchanged?
+    question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will its delay decrease or stay unchanged?
     answer:
       type: enum
-      values: [increase, unchanged, decrease]
+      values: [unchanged, decrease]
 
   - id: TE0017
     question: If node $event_node_id$ fails, will node $target_node_id$ become disabled or stay unchanged?
@@ -149,6 +149,18 @@ templates:
     answer:
       type: enum
       values: [recovered, unchanged]
+
+  - id: TE0020
+    question: If data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value, will its packet loss increase or stay unchanged?
+    answer:
+      type: enum
+      values: [increase, unchanged]
+
+  - id: TE0022
+    question: If data flow $event_data_flow_id$'s demand decreases to $event_rate_multiplier$ times its current value, will its packet loss decrease or stay unchanged?
+    answer:
+      type: enum
+      values: [unchanged, decrease]
 
   - id: TE0023
     question: Will channel $target_channel_id$ be saturated if data flow $event_data_flow_id$'s demand increases to $event_rate_multiplier$ times its current value?
@@ -175,10 +187,10 @@ templates:
       values: [recovered, not_recovered]
 
   - id: TE0027
-    question: Will data flow $event_data_flow_id$ be normal, unstable, degraded, or failed if it is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
+    question: Will data flow $event_data_flow_id$ be normal or unstable if it is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
     answer:
       type: enum
-      values: [normal, unstable, degraded, failed]
+      values: [normal, unstable]
 
   - id: TE0028
     question: If data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?

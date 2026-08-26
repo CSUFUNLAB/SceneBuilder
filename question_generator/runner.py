@@ -87,17 +87,39 @@ def clean_question_outputs(
     config_path: str | Path,
     *,
     scenes_root: str | Path | None = None,
+    categories: Sequence[str] | None = None,
 ) -> QuestionCleanupResult:
     config = load_config(config_path)
+    selected_categories = (
+        QUESTION_CATEGORIES
+        if categories is None
+        else tuple(dict.fromkeys(categories))
+    )
+    invalid_category = next(
+        (
+            category
+            for category in selected_categories
+            if category not in QUESTION_CATEGORIES
+        ),
+        None,
+    )
+    if invalid_category is not None:
+        raise ValueError(
+            f"Unknown question category for cleanup: {invalid_category}"
+        )
     root = Path(scenes_root).expanduser().resolve() if scenes_root is not None else config.scenes_root
     scene_directories = (
         _discover_scene_directories_for_cleanup(root)
         if root.is_dir()
         else []
     )
-    removed = _clear_scene_question_files(scene_directories)
+    removed = _clear_scene_question_files(
+        scene_directories,
+        selected_categories,
+    )
 
-    for category in config.categories.values():
+    for category_name in selected_categories:
+        category = config.categories[category_name]
         output_file = category.output_file
         if output_file.is_file():
             output_file.unlink()
@@ -139,7 +161,7 @@ def ensure_question_outputs_absent(
     if existing is not None:
         raise ValueError(
             f"Question output already exists: {existing}; run "
-            "'python main.py clean questions' first"
+            f"'python main.py clean -o questions -t {category_config.name}' first"
         )
 
 
