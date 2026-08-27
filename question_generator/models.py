@@ -7,6 +7,27 @@ import re
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
 
 
+EVOLUTION_EVENT_SEMANTICS = {
+    "node_failure": ("node", "failure"),
+    "node_recovery": ("node", "recovery"),
+    "channel_failure": ("channel", "failure"),
+    "channel_recovery": ("channel", "recovery"),
+    "nic_failure": ("nic", "failure"),
+    "nic_recovery": ("nic", "recovery"),
+    "flow_load_change": ("data_flow", "load_change"),
+    "flow_addition": ("data_flow", "addition"),
+}
+
+
+def evolution_event_semantics(event_type_id: str) -> tuple[str, str]:
+    try:
+        return EVOLUTION_EVENT_SEMANTICS[event_type_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported evolution event type: {event_type_id}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class QuestionTemplate:
     template_id: str
@@ -15,6 +36,7 @@ class QuestionTemplate:
     answer_type: str
     answer_values: tuple[str, ...]
     placeholders: tuple[str, ...]
+    strategy: str | None = None
     answer_fields: tuple[str, ...] = ()
     answer_item_fields: tuple[str, ...] = ()
 
@@ -38,15 +60,17 @@ class QuestionTemplate:
 class EvolutionEventType:
     event_type_id: str
     entity_type: str
-    change: str
     description: str
+
+    @property
+    def change(self) -> str:
+        return evolution_event_semantics(self.event_type_id)[1]
 
 
 @dataclass(frozen=True)
-class OptimizationActionType:
-    action_type_id: str
+class OptimizationStrategy:
+    strategy_id: str
     description: str
-    template_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -54,7 +78,7 @@ class QuestionTemplateBundle:
     category: str
     templates: tuple[QuestionTemplate, ...]
     event_types: tuple[EvolutionEventType, ...] = ()
-    optimization_action_types: tuple[OptimizationActionType, ...] = ()
+    optimization_strategies: tuple[OptimizationStrategy, ...] = ()
 
 
 @dataclass(frozen=True)

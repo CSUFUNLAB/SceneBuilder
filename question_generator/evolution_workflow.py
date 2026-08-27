@@ -12,12 +12,13 @@ import shutil
 from typing import Any
 
 from .config import CategoryConfig, QuestionGeneratorConfig, load_config
-from .evidence import channel_directional_throughputs
+from .evidence import SATURATION_THRESHOLD, channel_directional_throughputs
 from .models import (
     EvolutionEventType,
     GeneratedQuestion,
     GenerationCount,
     QuestionTemplate,
+    evolution_event_semantics,
 )
 from .runner import (
     CategoryRunResult,
@@ -35,7 +36,6 @@ EVOLUTION_SCENES_DIR_NAME = "evo"
 SCENES_DIR_NAME = "scenes"
 INPUT_DIR_NAME = "input"
 NUMERIC_UNCHANGED_RELATIVE_TOLERANCE = 0.01
-EXACT_NUMERIC_METRICS = frozenset({"lost_packets"})
 SCENE_NAME_PATTERN = re.compile(
     r"^(?P<prefix>.+)_id(?P<scene_id>[0-9]+)_(?P<suffix>.+)$"
 )
@@ -62,7 +62,7 @@ _QUESTION_RULES = {
         "node_failure", "data_flow", "numeric", "throughput_mbps"
     ),
     "TE0002": EvolutionQuestionRule(
-        "node_failure", "data_flow", "numeric", "lost_packets"
+        "node_failure", "data_flow", "numeric", "packet_loss_rate"
     ),
     "TE0003": EvolutionQuestionRule(
         "node_recovery", "data_flow", "numeric", "throughput_mbps"
@@ -74,7 +74,7 @@ _QUESTION_RULES = {
         "channel_failure", "data_flow", "numeric", "throughput_mbps"
     ),
     "TE0006": EvolutionQuestionRule(
-        "channel_failure", "data_flow", "numeric", "lost_packets"
+        "channel_failure", "data_flow", "numeric", "packet_loss_rate"
     ),
     "TE0007": EvolutionQuestionRule(
         "channel_recovery", "data_flow", "numeric", "throughput_mbps"
@@ -86,7 +86,7 @@ _QUESTION_RULES = {
         "nic_failure", "data_flow", "numeric", "throughput_mbps"
     ),
     "TE0010": EvolutionQuestionRule(
-        "nic_failure", "data_flow", "numeric", "lost_packets"
+        "nic_failure", "data_flow", "numeric", "packet_loss_rate"
     ),
     "TE0011": EvolutionQuestionRule(
         "nic_recovery", "data_flow", "numeric", "throughput_mbps"
@@ -95,56 +95,44 @@ _QUESTION_RULES = {
         "nic_recovery", "data_flow", "numeric", "average_delay_ms"
     ),
     "TE0013": EvolutionQuestionRule(
-        "flow_load_increase",
+        "flow_load_change",
         "channel",
         "numeric",
         "maximum_directional_bandwidth_mbps",
     ),
     "TE0014": EvolutionQuestionRule(
-        "flow_load_increase", "data_flow", "numeric", "average_delay_ms"
+        "flow_load_change", "data_flow", "numeric", "average_delay_ms"
     ),
-    "TE0015": EvolutionQuestionRule(
-        "flow_load_decrease",
-        "channel",
-        "numeric",
-        "maximum_directional_bandwidth_mbps",
+    "TE0015": EvolutionQuestionRule("node_failure", "node", "status"),
+    "TE0016": EvolutionQuestionRule("node_recovery", "node", "status"),
+    "TE0017": EvolutionQuestionRule(
+        "flow_load_change", "data_flow", "numeric", "packet_loss_rate"
     ),
-    "TE0016": EvolutionQuestionRule(
-        "flow_load_decrease", "data_flow", "numeric", "average_delay_ms"
+    "TE0018": EvolutionQuestionRule(
+        "flow_load_change", "channel", "saturation_outcome"
     ),
-    "TE0017": EvolutionQuestionRule("node_failure", "node", "status"),
-    "TE0018": EvolutionQuestionRule("node_recovery", "node", "status"),
+    "TE0019": EvolutionQuestionRule(
+        "flow_load_change", "channel", "saturation_recovery"
+    ),
     "TE0020": EvolutionQuestionRule(
-        "flow_load_increase", "data_flow", "numeric", "lost_packets"
+        "flow_load_change", "nic", "saturation_outcome"
+    ),
+    "TE0021": EvolutionQuestionRule(
+        "flow_load_change", "nic", "saturation_recovery"
     ),
     "TE0022": EvolutionQuestionRule(
-        "flow_load_decrease", "data_flow", "numeric", "lost_packets"
-    ),
-    "TE0023": EvolutionQuestionRule(
-        "flow_load_increase", "channel", "saturation_outcome"
-    ),
-    "TE0024": EvolutionQuestionRule(
-        "flow_load_decrease", "channel", "saturation_recovery"
-    ),
-    "TE0025": EvolutionQuestionRule(
-        "flow_load_increase", "nic", "saturation_outcome"
-    ),
-    "TE0026": EvolutionQuestionRule(
-        "flow_load_decrease", "nic", "saturation_recovery"
-    ),
-    "TE0027": EvolutionQuestionRule(
         "flow_addition", "data_flow", "after_status"
     ),
-    "TE0028": EvolutionQuestionRule(
+    "TE0023": EvolutionQuestionRule(
         "flow_addition",
         "channel",
         "numeric",
         "maximum_directional_bandwidth_mbps",
     ),
-    "TE0029": EvolutionQuestionRule(
+    "TE0024": EvolutionQuestionRule(
         "flow_addition", "channel", "saturation_outcome"
     ),
-    "TE0030": EvolutionQuestionRule(
+    "TE0025": EvolutionQuestionRule(
         "flow_addition", "nic", "saturation_outcome"
     ),
 }
@@ -154,19 +142,17 @@ _EXPECTED_ANSWER_VALUES = {
     "TE0001": ("increase", "unchanged", "decrease"),
     "TE0004": ("increase", "unchanged"),
     "TE0012": ("increase", "unchanged"),
-    "TE0014": ("increase", "unchanged"),
-    "TE0016": ("unchanged", "decrease"),
-    "TE0017": ("unchanged", "disabled"),
-    "TE0018": ("recovered", "unchanged"),
-    "TE0020": ("increase", "unchanged"),
-    "TE0022": ("unchanged", "decrease"),
-    "TE0023": ("saturated", "not_saturated"),
-    "TE0024": ("recovered", "not_recovered"),
+    "TE0014": ("increase", "unchanged", "decrease"),
+    "TE0015": ("unchanged", "disabled"),
+    "TE0016": ("recovered", "unchanged"),
+    "TE0017": ("increase", "unchanged", "decrease"),
+    "TE0018": ("saturated", "not_saturated"),
+    "TE0019": ("recovered", "not_recovered"),
+    "TE0020": ("saturated", "not_saturated"),
+    "TE0021": ("recovered", "not_recovered"),
+    "TE0022": ("normal", "unstable"),
+    "TE0024": ("saturated", "not_saturated"),
     "TE0025": ("saturated", "not_saturated"),
-    "TE0026": ("recovered", "not_recovered"),
-    "TE0027": ("normal", "unstable"),
-    "TE0029": ("saturated", "not_saturated"),
-    "TE0030": ("saturated", "not_saturated"),
 }
 
 
@@ -282,11 +268,11 @@ def prepare_evolution_scenes(
         flow_classes: list[str | None] = [None] * scenes_per_event
         if (
             spec.entity_type == "data_flow"
-            and spec.change == "load_decrease"
+            and spec.change == "load_change"
         ):
             saturated_count = round(
                 scenes_per_event
-                * float(options["load_decrease_saturated_flow_ratio"])
+                * float(options["load_change_saturated_flow_ratio"])
             )
             flow_classes = [
                 *("saturated" for _ in range(saturated_count)),
@@ -319,7 +305,7 @@ def prepare_evolution_scenes(
                 if flow_class is not None:
                     raise ValueError(
                         "Unable to generate the requested number of "
-                        f"flow_load_decrease scenes for {flow_class} flows"
+                        f"flow_load_change scenes for {flow_class} flows"
                     )
                 break
             source, event = selected
@@ -413,8 +399,12 @@ def generate_evolution_questions(
     rng = random.Random(config.seed)
     original_scene_cache: dict[Path, SceneData] = {}
     evolved_scene_cache: dict[Path, SceneData] = {}
+    evolution_options = _evolution_options(category)
     related_probability = float(
-        _evolution_options(category)["related_target_probability"]
+        evolution_options["related_target_probability"]
+    )
+    packet_loss_rate_change_threshold = float(
+        evolution_options["packet_loss_rate_change_threshold"]
     )
     question_number = 1
     event_type_by_id = {
@@ -456,6 +446,7 @@ def generate_evolution_questions(
                         event_type,
                         plan.event,
                         target_label,
+                        packet_loss_rate_change_threshold,
                     )
                 except (OSError, ValueError):
                     continue
@@ -598,17 +589,16 @@ def _question_rule(template: QuestionTemplate) -> EvolutionQuestionRule:
 
 def _evolution_options(category: CategoryConfig) -> dict[str, object]:
     options: dict[str, object] = {
-        "load_increase_multiplier_range": (1.2, 2.0),
-        "load_decrease_multiplier_range": (0.2, 0.8),
-        "load_decrease_saturated_flow_ratio": 0.5,
+        "load_change_multiplier_range": (0.0, 3.0),
+        "load_change_saturated_flow_ratio": 0.5,
         "flow_addition_demand_mbps_range": (1.0, 100.0),
         "related_target_probability": 0.8,
+        "packet_loss_rate_change_threshold": 0.01,
         "scenes_per_event": 3,
     }
     options.update(category.options)
     for name in (
-        "load_increase_multiplier_range",
-        "load_decrease_multiplier_range",
+        "load_change_multiplier_range",
         "flow_addition_demand_mbps_range",
     ):
         raw_range = options[name]
@@ -620,32 +610,38 @@ def _evolution_options(category: CategoryConfig) -> dict[str, object]:
         ):
             raise ValueError(f"evolution options.{name} must contain two numbers")
         lower, upper = float(raw_range[0]), float(raw_range[1])
-        if lower <= 0 or upper < lower:
+        lower_is_invalid = (
+            lower < 0
+            if name == "load_change_multiplier_range"
+            else lower <= 0
+        )
+        if lower_is_invalid or upper <= lower:
             raise ValueError(f"evolution options.{name} is invalid")
         options[name] = (lower, upper)
-    increase_lower, _ = options["load_increase_multiplier_range"]
-    if increase_lower <= 1.0:
-        raise ValueError(
-            "evolution options.load_increase_multiplier_range must be strictly greater than 1"
-        )
-    _, decrease_upper = options["load_decrease_multiplier_range"]
-    if decrease_upper >= 1.0:
-        raise ValueError(
-            "evolution options.load_decrease_multiplier_range must be strictly between 0 and 1"
-        )
     probability = float(options["related_target_probability"])
     if not 0 <= probability <= 1:
         raise ValueError("evolution options.related_target_probability must be in [0, 1]")
     options["related_target_probability"] = probability
+    packet_loss_rate_change_threshold = float(
+        options["packet_loss_rate_change_threshold"]
+    )
+    if not 0 <= packet_loss_rate_change_threshold <= 1:
+        raise ValueError(
+            "evolution options.packet_loss_rate_change_threshold must be "
+            "in [0, 1]"
+        )
+    options["packet_loss_rate_change_threshold"] = (
+        packet_loss_rate_change_threshold
+    )
     saturated_flow_ratio = float(
-        options["load_decrease_saturated_flow_ratio"]
+        options["load_change_saturated_flow_ratio"]
     )
     if not 0 <= saturated_flow_ratio <= 1:
         raise ValueError(
-            "evolution options.load_decrease_saturated_flow_ratio must be "
+            "evolution options.load_change_saturated_flow_ratio must be "
             "in [0, 1]"
         )
-    options["load_decrease_saturated_flow_ratio"] = saturated_flow_ratio
+    options["load_change_saturated_flow_ratio"] = saturated_flow_ratio
     scenes_per_event = options["scenes_per_event"]
     if (
         isinstance(scenes_per_event, bool)
@@ -694,7 +690,6 @@ def _select_event(
             "entity_type": "data_flow",
             "entity_id": new_flow["flow_id"],
             "input_entity_id": new_flow["flow_id"],
-            "change": "addition",
             "before_state": "absent",
             "source_node_id": new_flow["src"],
             "destination_node_id": new_flow["dst"],
@@ -715,16 +710,11 @@ def _select_event(
         "entity_type": spec.entity_type,
         "entity_id": public_event_id,
         "input_entity_id": raw_event_id,
-        "change": spec.change,
         "before_state": state,
     }
 
     if spec.entity_type == "data_flow":
-        multiplier_range = options[
-            "load_increase_multiplier_range"
-            if spec.change == "load_increase"
-            else "load_decrease_multiplier_range"
-        ]
+        multiplier_range = options["load_change_multiplier_range"]
         lower, upper = multiplier_range
         event["multiplier"] = rng.uniform(float(lower), float(upper))
         if flow_class is not None:
@@ -818,9 +808,9 @@ def template_placeholder_names(
         )
     elif (
         event_type.entity_type == "data_flow"
-        and event_type.change in {"load_increase", "load_decrease"}
+        and event_type.change == "load_change"
     ):
-        names.add("event_rate_multiplier")
+        names.add("event_demand_mbps")
     if not (
         event_type.entity_type == "data_flow"
         and rule.target_entity_type == "data_flow"
@@ -836,7 +826,7 @@ def _choose_event_entity(
     *,
     flow_class: str | None = None,
 ) -> tuple[str, str, str] | None:
-    if spec.change in {"failure", "load_increase", "load_decrease"}:
+    if spec.change in {"failure", "load_change"}:
         if source.physical_faults:
             return None
     elif spec.change == "recovery":
@@ -1053,7 +1043,7 @@ def _create_evolved_scene(
     traffic = _read_jsonl(destination / "traffic.jsonl")
     entity_type = str(event["entity_type"])
     raw_id = str(event["input_entity_id"])
-    change = str(event["change"])
+    change = evolution_event_semantics(event_type)[1]
 
     if entity_type == "node":
         row = _find_row(nodes, "node_id", raw_id)
@@ -1194,6 +1184,7 @@ def _find_evidence_candidates(
     event_type: EvolutionEventType,
     event: dict[str, Any],
     target_label: str,
+    packet_loss_rate_change_threshold: float,
 ) -> list[tuple[dict[str, str], bool]]:
     event_entity_type = event_type.entity_type
     target_entity_type = rule.target_entity_type
@@ -1219,11 +1210,35 @@ def _find_evidence_candidates(
             )
         ]
 
-    matching_target_ids = [
-        target_id
-        for target_id in target_ids
-        if _evaluate_target(before, after, rule, target_id) == target_label
-    ]
+    matching_target_ids: list[str] = []
+    for target_id in target_ids:
+        if (
+            _evaluate_target(
+                before,
+                after,
+                rule,
+                target_id,
+                packet_loss_rate_change_threshold=(
+                    packet_loss_rate_change_threshold
+                ),
+            )
+            != target_label
+        ):
+            continue
+        if (
+            rule.metric_name == "packet_loss_rate"
+            and event_type.change == "failure"
+            and target_label == "decrease"
+            and not _failure_relieves_target_flow(
+                before,
+                after,
+                event_entity_type,
+                event_id,
+                target_id,
+            )
+        ):
+            continue
+        matching_target_ids.append(target_id)
     candidates: list[tuple[dict[str, str], bool]] = []
     for target_id in matching_target_ids:
         replacements = {
@@ -1241,11 +1256,10 @@ def _find_evidence_candidates(
             )
         elif (
             event_entity_type == "data_flow"
-            and event_type.change
-            in {"load_increase", "load_decrease"}
+            and event_type.change == "load_change"
         ):
-            replacements["event_rate_multiplier"] = str(
-                event["multiplier"]
+            replacements["event_demand_mbps"] = str(
+                event["after_demand_mbps"]
             )
         target_placeholder = _target_placeholder(target_entity_type)
         if target_placeholder in template_placeholder_names(
@@ -1298,11 +1312,162 @@ def _target_is_related_to_event(
     )
 
 
+def _failure_relieves_target_flow(
+    before: SceneData,
+    after: SceneData,
+    event_entity_type: str,
+    event_id: str,
+    target_flow_id: str,
+) -> bool:
+    target_flow = before.entity("data_flow", target_flow_id)
+    if (
+        target_flow is None
+        or _flow_touches_entity(
+            before,
+            target_flow,
+            event_entity_type,
+            event_id,
+        )
+    ):
+        return False
+
+    target_channels = {
+        channel.entity_id: channel
+        for channel in before.channels_on_flow_path(target_flow)
+    }
+    for competing_flow in before.entities("data_flow"):
+        if (
+            competing_flow.entity_id == target_flow_id
+            or not _flow_touches_entity(
+                before,
+                competing_flow,
+                event_entity_type,
+                event_id,
+            )
+        ):
+            continue
+        for competing_channel in before.channels_on_flow_path(
+            competing_flow
+        ):
+            target_channel = target_channels.get(
+                competing_channel.entity_id
+            )
+            if target_channel is None:
+                continue
+            target_direction = before.flow_direction_on_channel(
+                target_flow,
+                target_channel,
+            )
+            if (
+                target_direction is None
+                or target_direction
+                != before.flow_direction_on_channel(
+                    competing_flow,
+                    competing_channel,
+                )
+                or not _flow_channel_is_constrained(
+                    before,
+                    target_flow,
+                    target_channel,
+                )
+            ):
+                continue
+            after_channel = after.entity(
+                "channel",
+                competing_channel.entity_id,
+            )
+            if after_channel is None:
+                continue
+            before_contribution = _flow_carried_bandwidth(
+                competing_channel,
+                competing_flow.entity_id,
+            )
+            after_contribution = _flow_carried_bandwidth(
+                after_channel,
+                competing_flow.entity_id,
+            )
+            if (
+                before_contribution is not None
+                and after_contribution is not None
+                and before_contribution > after_contribution + 1e-6
+            ):
+                return True
+    return False
+
+
+def _flow_channel_is_constrained(
+    scene: SceneData,
+    flow: EntityRecord,
+    channel: EntityRecord,
+) -> bool:
+    if (flow.entity_id, channel.entity_id) in scene.bottlenecks:
+        return True
+    capacity = _finite_number(
+        channel.properties.get("original_capacity_mbps")
+    )
+    throughputs = channel_directional_throughputs(scene, channel)
+    endpoints = scene.channel_endpoint_nodes(channel)
+    direction = scene.flow_direction_on_channel(flow, channel)
+    if (
+        capacity is None
+        or capacity <= 0
+        or throughputs is None
+        or len(endpoints) != 2
+        or direction is None
+    ):
+        return False
+    if direction == (endpoints[0], endpoints[1]):
+        directional_throughput = throughputs[0]
+    elif direction == (endpoints[1], endpoints[0]):
+        directional_throughput = throughputs[1]
+    else:
+        return False
+    return directional_throughput >= capacity * SATURATION_THRESHOLD
+
+
+def _flow_carried_bandwidth(
+    channel: EntityRecord,
+    flow_id: str,
+) -> float | None:
+    carries = channel.relations.get("carries")
+    if not isinstance(carries, list):
+        return None
+    matching_bandwidths: list[float] = []
+    for item in carries:
+        if not isinstance(item, dict):
+            return None
+        if str(item.get("data_flow_id", "")) != flow_id:
+            continue
+        bandwidth = _finite_number(item.get("bandwidth_mbps"))
+        if bandwidth is None or bandwidth < 0:
+            return None
+        matching_bandwidths.append(bandwidth)
+    if len(matching_bandwidths) > 1:
+        return None
+    return matching_bandwidths[0] if matching_bandwidths else 0.0
+
+
+def _packet_loss_rate(flow: EntityRecord) -> float | None:
+    tx_packets = _finite_number(flow.properties.get("tx_packets"))
+    lost_packets = _finite_number(flow.properties.get("lost_packets"))
+    if (
+        tx_packets is None
+        or tx_packets <= 0
+        or lost_packets is None
+        or lost_packets < 0
+        or lost_packets > tx_packets
+    ):
+        return None
+    return lost_packets / tx_packets
+
+
 def _evaluate_target(
     before: SceneData,
     after: SceneData,
     rule: EvolutionQuestionRule,
     target_id: str,
+    *,
+    packet_loss_rate_change_threshold: float = 0.01,
 ) -> str | None:
     target_entity_type = rule.target_entity_type
     before_entity = before.entity(target_entity_type, target_id)
@@ -1348,6 +1513,16 @@ def _evaluate_target(
             return None
         before_value = max(before_values)
         after_value = max(after_values)
+    elif rule.metric_name == "packet_loss_rate":
+        before_value = _packet_loss_rate(before_entity)
+        after_value = _packet_loss_rate(after_entity)
+        if before_value is None or after_value is None:
+            return None
+        return _numeric_transition(
+            before_value,
+            after_value,
+            absolute_tolerance=packet_loss_rate_change_threshold,
+        )
     else:
         if rule.metric_name == "average_delay_ms":
             before_rx_packets = _finite_number(
@@ -1371,15 +1546,10 @@ def _evaluate_target(
         )
         if before_value is None or after_value is None:
             return None
-    relative_tolerance = (
-        0.0
-        if rule.metric_name in EXACT_NUMERIC_METRICS
-        else NUMERIC_UNCHANGED_RELATIVE_TOLERANCE
-    )
     return _numeric_transition(
         before_value,
         after_value,
-        relative_tolerance=relative_tolerance,
+        relative_tolerance=NUMERIC_UNCHANGED_RELATIVE_TOLERANCE,
     )
 
 
@@ -1388,12 +1558,13 @@ def _numeric_transition(
     after: float,
     *,
     relative_tolerance: float = 0.0,
+    absolute_tolerance: float = 1e-6,
 ) -> str:
-    unchanged_threshold = abs(before) * relative_tolerance
-    if (
-        abs(after - before) <= unchanged_threshold
-        or math.isclose(before, after, rel_tol=0.0, abs_tol=1e-6)
-    ):
+    unchanged_threshold = max(
+        abs(before) * relative_tolerance,
+        absolute_tolerance,
+    )
+    if abs(after - before) <= unchanged_threshold:
         return "unchanged"
     return "increase" if after > before else "decrease"
 
@@ -1573,24 +1744,37 @@ def _load_evolution_plans(
         if (
             str(event.get("entity_type", ""))
             != event_spec.entity_type
-            or str(event.get("change", "")) != event_spec.change
             or evolved_scene_id != metadata_file.parent.name
         ):
             continue
-        if event_spec.change in {"load_increase", "load_decrease"}:
+        if event_spec.change == "load_change":
             multiplier = _finite_number(event.get("multiplier"))
-            direction_is_valid = (
+            before_demand = _finite_number(event.get("before_demand_mbps"))
+            after_demand = _finite_number(event.get("after_demand_mbps"))
+            demand_values_are_consistent = (
                 multiplier is not None
-                and (
-                    (event_spec.change == "load_increase" and multiplier > 1.0)
-                    or (event_spec.change == "load_decrease" and multiplier < 1.0)
+                and before_demand is not None
+                and after_demand is not None
+                and math.isclose(
+                    after_demand,
+                    round(before_demand * multiplier, 6),
+                    rel_tol=0.0,
+                    abs_tol=1e-6,
                 )
             )
-            if not direction_is_valid:
+            if (
+                multiplier is None
+                or multiplier < 0
+                or before_demand is None
+                or before_demand <= 0
+                or after_demand is None
+                or after_demand < 0
+                or not demand_values_are_consistent
+            ):
                 raise ValueError(
-                    f"{metadata_file}: {event_spec.change} requires a "
-                    f"{'greater-than-1' if event_spec.change == 'load_increase' else 'less-than-1'} "
-                    "multiplier; clean and regenerate the evolution scenes"
+                    f"{metadata_file}: flow_load_change requires a non-negative "
+                    "multiplier and consistent before/after demand values; "
+                    "clean and regenerate the evolution scenes"
                 )
         plans.append(
             EvolutionPlan(

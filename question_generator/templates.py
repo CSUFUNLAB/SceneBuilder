@@ -8,9 +8,10 @@ import yaml
 
 from .models import (
     EvolutionEventType,
-    OptimizationActionType,
+    OptimizationStrategy,
     QuestionTemplate,
     QuestionTemplateBundle,
+    evolution_event_semantics,
 )
 
 
@@ -26,20 +27,17 @@ _ANSWER_TYPES = {
     "channel_capacity",
 }
 _EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
-_EVENT_CHANGES = {
-    "failure",
-    "recovery",
-    "load_increase",
-    "load_decrease",
-    "addition",
-}
 _TEMPLATE_ID_PREFIXES = {
     "analysis": "TA",
     "evolution": "TE",
     "optimization": "TO",
 }
-_REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS = frozenset(
-    {"path_adjustment", "channel_expansion", "fault_repair"}
+_REQUIRED_OPTIMIZATION_STRATEGY_IDS = frozenset(
+    {
+        "routing_adjustment",
+        "channel_expansion",
+        "fault_repair",
+    }
 )
 
 
@@ -99,7 +97,7 @@ def _load_event_types(
         event = _mapping(raw_event, location)
         _reject_unknown(
             event,
-            {"id", "entity_type", "change", "description"},
+            {"id", "entity_type", "description"},
             location,
         )
         event_type_id = _identifier(event.get("id"), f"{location}.id")
@@ -115,35 +113,20 @@ def _load_event_types(
                 f"{location}.entity_type must be one of "
                 f"{sorted(_EVENT_ENTITY_TYPES)}"
             )
-        change = _identifier(event.get("change"), f"{location}.change")
         description = _text(
             event.get("description"),
             f"{location}.description",
         )
-        if change not in _EVENT_CHANGES:
+        expected_entity_type, _ = evolution_event_semantics(event_type_id)
+        if entity_type != expected_entity_type:
             raise ValueError(
-                f"{location}.change must be one of {sorted(_EVENT_CHANGES)}"
-            )
-        if entity_type == "data_flow" and change not in {
-            "load_increase",
-            "load_decrease",
-            "addition",
-        }:
-            raise ValueError(
-                f"{location}: data_flow events must change load or add a flow"
-            )
-        if entity_type != "data_flow" and change not in {
-            "failure",
-            "recovery",
-        }:
-            raise ValueError(
-                f"{location}: physical-entity events must be failure or recovery"
+                f"{location}.entity_type must be {expected_entity_type} for "
+                f"{event_type_id}"
             )
         events.append(
             EvolutionEventType(
                 event_type_id,
                 entity_type,
-                change,
                 description,
             )
         )
@@ -152,95 +135,73 @@ def _load_event_types(
     return tuple(events)
 
 
-def _load_optimization_action_types(
-    raw_actions: object,
+def _load_optimization_strategies(
+    raw_strategies: object,
     template_path: Path,
     category: str,
-) -> tuple[OptimizationActionType, ...]:
+) -> tuple[OptimizationStrategy, ...]:
     if category != "optimization":
-        if raw_actions not in (None, []):
+        if raw_strategies not in (None, []):
             raise ValueError(
                 f"{template_path}: only optimization templates may define "
-                "actions"
+                "strategies"
             )
         return ()
 
-    actions: list[OptimizationActionType] = []
+    strategies: list[OptimizationStrategy] = []
     seen_ids: set[str] = set()
-    for index, raw_action in enumerate(
-        _list(raw_actions, f"{template_path}:actions"),
+    for index, raw_strategy in enumerate(
+        _list(raw_strategies, f"{template_path}:strategies"),
         start=1,
     ):
-        location = f"{template_path}:actions[{index}]"
-        action = _mapping(raw_action, location)
+        location = f"{template_path}:strategies[{index}]"
+        strategy = _mapping(raw_strategy, location)
         _reject_unknown(
-            action,
-            {"id", "description", "template_ids"},
+            strategy,
+            {"id", "description"},
             location,
         )
-        action_type_id = _identifier(action.get("id"), f"{location}.id")
-        if action_type_id in seen_ids:
-            raise ValueError(f"{location}.id duplicates {action_type_id}")
-        seen_ids.add(action_type_id)
+        strategy_id = _identifier(strategy.get("id"), f"{location}.id")
+        if strategy_id in seen_ids:
+            raise ValueError(f"{location}.id duplicates {strategy_id}")
+        seen_ids.add(strategy_id)
         description = _text(
-            action.get("description"),
+            strategy.get("description"),
             f"{location}.description",
         )
-        template_ids = tuple(
-            _identifier(value, f"{location}.template_ids")
-            for value in _list(
-                action.get("template_ids"),
-                f"{location}.template_ids",
-            )
-        )
-        if not template_ids:
-            raise ValueError(f"{location}.template_ids must not be empty")
-        if len(template_ids) != len(set(template_ids)):
-            raise ValueError(f"{location}.template_ids must be unique")
-        actions.append(
-            OptimizationActionType(
-                action_type_id=action_type_id,
+        strategies.append(
+            OptimizationStrategy(
+                strategy_id=strategy_id,
                 description=description,
-                template_ids=template_ids,
             )
         )
 
-    actual_ids = {action.action_type_id for action in actions}
-    if actual_ids != _REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS:
+    actual_ids = {strategy.strategy_id for strategy in strategies}
+    if actual_ids != _REQUIRED_OPTIMIZATION_STRATEGY_IDS:
         raise ValueError(
-            f"{template_path}: optimization actions must be exactly "
-            f"{sorted(_REQUIRED_OPTIMIZATION_ACTION_TYPE_IDS)}"
+            f"{template_path}: optimization strategies must be exactly "
+            f"{sorted(_REQUIRED_OPTIMIZATION_STRATEGY_IDS)}"
         )
-    return tuple(actions)
+    return tuple(strategies)
 
 
-def _validate_optimization_action_coverage(
-    actions: tuple[OptimizationActionType, ...],
+def _validate_optimization_strategy_coverage(
+    strategies: tuple[OptimizationStrategy, ...],
     templates: tuple[QuestionTemplate, ...],
     template_path: Path,
 ) -> None:
-    template_ids = {template.template_id for template in templates}
-    assigned_to: dict[str, str] = {}
-    for action in actions:
-        for template_id in action.template_ids:
-            if template_id not in template_ids:
-                raise ValueError(
-                    f"{template_path}: action {action.action_type_id} "
-                    f"references unknown template {template_id}"
-                )
-            previous = assigned_to.get(template_id)
-            if previous is not None:
-                raise ValueError(
-                    f"{template_path}: template {template_id} belongs to "
-                    f"both {previous} and {action.action_type_id}"
-                )
-            assigned_to[template_id] = action.action_type_id
-
-    missing = sorted(template_ids - set(assigned_to))
-    if missing:
+    strategy_ids = {strategy.strategy_id for strategy in strategies}
+    unknown = sorted(
+        {
+            str(template.strategy)
+            for template in templates
+            if template.strategy not in strategy_ids
+        }
+    )
+    if unknown:
         raise ValueError(
-            f"{template_path}: optimization templates missing an action: "
-            f"{missing}"
+            f"{template_path}: optimization templates reference unknown "
+            f"strategies: {unknown}"
         )
 
 
@@ -312,6 +273,24 @@ def _load_answer(
     )
 
 
+def _load_evolution_answer(
+    raw_answer: object,
+    location: str,
+) -> tuple[str, ...]:
+    values = tuple(
+        _text(value, f"{location}[{index}]")
+        for index, value in enumerate(
+            _list(raw_answer, location),
+            start=1,
+        )
+    )
+    if not values:
+        raise ValueError(f"{location} must not be empty")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{location} values must be unique")
+    return values
+
+
 def _load_templates(
     raw_templates: object,
     template_path: Path,
@@ -319,7 +298,11 @@ def _load_templates(
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
-    base_fields = {"id", "question", "answer"}
+    base_fields = {"id", "question"}
+    if category == "optimization":
+        base_fields.add("strategy")
+    else:
+        base_fields.add("answer")
 
     for index, raw_template in enumerate(
         _list(raw_templates, f"{template_path}:templates"),
@@ -341,20 +324,39 @@ def _load_templates(
                 f"{_TEMPLATE_ID_PREFIXES[category]} followed by four digits"
             )
         question = _text(item.get("question"), f"{location}.question")
+        strategy = (
+            _identifier(item.get("strategy"), f"{location}.strategy")
+            if category == "optimization"
+            else None
+        )
         placeholders = tuple(
             dict.fromkeys(_PLACEHOLDER_PATTERN.findall(question))
         )
         if not placeholders:
             raise ValueError(f"{location}.question needs at least one placeholder")
-        (
-            answer_type,
-            answer_values,
-            answer_fields,
-            answer_item_fields,
-        ) = _load_answer(
-            item.get("answer"),
-            f"{location}.answer",
-        )
+        if category == "optimization":
+            answer_type = ""
+            answer_values = ()
+            answer_fields = ()
+            answer_item_fields = ()
+        elif category == "evolution":
+            answer_type = "enum"
+            answer_values = _load_evolution_answer(
+                item.get("answer"),
+                f"{location}.answer",
+            )
+            answer_fields = ()
+            answer_item_fields = ()
+        else:
+            (
+                answer_type,
+                answer_values,
+                answer_fields,
+                answer_item_fields,
+            ) = _load_answer(
+                item.get("answer"),
+                f"{location}.answer",
+            )
 
         templates.append(
             QuestionTemplate(
@@ -364,6 +366,7 @@ def _load_templates(
                 answer_type=answer_type,
                 answer_values=answer_values,
                 placeholders=placeholders,
+                strategy=strategy,
                 answer_fields=answer_fields,
                 answer_item_fields=answer_item_fields,
             )
@@ -388,7 +391,7 @@ def load_template_bundle(
             "schema_version",
             "question_type",
             "events",
-            "actions",
+            "strategies",
             "templates",
         },
         str(template_path),
@@ -411,8 +414,8 @@ def load_template_bundle(
         template_path,
         category,
     )
-    optimization_action_types = _load_optimization_action_types(
-        root.get("actions"),
+    optimization_strategies = _load_optimization_strategies(
+        root.get("strategies"),
         template_path,
         category,
     )
@@ -422,8 +425,8 @@ def load_template_bundle(
         category,
     )
     if category == "optimization":
-        _validate_optimization_action_coverage(
-            optimization_action_types,
+        _validate_optimization_strategy_coverage(
+            optimization_strategies,
             templates,
             template_path,
         )
@@ -431,7 +434,7 @@ def load_template_bundle(
         category=category,
         templates=templates,
         event_types=event_types,
-        optimization_action_types=optimization_action_types,
+        optimization_strategies=optimization_strategies,
     )
 
 

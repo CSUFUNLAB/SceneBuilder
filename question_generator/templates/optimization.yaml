@@ -1,19 +1,15 @@
 schema_version: 1
 question_type: optimization
 
-# Optimization scene construction and question generation share this action
-# catalog. Every template must belong to exactly one action type.
-actions:
-  - id: path_adjustment
-    description: Select exactly one explicitly listed operational candidate path or next hop while leaving topology, capacity, traffic demand, and physical state unchanged.
-    template_ids:
-      [TO0001, TO0002, TO0003, TO0004, TO0008, TO0009, TO0010, TO0011, TO0012, TO0016, TO0017, TO0018]
+# Optimization scene construction and question generation share this strategy
+# catalog. Every template declares exactly one strategy.
+strategies:
+  - id: routing_adjustment
+    description: Select exactly one explicitly listed destination-based route, applying the changed forwarding entries to all traffic sent to that destination node while leaving topology, capacity, traffic demand, and physical state unchanged.
   - id: channel_expansion
     description: Double the configured bandwidth_mbps of exactly one explicitly listed normal channel while leaving all other scene inputs unchanged.
-    template_ids: [TO0005, TO0006, TO0007, TO0015, TO0019]
   - id: fault_repair
     description: Restore exactly one explicitly listed failed node or channel while leaving all other scene inputs unchanged.
-    template_ids: [TO0013, TO0014, TO0020]
 
 # Candidate alternatives are listed in each generated question. Emit a
 # question only when at least two feasible candidates exist, exactly one
@@ -21,102 +17,34 @@ actions:
 # candidate produces a real improvement over the baseline when improvement is
 # part of the question.
 templates:
-  - id: TO0001
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the highest throughput?
-    answer:
-      type: path
-
-  - id: TO0002
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest average delay?
-    answer:
-      type: path
-
-  - id: TO0003
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest packet-loss rate?
-    answer:
-      type: path
-
-  - id: TO0004
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the fewest hops?
-    answer:
-      type: path
-
   - id: TO0005
+    strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest throughput increase if its capacity is doubled?
-    answer:
-      type: channel_id
 
   - id: TO0006
+    strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest delay reduction if its capacity is doubled?
-    answer:
-      type: channel_id
 
   - id: TO0007
+    strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest packet-loss reduction if its capacity is doubled?
-    answer:
-      type: channel_id
-
-  - id: TO0008
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the greatest bottleneck residual bandwidth?
-    answer:
-      type: path
-
-  - id: TO0009
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest maximum directional channel utilization?
-    answer:
-      type: path
-
-  - id: TO0010
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the fewest saturated channels?
-    answer:
-      type: path
-
-  - id: TO0011
-    question: Among candidate next hops $candidate_next_hop_ids$, which next hop gives node $node_id$ the shortest valid route to node $destination_node_id$?
-    answer:
-      type: node_id
-
-  - id: TO0012
-    question: Among candidate next hops $candidate_next_hop_ids$, which next hop gives node $node_id$ the route with the greatest bottleneck residual bandwidth to node $destination_node_id$?
-    answer:
-      type: node_id
 
   - id: TO0013
+    strategy: fault_repair
     question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel should be repaired to restore data flow $data_flow_id$?
-    answer:
-      type: entity_id
 
   - id: TO0014
+    strategy: fault_repair
     question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel gives data flow $data_flow_id$ the largest throughput increase if repaired?
-    answer:
-      type: entity_id
 
   - id: TO0015
+    strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel produces the largest increase in total network throughput if its capacity is doubled?
-    answer:
-      type: channel_id
-
-  - id: TO0016
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest delay without reducing its current throughput?
-    answer:
-      type: path
-
-  - id: TO0017
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the lowest packet-loss rate without reducing its current throughput?
-    answer:
-      type: path
-
-  - id: TO0018
-    question: Among candidate paths $candidate_paths$, which path gives data flow $data_flow_id$ the highest throughput without increasing its current delay?
-    answer:
-      type: path
 
   - id: TO0019
+    strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel reduces the total number of saturated channels the most if its capacity is doubled?
-    answer:
-      type: channel_id
 
   - id: TO0020
+    strategy: fault_repair
     question: Among unavailable-channel repair candidates $candidate_channel_ids$, which channel restores reachability from node $node_id$ to the most destinations if repaired?
-    answer:
-      type: channel_id

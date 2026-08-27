@@ -122,12 +122,14 @@ python main.py twin -t evolution
 `question_generator/templates/evolution.yaml` 中独立定义的 `events`，将事件施加到
 复制的静态输入并写入 `evo/input/<scene_id>/`，然后将演化 Twin 写入
 `evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和网卡的故障/恢复、数据流负载的
-增加/降低以及新增数据流，共九类事件。
+变化以及新增数据流，共八类事件。
 
-负载降低事件按原始 Twin 状态分层抽样。默认
-`load_decrease_saturated_flow_ratio: 0.5`：一半事件随机选择路径经过饱和信道或 NIC
+负载变化事件按原始 Twin 状态分层抽样。默认
+`load_change_saturated_flow_ratio: 0.5`：一半事件随机选择路径经过饱和信道或 NIC
 的流，另一半随机选择状态为 normal 且路径没有饱和信道/NIC 的流。每个 origin 场景在
-同一事件类型中最多使用一次，所选分类会写入事件元数据的 `source_flow_class`。
+同一事件类型中最多使用一次，所选分类会写入事件元数据的 `source_flow_class`。新的需求
+值等于原需求乘以 `load_change_multiplier_range` 中随机采样的倍率，默认范围为 `[0.0, 3.0]`；
+问题直接显示计算后的 Mbps，不再显示倍率。
 
 生成优化场景 Twin：
 
@@ -532,30 +534,39 @@ generated/
 
 每次成功生成某一类问题时，生成器会把该类 `template_file` 原样复制到问题文件同目录的
 `question_template.yaml`。因此 `origin`、`evo` 和 `opt` 都包含问题列表、原始模板、
-`input/` 和 `scenes/`，下游可以直接从模板的 `answer` 字段读取输出约束。
+`input/` 和 `scenes/`。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
+`answer: [value1, value2]` 声明允许的标签；优化问题的答案格式由对应模板 ID 的生成规则确定。
 
-模板文件是 `schema_version: 1` 的 YAML。所有任务的 `templates` 使用相同结构，每项只
-包含唯一的 `id`、问题文本 `question` 和答案契约 `answer`。分析、演化和优化模板 ID
-分别使用 `TA`、`TE`、`TO` 前缀，后接四位数字；问题生成器根据模板 ID 选择对应生成规则。
+模板文件是 `schema_version: 1` 的 YAML。分析和演化任务的 `templates` 每项包含唯一的
+`id`、问题文本 `question` 和 `answer`；演化模板的 `answer` 是标签列表，不再重复声明
+`type: enum` 和 `values`。优化任务的每项包含 `id`、`strategy` 和
+`question`，答案格式由对应的优化问题生成规则确定。三类模板 ID 分别使用 `TA`、`TE`、
+`TO` 前缀，后接四位数字；演化模板当前按文件顺序从 `TE0001` 连续编号。问题生成器根据
+模板 ID 选择对应生成规则。
 演化模板文件的 `events` 与 `templates` 相互独立：`events` 供 `twin -t evolution` 构造演化场景
 和 Twin，`templates` 供 `questions -t evolution` 根据前后 Twin 的证据生成具体问题。
-每个事件条目包含 `id`、`entity_type`、`change` 和非空的 `description`；描述用于说明该
-事件对场景的具体修改语义。
+每个事件条目包含 `id`、`entity_type` 和非空的 `description`；事件 ID 是生成行为的唯一
+标识，具体变更方式由代码中的事件语义映射确定，描述用于说明该事件对场景的修改语义。
 
-优化模板文件的 `actions` 将全部优化模板严格划分为 `path_adjustment`、
-`channel_expansion` 和 `fault_repair` 三类，每个动作通过 `template_ids` 声明覆盖范围。
-模板加载器要求三类动作同时存在，并保证每个 TO 模板恰好属于一类。生成问题时必须把
-候选路径、候选下一跳、候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
+优化模板文件的 `strategies` 声明 `routing_adjustment`、`channel_expansion` 和
+`fault_repair` 三种策略。`routing_adjustment` 修改面向目的节点的转发表，并影响所有发往
+该目的节点的流；每个优化模板通过自身的 `strategy` 字段声明所属策略。模板加载器要求
+三种策略同时存在，并保证每个 TO 模板恰好属于一种已声明策略。生成问题时必须把候选路由、
+候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
 真实改善或存在并列最优时不应生成问题。
 
 演化类的 `options.scenes_per_event` 使用一个正整数控制每类事件生成多少个场景；例如设置
-为 `3` 时，九类事件各生成 3 个场景，最多生成 27 个演化场景。该区域还可配置流量增减
-倍率、新增流的 `flow_addition_demand_mbps_range` 需求带宽范围，以及优先选择事件相关
-目标的概率。同一事件类型内部从符合条件的原场景中随机不放回抽取；不同事件类型彼此
-独立，可以复用同一个原场景，前面的事件不会消耗后续事件的候选场景。
+为 `3` 时，八类事件各生成 3 个场景，最多生成 24 个演化场景。该区域还可配置负载变化的
+`load_change_multiplier_range` 倍率范围、新增流的
+`flow_addition_demand_mbps_range` 需求带宽范围，以及优先选择事件相关目标的概率。同一事件
+类型内部从符合条件的原场景中随机不放回抽取；不同事件类型彼此独立，可以复用同一个
+原场景，前面的事件不会消耗后续事件的候选场景。
 演化问题比较吞吐量、时延和信道承载带宽等连续数值时，变化绝对值不超过原值的 `1%`
-判定为 `unchanged`；`lost_packets` 属于整数计数，只有数值完全相等才判定为
-`unchanged`。数据流在变更前或变更后没有成功接收数据包时，`average_delay_ms` 没有可比较
+判定为 `unchanged`。丢包问题比较 `lost_packets / tx_packets` 得到的丢包率，而不是丢包总数；
+任一场景的 `tx_packets` 为 `0` 时不生成该问题。丢包率变化绝对值不超过
+`packet_loss_rate_change_threshold` 时判定为 `unchanged`，默认阈值为 `0.01`，即一个百分
+点。故障事件只在目标流仍能发送、故障移除了同方向共享瓶颈上的竞争流量时，才允许生成
+`decrease`。数据流在变更前或变更后没有成功接收数据包时，`average_delay_ms` 没有可比较
 意义，生成器不会用结果文件中的占位值 `0` 生成时延变化问题。每个模板的答案空间只保留
 当前静态路由、固定流量模型和对应事件机制能够产生的变化方向。
 当前已经实现分析类与演化类问题生成；优化类保留入口，但尚未启用完整生成逻辑。

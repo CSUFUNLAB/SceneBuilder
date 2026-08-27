@@ -179,6 +179,8 @@ def _generator_for(category: str) -> QuestionCategoryGenerator:
 
 
 def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[str, int]]:
+    if not template.answer_values:
+        return [("", total_count)]
     if template.has_id_answer:
         return [(template.answer_values[0], total_count)]
 
