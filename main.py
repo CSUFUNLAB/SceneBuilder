@@ -68,11 +68,13 @@ def _load_project_dependencies() -> None:
     global clean_question_outputs
     global ensure_question_outputs_absent
     global generate_evolution_questions
+    global generate_optimization_questions
     global generate_questions
     global generate_scenes
     global load_question_config
     global load_scene_config
     global prepare_evolution_scenes
+    global prepare_optimization_scenes
     global reset_output_root
     global split_generated_dataset
 
@@ -80,6 +82,10 @@ def _load_project_dependencies() -> None:
     from question_generator.evolution_workflow import (
         generate_evolution_questions,
         prepare_evolution_scenes,
+    )
+    from question_generator.optimization_workflow import (
+        generate_optimization_questions,
+        prepare_optimization_scenes,
     )
     from question_generator.runner import (
         QuestionGenerationResult,
@@ -1212,9 +1218,7 @@ def _clean_twin_layer(
     removed: list[Path] = list(question_cleanup.removed_files)
 
     for group in (
-        group
-        for group in selected_groups
-        if group in {"origin", "opt"}
+        group for group in selected_groups if group == "origin"
     ):
         input_root = _group_input_root(scenes_root, group)
         if input_root.is_dir():
@@ -1266,15 +1270,17 @@ def _clean_twin_layer(
                         shutil.rmtree(legacy_twin_root)
                         removed.append(legacy_twin_root)
 
-    if "evo" in selected_groups:
-        for evolution_root in (
-            _group_input_root(scenes_root, "evo"),
-            _group_scenes_root(scenes_root, "evo"),
+    for derived_group in (
+        group for group in ("evo", "opt") if group in selected_groups
+    ):
+        for derived_root in (
+            _group_input_root(scenes_root, derived_group),
+            _group_scenes_root(scenes_root, derived_group),
         ):
-            if not evolution_root.is_dir():
+            if not derived_root.is_dir():
                 continue
             for artifact in sorted(
-                evolution_root.iterdir(),
+                derived_root.iterdir(),
                 key=lambda path: path.name,
             ):
                 if artifact.is_file() or artifact.is_symlink():
@@ -1572,21 +1578,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"Prepared {len(preparation.plans)} evolution scene(s)"
                 )
                 return 0 if result.complete else 1
-            _ensure_twin_outputs_absent_before_layout(
-                scenes_root,
-                "opt",
-            )
-            optimization_input_root, optimization_scenes_root = (
-                _prepare_group_layout(
-                    scenes_root,
-                    "opt",
-                    dry_run=args.dry_run,
+            if args.dry_run:
+                raise ValueError(
+                    "Optimization Twin generation does not support --dry-run "
+                    "because it creates candidate scene directories"
                 )
+            if args.stop_time != 0:
+                raise ValueError(
+                    "Optimization Twin generation does not support "
+                    "--stop-time; baseline and candidate Twins must use "
+                    "the same duration"
+                )
+            _ensure_twin_outputs_absent_before_layout(scenes_root, "opt")
+            _prepare_group_layout(scenes_root, "opt")
+            preparation = prepare_optimization_scenes(
+                args.question_config,
+                scenes_root=scenes_root,
             )
+            if not preparation.plans:
+                raise ValueError(
+                    "No optimization candidate groups could be generated "
+                    "from the available origin scenes"
+                )
             result = _run_twin_stage(
                 args,
-                optimization_input_root,
-                twin_output_root=optimization_scenes_root,
+                _group_input_root(scenes_root, "opt"),
+                preparation.evaluation_scene_dirs,
+                twin_output_root=_group_scenes_root(scenes_root, "opt"),
+            )
+            print(
+                f"Prepared {len(preparation.plans)} optimization "
+                "candidate group(s)"
             )
             return 0 if result.complete else 1
 
@@ -1633,21 +1655,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _print_question_result(result)
                 return 0
-            optimization_root, completed_scenes = _require_completed_twins(
-                configured_root,
-                "opt",
-            )
-            result = generate_questions(
+            _require_completed_twins(configured_root, "opt")
+            result = generate_optimization_questions(
                 args.question_config,
-                scenes_root=optimization_root,
-                scene_files=[
-                    _twin_file_for_scene(
-                        optimization_root,
-                        scene,
-                    )
-                    for scene in completed_scenes
-                ],
-                question_type=args.question_type,
+                scenes_root=configured_root,
             )
             _print_question_result(result)
             return 0

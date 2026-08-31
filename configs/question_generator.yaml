@@ -24,3 +24,17 @@ categories:
     questions_per_question: 60
     template_file: ../question_generator/templates/optimization.yaml
     output_file: ../generated/opt/optimization_questions.jsonl
+    options:
+      channel_expansion_capacity_candidates_mbps: [10000, 20000, 40000, 100000]
+      channel_expansion_max_candidates: 4
+      routing_next_hop_max_candidates: 4
+      routing_max_destination_flows: 6
+      scenarios_per_template: 60
+      fault_repair_scenarios: 300
+      throughput_improvement_tolerance_mbps: 0.01
+      winner_margin_mbps: 0.01
+      delay_improvement_tolerance_ms: 0.01
+      delay_winner_margin_ms: 0.01
+      delay_packet_loss_rate_tolerance: 0.001
+      packet_loss_rate_improvement_tolerance: 0.001
+      packet_loss_rate_winner_margin: 0.001

@@ -8,6 +8,13 @@ from ..scene import SceneData
 
 
 class OptimizationQuestionGenerator(QuestionCategoryGenerator):
+    """Reject the legacy single-Twin generator path for optimization tasks.
+
+    Optimization labels require one context Twin and multiple candidate Twins,
+    so the complete implementation lives in ``optimization_workflow`` and is
+    invoked by ``python main.py questions -t optimization``.
+    """
+
     def generate_candidate(
         self,
         scene: SceneData,
@@ -16,4 +23,7 @@ class OptimizationQuestionGenerator(QuestionCategoryGenerator):
         rng: random.Random,
     ) -> QuestionCandidate | None:
         del scene, template, target_label, rng
-        raise NotImplementedError("Optimization question generation is reserved but not implemented yet")
+        raise ValueError(
+            "Optimization questions compare a context Twin with candidate "
+            "Twins; run 'python main.py questions -t optimization'"
+        )

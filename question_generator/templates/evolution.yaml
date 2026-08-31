@@ -31,101 +31,101 @@ events:
 
 templates:
   - id: TE0001
-    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0002
-    question: If node $event_node_id$ fails, will data flow $target_data_flow_id$'s packet loss rate increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s packet loss rate change if node $event_node_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0003
-    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ recovers: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0004
-    question: If node $event_node_id$ recovers, will data flow $target_data_flow_id$'s delay increase or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s delay change if node $event_node_id$ recovers: increase or remain unchanged?"
     answer: [increase, unchanged]
 
   - id: TE0005
-    question: If channel $event_channel_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if channel $event_channel_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0006
-    question: If channel $event_channel_id$ fails, will data flow $target_data_flow_id$'s packet loss rate increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s packet loss rate change if channel $event_channel_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0007
-    question: If channel $event_channel_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if channel $event_channel_id$ recovers: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0008
-    question: If channel $event_channel_id$ recovers, will data flow $target_data_flow_id$'s delay increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s delay change if channel $event_channel_id$ recovers: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0009
-    question: If interface $event_nic_id$ fails, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if interface $event_nic_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0010
-    question: If interface $event_nic_id$ fails, will data flow $target_data_flow_id$'s packet loss rate increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s packet loss rate change if interface $event_nic_id$ fails: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0011
-    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s throughput increase, decrease, or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s throughput change if interface $event_nic_id$ recovers: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0012
-    question: If interface $event_nic_id$ recovers, will data flow $target_data_flow_id$'s delay increase or stay unchanged?
+    question: "How will data flow $target_data_flow_id$'s delay change if interface $event_nic_id$ recovers: increase or remain unchanged?"
     answer: [increase, unchanged]
 
   - id: TE0013
-    question: If data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
+    question: "How will channel $target_channel_id$'s maximum directional bandwidth change when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0014
-    question: If data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps, will its delay increase, decrease, or stay unchanged?
+    question: "How will data flow $event_data_flow_id$'s delay change when its demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0015
-    question: If node $event_node_id$ fails, will node $target_node_id$ become disabled or stay unchanged?
+    question: "How will node $target_node_id$'s state change if node $event_node_id$ fails: become disabled or remain unchanged?"
     answer: [unchanged, disabled]
 
   - id: TE0016
-    question: If node $event_node_id$ recovers, will node $target_node_id$ recover or stay unchanged?
+    question: "How will node $target_node_id$'s state change if node $event_node_id$ recovers: recover or remain unchanged?"
     answer: [recovered, unchanged]
 
   - id: TE0017
-    question: If data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps, will its packet loss rate increase, decrease, or stay unchanged?
+    question: "How will data flow $event_data_flow_id$'s packet loss rate change when its demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0018
-    question: Will channel $target_channel_id$ be saturated if data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps?
+    question: "What saturation state will channel $target_channel_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: saturated or not saturated?"
     answer: [saturated, not_saturated]
 
   - id: TE0019
-    question: Will channel $target_channel_id$ recover from saturation if data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps?
+    question: "What will be the saturation-recovery outcome for channel $target_channel_id$ when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: recovered or not recovered?"
     answer: [recovered, not_recovered]
 
   - id: TE0020
-    question: Will interface $target_nic_id$ be saturated if data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps?
+    question: "What saturation state will interface $target_nic_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: saturated or not saturated?"
     answer: [saturated, not_saturated]
 
   - id: TE0021
-    question: Will interface $target_nic_id$ recover from saturation if data flow $event_data_flow_id$'s demand changes to $event_demand_mbps$ Mbps?
+    question: "What will be the saturation-recovery outcome for interface $target_nic_id$ when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: recovered or not recovered?"
     answer: [recovered, not_recovered]
 
   - id: TE0022
-    question: Will data flow $event_data_flow_id$ be normal or unstable if it is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
+    question: "What operating state will data flow $event_data_flow_id$ have when added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal or unstable?"
     answer: [normal, unstable]
 
   - id: TE0023
-    question: If data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps, will channel $target_channel_id$'s maximum directional bandwidth increase, decrease, or stay unchanged?
+    question: "How will channel $target_channel_id$'s maximum directional bandwidth change when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
     answer: [increase, unchanged, decrease]
 
   - id: TE0024
-    question: Will channel $target_channel_id$ be saturated if data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
+    question: "What saturation state will channel $target_channel_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: saturated or not saturated?"
     answer: [saturated, not_saturated]
 
   - id: TE0025
-    question: Will interface $target_nic_id$ be saturated if data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps?
+    question: "What saturation state will interface $target_nic_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: saturated or not saturated?"
     answer: [saturated, not_saturated]

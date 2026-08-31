@@ -5,11 +5,11 @@ question_type: optimization
 # catalog. Every template declares exactly one strategy.
 strategies:
   - id: routing_adjustment
-    description: Select exactly one explicitly listed destination-based route, applying the changed forwarding entries to all traffic sent to that destination node while leaving topology, capacity, traffic demand, and physical state unchanged.
+    description: Change exactly one destination-based routing entry at the stated routing node by selecting one explicitly listed directly connected next-hop node, while leaving every other routing entry, topology, capacity, traffic demand, and physical state unchanged.
   - id: channel_expansion
-    description: Double the configured bandwidth_mbps of exactly one explicitly listed normal channel while leaving all other scene inputs unchanged.
+    description: Set the configured bandwidth_mbps of exactly one explicitly listed operational channel to the target capacity stated in the question while leaving all other scene inputs unchanged. The target capacity is the same for every candidate and is greater than every candidate's current capacity.
   - id: fault_repair
-    description: Restore exactly one explicitly listed failed node or channel while leaving all other scene inputs unchanged.
+    description: Compare exactly two counterfactual repair choices for two explicitly listed failed nodes, channels, or interfaces. Each candidate Twin contains only the disabled failure that would remain after repairing the other entity, while topology, routing, capacity, traffic demand, and all unrelated physical states remain unchanged.
 
 # Candidate alternatives are listed in each generated question. Emit a
 # question only when at least two feasible candidates exist, exactly one
@@ -17,34 +17,38 @@ strategies:
 # candidate produces a real improvement over the baseline when improvement is
 # part of the question.
 templates:
-  - id: TO0005
+  - id: TO0001
     strategy: channel_expansion
-    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest throughput increase if its capacity is doubled?
+    question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest increase in total network throughput?
+
+  - id: TO0002
+    strategy: routing_adjustment
+    question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to maximize the aggregate received throughput of all data flows destined for that node?
+
+  - id: TO0003
+    strategy: channel_expansion
+    question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest reduction in the packet-weighted mean end-to-end delay across all data flows without increasing the network-wide aggregate packet loss rate?
+
+  - id: TO0004
+    strategy: channel_expansion
+    question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest reduction in the network-wide aggregate packet loss rate?
+
+  - id: TO0005
+    strategy: routing_adjustment
+    question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to minimize the packet-weighted mean end-to-end delay of all data flows destined for that node without increasing their aggregate packet loss rate?
 
   - id: TO0006
-    strategy: channel_expansion
-    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest delay reduction if its capacity is doubled?
+    strategy: routing_adjustment
+    question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to minimize the aggregate packet loss rate of all data flows destined for that node?
 
   - id: TO0007
-    strategy: channel_expansion
-    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel gives the largest packet-loss reduction if its capacity is doubled?
-
-  - id: TO0013
     strategy: fault_repair
-    question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel should be repaired to restore data flow $data_flow_id$?
+    question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the highest total network throughput?
 
-  - id: TO0014
+  - id: TO0008
     strategy: fault_repair
-    question: Among repair candidates $candidate_repair_entity_ids$, which failed node or channel gives data flow $data_flow_id$ the largest throughput increase if repaired?
+    question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest packet-weighted mean end-to-end delay across all data flows without resulting in a higher network-wide aggregate packet loss rate than the alternative repair?
 
-  - id: TO0015
-    strategy: channel_expansion
-    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel produces the largest increase in total network throughput if its capacity is doubled?
-
-  - id: TO0019
-    strategy: channel_expansion
-    question: Among candidate channels $candidate_channel_ids$ on data flow $data_flow_id$'s current path, which channel reduces the total number of saturated channels the most if its capacity is doubled?
-
-  - id: TO0020
+  - id: TO0009
     strategy: fault_repair
-    question: Among unavailable-channel repair candidates $candidate_channel_ids$, which channel restores reachability from node $node_id$ to the most destinations if repaired?
+    question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest network-wide aggregate packet loss rate?

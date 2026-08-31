@@ -29,7 +29,13 @@ python main.py twin -t evolution
 # 5. 生成演化问题
 python main.py questions -t evolution -c configs/question_generator.yaml
 
-# 6. 按问题划分训练集和测试集
+# 6. 生成优化候选场景及 Twin
+python main.py twin -t optimization
+
+# 7. 生成优化问题
+python main.py questions -t optimization -c configs/question_generator.yaml
+
+# 8. 按问题划分训练集和测试集
 python main.py split -c configs/dataset_split.yaml -r 0.8
 ```
 
@@ -137,7 +143,32 @@ python main.py twin -t evolution
 python main.py twin -t optimization
 ```
 
-该命令处理 `opt/input` 中已经存在的优化场景；当前优化场景构造逻辑尚未实现。
+该命令从具有完整 Twin 和标签的 origin 场景中构造优化候选组，不因存在物理故障而跳过
+整个场景。每组包含一个不施加动作的上下文场景和至少两个候选动作场景；上下文 Twin 直接
+复用对应 origin Twin，候选场景保留相同的背景故障并分别运行 ns-3，互不叠加动作。扩容
+候选必须是当前仍可运行的信道，路由候选的完整结果路径必须避开已禁用的节点、信道和网卡。
+故障修复使用正常 origin 作为共同背景，不生成双故障 Twin，而是生成两个只包含一个剩余
+故障的候选 Twin。
+目前实现：
+
+- `TO0001` 信道扩容：选择某个节点上至少两条有流量经过的相邻信道，把每条候选信道分别
+  扩容到问题中相同的绝对容量，比较全网所有接收端数据流吞吐量之和。
+- `TO0002` 路由调整：固定一个当前转发节点和一个目的节点，从至少两个直连且经由正常
+  路径可达的候选下一跳中选择；每个候选只替换路由矩阵中的一个表项，比较所有发往该目的
+  节点的数据流的接收吞吐量之和。其余路由表项和背景故障全部保持不变。原路径正常时选择
+  拥塞场景，原路径故障时允许候选路由绕开故障。
+- `TO0003/TO0004`：复用 TO0001 的信道扩容候选 Twin，分别优化全网所有流的包加权平均
+  端到端延迟和聚合丢包率。
+- `TO0005/TO0006`：复用 TO0002 的单路由表项候选 Twin，分别优化发往指定目的节点的流的
+  包加权平均端到端延迟和聚合丢包率。
+- `TO0007/TO0008/TO0009`：从正常 origin 中选择两个互不属于同一故障域、影响的数据流集合
+  不完全相同且位于数据流作用范围内的故障实体，并将故障统一设为 `disabled`。候选一只注入
+  故障 B，表示修复 A 后的状态；候选二只注入故障 A，表示修复 B 后的状态，分别比较全网
+  吞吐量、全网包加权平均延迟和全网聚合丢包率。
+
+候选动作、目标流集合和问题占位符都记录在 `opt/input/<scene_id>/metadata.json`。该命令
+会创建派生输入，因此不支持 `--dry-run`；为了保证候选间可比，也不允许用 `--stop-time`
+覆盖仿真时长。
 
 ### 3. 生成问题
 
@@ -173,6 +204,15 @@ python main.py questions -t analysis \
 演化问题与分析问题采用相同的按答案挑选方式：针对每个模板及目标答案打乱对应事件的
 演化 Twin，逐个尝试生成问题；每个 Twin 对同一模板和答案最多贡献一道题，达到配置数量
 后立即停止，不会重复候选来补足不存在的答案。
+
+信道扩容和路由调整问题比较同一候选组的上下文 Twin 和全部候选 Twin。只有最优候选相对
+原场景存在超过阈值的正向提升，并且领先第二名超过胜出阈值时才生成问题。故障修复问题
+只比较两个单故障候选 Twin 的绝对结果，不使用正常 context 作为改善基准；两个修复结果
+没有形成唯一最优时跳过该候选组。
+TO0001/TO0003/TO0004 的标签是 `Cxxxx` 信道 ID，TO0002/TO0005/TO0006 的标签是问题中
+列出的 `Nxxxx` 下一跳节点 ID，TO0007/TO0008/TO0009 的标签是应当修复的节点、信道或
+接口 ID。
+问题的 `scene_name` 指向未施加动作的上下文 Twin，候选 Twin 只用于离线计算标签。
 
 问题生成不会删除或覆盖已有问题列表和导出模板。目标问题输出已经存在时，命令会立即
 停止并提示先运行：
@@ -262,9 +302,9 @@ python main.py clean -o scenes -c configs/example.yaml
 python main.py clean -o twin
 ```
 
-该命令保留 `origin/input` 和 `opt/input` 中的原始场景输入，删除 origin/opt Twin 和
-标签、全部 `evo/input` 与 `evo/scenes`，并删除所有问题列表和导出模板。使用其他问题
-配置时可增加 `-c <question_config>`。
+该命令保留 `origin/input` 中的原始场景输入，删除 origin Twin 和标签、全部
+`evo/input`、`evo/scenes`、`opt/input` 与 `opt/scenes`，并删除所有问题列表和导出模板。
+使用其他问题配置时可增加 `-c <question_config>`。
 
 也可以只清理指定的 Twin 分组及其对应问题：
 
@@ -278,8 +318,8 @@ python main.py clean -o twin -t optimization
   问题。
 - `clean -o twin -t evolution`：删除全部 `evo/input`、`evo/scenes` 和 evolution 问题，不影响
   origin 和 opt。
-- `clean -o twin -t optimization`：保留 `opt/input` 原始输入，删除 opt Twin、标签和 optimization
-  问题。
+- `clean -o twin -t optimization`：删除全部 `opt/input`、`opt/scenes` 和 optimization 问题，
+  不影响 origin 和 evo。优化输入是从 origin 自动派生的，重新生成 Twin 时会重新构造。
 
 三个分组相互独立；清理 origin 不会自动删除已有 evolution，清理 evolution 也不会删除
 origin。
@@ -375,14 +415,18 @@ generated/
     ├── question_template.yaml
     ├── optimization_questions.jsonl
     ├── input/
-    │   └── <optimization_scene_id>/
-    │       └── 优化场景输入及 labels.jsonl
+    │   ├── <optimization_context_scene_id>/
+    │   │   └── 未施加动作的上下文输入、优化候选元数据及 labels.jsonl
+    │   └── <optimization_candidate_scene_id>/
+    │       └── 仅施加一个候选动作的输入及 labels.jsonl
     └── scenes/
-        └── <optimization_scene_id>.jsonl
+        ├── <optimization_context_scene_id>.jsonl
+        └── <optimization_candidate_scene_id>.jsonl
 ```
 
 普通场景生成始终写入 `origin/input`，`twin -t origin` 将 Twin 写入 `origin/scenes`。
-`twin -t evolution` 基于原场景创建新输入并分别写入 `evo/input` 和 `evo/scenes`。三个
+`twin -t evolution` 基于原场景创建新输入并分别写入 `evo/input` 和 `evo/scenes`；
+`twin -t optimization` 创建上下文和候选输入并写入 `opt/input` 与 `opt/scenes`。三个
 `scenes/` 目录都只保存以场景名命名的 Twin JSONL 文件。演化场景名末尾使用事件场景 ID，例如
 `example_id2001_York_t2s_evo_E00000001`。三个目录中的数字场景 ID 共用同一编号空间。
 
@@ -549,11 +593,41 @@ generated/
 标识，具体变更方式由代码中的事件语义映射确定，描述用于说明该事件对场景的修改语义。
 
 优化模板文件的 `strategies` 声明 `routing_adjustment`、`channel_expansion` 和
-`fault_repair` 三种策略。`routing_adjustment` 修改面向目的节点的转发表，并影响所有发往
-该目的节点的流；每个优化模板通过自身的 `strategy` 字段声明所属策略。模板加载器要求
-三种策略同时存在，并保证每个 TO 模板恰好属于一种已声明策略。生成问题时必须把候选路由、
+`fault_repair` 三种策略。`routing_adjustment` 只修改指定转发节点面向指定目的节点的一个
+路由表项，直接影响当前经过该转发节点的相关流；优化目标仍统计所有发往该目的节点的流。
+每个优化模板通过自身的 `strategy` 字段声明所属策略。模板加载器要求
+三种策略同时存在，并保证每个 TO 模板恰好属于一种已声明策略。生成问题时必须把候选下一跳、
 候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
-真实改善或存在并列最优时不应生成问题。
+真实改善或存在并列最优时不应生成问题；故障修复使用单独的双候选绝对指标比较规则。
+`TO0007/TO0008/TO0009` 使用 `fault_repair`，分别优化全网吞吐量、全网包加权平均延迟和
+全网聚合丢包率。三个模板使用同一组两个单故障候选：只保留故障 B 的 Twin 表示修复 A，
+只保留故障 A 的 Twin 表示修复 B。正常 context 只提供共同拓扑、路由和流量背景，不生成
+双故障 Twin，也不引入第三个故障候选。
+信道扩容的目标容量由 `options.channel_expansion_capacity_candidates_mbps` 配置为一组
+离散 Mbps 数值。针对一个锚定节点，只从严格大于其全部候选信道当前容量的配置值中随机
+选择一个，并将所有候选分别扩容到同一个目标容量；没有合格配置值时跳过该节点。
+`channel_expansion_max_candidates` 限制一道 TO0001 中的候选信道数。
+`routing_next_hop_max_candidates` 限制一道 TO0002 中的候选下一跳数量，
+`routing_max_destination_flows` 限制被选目的节点的入流数量，控制聚合目标的推理范围。
+`fault_repair_scenarios` 单独设置故障修复候选组数量；默认配置为 `300`，用于覆盖候选指标
+并列或无法计算而不能生成问题的情况。
+`scenarios_per_template` 设置扩容和路由两类优化动作在仿真前构造的候选组数；同一组信道扩容 Twin
+供 TO0001/TO0003/TO0004 共用，同一组路由调整 Twin 供 TO0002/TO0005/TO0006 共用，
+同一组故障修复 Twin 供 TO0007/TO0008/TO0009 共用，不会为每个指标重复仿真。实际问题数
+仍由 `questions_per_question` 限制。
+
+吞吐量使用 `throughput_improvement_tolerance_mbps` 和 `winner_margin_mbps` 作为相对基准的
+最小提升及第一名领先量。延迟使用 `delay_improvement_tolerance_ms` 和
+`delay_winner_margin_ms`；聚合延迟按 `Σ(average_delay_ms × rx_packets) / Σrx_packets`
+计算，零接收流不贡献接收包或延迟，但流集合整体必须至少收到一个包。延迟题通过
+`delay_packet_loss_rate_tolerance` 限制候选相对基准的聚合丢包率增加，已发送但零接收流的
+影响也会计入该丢包率，避免以丢弃更多流量换取表面上的低延迟。丢包率按固定流集合的
+`Σlost_packets / Σtx_packets` 计算，使用
+`packet_loss_rate_improvement_tolerance` 和 `packet_loss_rate_winner_margin` 过滤无真实改善
+或并列最优的候选组。
+故障修复不使用相对正常 context 的改善阈值，只使用对应的 `winner_margin` 判断两个候选是否
+存在唯一最优。TO0008 还要求最低延迟候选的聚合丢包率不能比另一个修复候选高出
+`delay_packet_loss_rate_tolerance`。
 
 演化类的 `options.scenes_per_event` 使用一个正整数控制每类事件生成多少个场景；例如设置
 为 `3` 时，八类事件各生成 3 个场景，最多生成 24 个演化场景。该区域还可配置负载变化的
@@ -569,7 +643,7 @@ generated/
 `decrease`。数据流在变更前或变更后没有成功接收数据包时，`average_delay_ms` 没有可比较
 意义，生成器不会用结果文件中的占位值 `0` 生成时延变化问题。每个模板的答案空间只保留
 当前静态路由、固定流量模型和对应事件机制能够产生的变化方向。
-当前已经实现分析类与演化类问题生成；优化类保留入口，但尚未启用完整生成逻辑。
+当前已经实现分析类、演化类，以及 TO0001 至 TO0009 九个优化问题的场景与问题生成。
 
 ## 常用选项
 
@@ -577,20 +651,23 @@ generated/
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
 - `--no-build`：跳过运行前的显式编译步骤。
 - `--continue-on-error`：单个场景失败后继续处理其他场景。
-- `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 会创建派生场景，因此不支持该选项。
+- `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
+  `twin -t optimization` 会创建派生场景，因此不支持该选项。
 - `questions --scene-root <路径>`：覆盖问题配置中的孪生体场景目录。
 
 `scaleFactor` 会按相同比例缩小仿真中的信道容量、流量需求和队列包数。Twin 中的速率会
 恢复到原网络口径，`queue_size_packets` 也仍表示原网络的队列容量；队列当前包数按队列
 占用比例恢复。队列至少保留一个仿真包。
 
-`twin -t evolution` 不支持 `--stop-time`。变更前后 Twin 必须使用相同的场景仿真时长，才能直接比较
-吞吐量、丢包数和平均时延。
+`twin -t evolution` 和 `twin -t optimization` 不支持 `--stop-time`。变更前后或不同候选
+Twin 必须使用相同的场景仿真时长，才能直接比较吞吐量、丢包数和平均时延。
 
 ## 当前约定
 
 - 运行时事件功能当前处于禁用状态。场景表示一个固定网络状态，ns-3 不会在仿真途中注入事件。
 - `twin -t evolution` 构造变更前和变更后的独立场景；演化问题命令只比较已经生成的两个 Twin。
+- `twin -t optimization` 为每个问题构造一个上下文场景和多个单动作候选场景；优化问题
+  命令用候选场景计算标签，只把上下文 Twin 暴露给答题端。
 - 每个场景生成一个 `scenes/<scene_id>.jsonl` Twin 和一个
   `input/<scene_id>/labels.jsonl` 标签文件。
 - 场景生成和 ns-3 仿真均串行执行，避免同时运行多个大规模仿真任务。
