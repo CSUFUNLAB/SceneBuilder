@@ -12,7 +12,11 @@ import shutil
 from typing import Any
 
 from .config import CategoryConfig, QuestionGeneratorConfig, load_config
-from .evidence import SATURATION_THRESHOLD, channel_directional_throughputs
+from .evidence import (
+    SATURATION_THRESHOLD,
+    channel_directional_throughputs,
+    infer_entity_state,
+)
 from .models import (
     EvolutionEventType,
     GeneratedQuestion,
@@ -134,6 +138,102 @@ _QUESTION_RULES = {
     "TE0025": EvolutionQuestionRule(
         "flow_addition", "nic", "saturation_outcome"
     ),
+    "TE0026": EvolutionQuestionRule(
+        "node_failure", "node", "state_prediction"
+    ),
+    "TE0027": EvolutionQuestionRule(
+        "node_failure", "channel", "state_prediction"
+    ),
+    "TE0028": EvolutionQuestionRule(
+        "node_failure", "nic", "state_prediction"
+    ),
+    "TE0029": EvolutionQuestionRule(
+        "node_failure", "data_flow", "state_prediction"
+    ),
+    "TE0030": EvolutionQuestionRule(
+        "node_recovery", "node", "state_prediction"
+    ),
+    "TE0031": EvolutionQuestionRule(
+        "node_recovery", "channel", "state_prediction"
+    ),
+    "TE0032": EvolutionQuestionRule(
+        "node_recovery", "nic", "state_prediction"
+    ),
+    "TE0033": EvolutionQuestionRule(
+        "node_recovery", "data_flow", "state_prediction"
+    ),
+    "TE0034": EvolutionQuestionRule(
+        "channel_failure", "node", "state_prediction"
+    ),
+    "TE0035": EvolutionQuestionRule(
+        "channel_failure", "channel", "state_prediction"
+    ),
+    "TE0036": EvolutionQuestionRule(
+        "channel_failure", "nic", "state_prediction"
+    ),
+    "TE0037": EvolutionQuestionRule(
+        "channel_failure", "data_flow", "state_prediction"
+    ),
+    "TE0038": EvolutionQuestionRule(
+        "channel_recovery", "node", "state_prediction"
+    ),
+    "TE0039": EvolutionQuestionRule(
+        "channel_recovery", "channel", "state_prediction"
+    ),
+    "TE0040": EvolutionQuestionRule(
+        "channel_recovery", "nic", "state_prediction"
+    ),
+    "TE0041": EvolutionQuestionRule(
+        "channel_recovery", "data_flow", "state_prediction"
+    ),
+    "TE0042": EvolutionQuestionRule(
+        "nic_failure", "node", "state_prediction"
+    ),
+    "TE0043": EvolutionQuestionRule(
+        "nic_failure", "channel", "state_prediction"
+    ),
+    "TE0044": EvolutionQuestionRule(
+        "nic_failure", "nic", "state_prediction"
+    ),
+    "TE0045": EvolutionQuestionRule(
+        "nic_failure", "data_flow", "state_prediction"
+    ),
+    "TE0046": EvolutionQuestionRule(
+        "nic_recovery", "node", "state_prediction"
+    ),
+    "TE0047": EvolutionQuestionRule(
+        "nic_recovery", "channel", "state_prediction"
+    ),
+    "TE0048": EvolutionQuestionRule(
+        "nic_recovery", "nic", "state_prediction"
+    ),
+    "TE0049": EvolutionQuestionRule(
+        "nic_recovery", "data_flow", "state_prediction"
+    ),
+    "TE0050": EvolutionQuestionRule(
+        "flow_load_change", "node", "state_prediction"
+    ),
+    "TE0051": EvolutionQuestionRule(
+        "flow_load_change", "channel", "state_prediction"
+    ),
+    "TE0052": EvolutionQuestionRule(
+        "flow_load_change", "nic", "state_prediction"
+    ),
+    "TE0053": EvolutionQuestionRule(
+        "flow_load_change", "data_flow", "state_prediction"
+    ),
+    "TE0054": EvolutionQuestionRule(
+        "flow_addition", "node", "state_prediction"
+    ),
+    "TE0055": EvolutionQuestionRule(
+        "flow_addition", "channel", "state_prediction"
+    ),
+    "TE0056": EvolutionQuestionRule(
+        "flow_addition", "nic", "state_prediction"
+    ),
+    "TE0057": EvolutionQuestionRule(
+        "flow_addition", "data_flow", "state_prediction"
+    ),
 }
 
 
@@ -153,6 +253,15 @@ _EXPECTED_ANSWER_VALUES = {
     "TE0024": ("saturated", "not_saturated"),
     "TE0025": ("saturated", "not_saturated"),
 }
+
+
+_ENTITY_STATE_VALUES = {
+    "node": ("normal", "disabled"),
+    "channel": ("normal", "disabled", "degraded", "saturated"),
+    "nic": ("normal", "disabled", "saturated"),
+    "data_flow": ("normal", "unstable", "degraded", "failed"),
+}
+_EVIDENCE_BACKED_STATE_TARGET = "evidence_backed_state"
 
 
 @dataclass(frozen=True)
@@ -416,14 +525,15 @@ def generate_evolution_questions(
             for plan in plans
             if plan.event_type == rule.event_type_id
         ]
-        for target_label, requested in _target_label_counts(
+        for target_label, requested in _generation_target_counts(
             template,
+            rule,
             category.questions_per_question,
         ):
             shuffled_plans = list(matching_plans)
             rng.shuffle(shuffled_plans)
             selected_candidates: list[
-                tuple[EvolutionPlan, dict[str, str], bool]
+                tuple[EvolutionPlan, dict[str, str], bool, str]
             ] = []
             for plan in shuffled_plans:
                 try:
@@ -472,20 +582,20 @@ def generate_evolution_questions(
                 available = preferred or fallback
                 if not available:
                     continue
-                replacements, related = rng.choice(available)
+                replacements, related, answer_label = rng.choice(available)
                 selected_candidates.append(
-                    (plan, replacements, related)
+                    (plan, replacements, related, answer_label)
                 )
                 if len(selected_candidates) == requested:
                     break
 
-            for plan, replacements, _ in selected_candidates:
+            for plan, replacements, _, answer_label in selected_candidates:
                 question = GeneratedQuestion(
                     question_id=f"Q{question_number:08d}",
                     question_type="evolution",
                     template_id=template.template_id,
                     question=template.render(replacements),
-                    label=target_label,
+                    label=answer_label,
                     scene_name=plan.evolved_scene_id,
                     original_scene_id=plan.original_scene_id,
                     evolved_scene_id=plan.evolved_scene_id,
@@ -508,8 +618,9 @@ def generate_evolution_questions(
             ),
         )
         for template in templates
-        for target_label, requested in _target_label_counts(
+        for target_label, requested in _generation_target_counts(
             template,
+            _question_rule(template),
             category.questions_per_question,
         )
     )
@@ -572,6 +683,15 @@ def _validate_templates(
             raise ValueError(
                 f"{template.template_id} numeric answers must be "
                 "[increase, unchanged, decrease]"
+            )
+        if (
+            rule.comparison_kind == "state_prediction"
+            and template.answer_values
+            != _ENTITY_STATE_VALUES[rule.target_entity_type]
+        ):
+            raise ValueError(
+                f"{template.template_id} state-prediction answers must be "
+                f"{list(_ENTITY_STATE_VALUES[rule.target_entity_type])}"
             )
 
 
@@ -667,6 +787,16 @@ def _target_label_counts(
         (target_label, count_per_label)
         for target_label in template.answer_values
     )
+
+
+def _generation_target_counts(
+    template: QuestionTemplate,
+    rule: EvolutionQuestionRule,
+    total_count: int,
+) -> tuple[tuple[str, int], ...]:
+    if rule.comparison_kind == "state_prediction":
+        return ((_EVIDENCE_BACKED_STATE_TARGET, total_count),)
+    return _target_label_counts(template, total_count)
 
 
 def _select_event(
@@ -1182,7 +1312,7 @@ def _find_evidence_candidates(
     event: dict[str, Any],
     target_label: str,
     packet_loss_rate_change_threshold: float,
-) -> list[tuple[dict[str, str], bool]]:
+) -> list[tuple[dict[str, str], bool, str]]:
     event_entity_type = event_type.entity_type
     target_entity_type = rule.target_entity_type
     event_id = str(event["entity_id"])
@@ -1207,25 +1337,43 @@ def _find_evidence_candidates(
             )
         ]
 
-    matching_target_ids: list[str] = []
+    if (
+        rule.comparison_kind == "state_prediction"
+        and not _event_has_state_evidence(
+            before,
+            event_type,
+            event,
+        )
+    ):
+        return []
+
+    matching_targets: list[tuple[str, str]] = []
     for target_id in target_ids:
+        answer_label = _evaluate_target(
+            before,
+            after,
+            rule,
+            target_id,
+            packet_loss_rate_change_threshold=(
+                packet_loss_rate_change_threshold
+            ),
+        )
+        if answer_label is None:
+            continue
         if (
-            _evaluate_target(
-                before,
-                after,
-                rule,
-                target_id,
-                packet_loss_rate_change_threshold=(
-                    packet_loss_rate_change_threshold
-                ),
-            )
-            != target_label
+            target_label != _EVIDENCE_BACKED_STATE_TARGET
+            and answer_label != target_label
+        ):
+            continue
+        if (
+            rule.comparison_kind == "state_prediction"
+            and answer_label not in template.answer_values
         ):
             continue
         if (
             rule.metric_name == "packet_loss_rate"
             and event_type.change == "failure"
-            and target_label == "decrease"
+            and answer_label == "decrease"
             and not _failure_relieves_target_flow(
                 before,
                 after,
@@ -1235,9 +1383,9 @@ def _find_evidence_candidates(
             )
         ):
             continue
-        matching_target_ids.append(target_id)
-    candidates: list[tuple[dict[str, str], bool]] = []
-    for target_id in matching_target_ids:
+        matching_targets.append((target_id, answer_label))
+    candidates: list[tuple[dict[str, str], bool, str]] = []
+    for target_id, answer_label in matching_targets:
         replacements = {
             _event_placeholder(event_entity_type): event_id,
         }
@@ -1275,9 +1423,68 @@ def _find_evidence_candidates(
                     event_id,
                     target_id,
                 ),
+                answer_label,
             )
         )
     return candidates
+
+
+def _evidence_backed_entity_state(
+    scene: SceneData,
+    entity_type: str,
+    entity_id: str,
+) -> str | None:
+    entity = scene.entity(entity_type, entity_id)
+    if entity is None or not entity.label:
+        return None
+    inferred_state = infer_entity_state(scene, entity)
+    return inferred_state if inferred_state == entity.label else None
+
+
+def _event_has_state_evidence(
+    before: SceneData,
+    event_type: EvolutionEventType,
+    event: dict[str, Any],
+) -> bool:
+    if event_type.change == "addition":
+        source_node_id = str(event.get("source_node_id", ""))
+        destination_node_id = str(event.get("destination_node_id", ""))
+        source_node = before.entity("node", source_node_id)
+        if (
+            source_node is None
+            or before.entity("node", destination_node_id) is None
+        ):
+            return False
+        routes = source_node.relations.get("routes")
+        if not isinstance(routes, list):
+            return False
+        return any(
+            isinstance(route, dict)
+            and destination_node_id
+            in {
+                str(node_id)
+                for node_id in route.get("destination_nodes", [])
+            }
+            and before.entity(
+                "node",
+                str(route.get("next_hop", "")),
+            )
+            is not None
+            and before.entity(
+                "nic",
+                str(route.get("egress_interface", "")),
+            )
+            is not None
+            for route in routes
+        )
+    return (
+        _evidence_backed_entity_state(
+            before,
+            event_type.entity_type,
+            str(event.get("entity_id", "")),
+        )
+        is not None
+    )
 
 
 def _target_is_related_to_event(
@@ -1469,6 +1676,26 @@ def _evaluate_target(
     target_entity_type = rule.target_entity_type
     before_entity = before.entity(target_entity_type, target_id)
     after_entity = after.entity(target_entity_type, target_id)
+    if rule.comparison_kind == "state_prediction":
+        if after_entity is None:
+            return None
+        after_state = _evidence_backed_entity_state(
+            after,
+            target_entity_type,
+            target_id,
+        )
+        if after_state is None:
+            return None
+        if before_entity is not None and (
+            _evidence_backed_entity_state(
+                before,
+                target_entity_type,
+                target_id,
+            )
+            is None
+        ):
+            return None
+        return after_state
     if rule.comparison_kind == "after_status":
         if before_entity is not None or after_entity is None:
             return None
