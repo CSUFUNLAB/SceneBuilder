@@ -18,7 +18,6 @@ from .runner import (
     CategoryRunResult,
     QuestionGenerationResult,
     ensure_question_outputs_absent,
-    export_question_template,
 )
 from .scene import EntityRecord, SceneData
 from .templates import load_template_bundle
@@ -379,8 +378,6 @@ def generate_optimization_questions(
             "No completed optimization candidate groups are available; run "
             "'python main.py twin -t optimization' first"
         )
-    export_question_template(category)
-
     options = _optimization_options(category)
     rng = random.Random(config.seed)
     questions: list[GeneratedQuestion] = []
@@ -2061,7 +2058,7 @@ def _ensure_optimization_outputs_absent(
 ) -> None:
     input_root = root / OPTIMIZATION_SCENES_DIR_NAME / INPUT_DIR_NAME
     twin_root = root / OPTIMIZATION_SCENES_DIR_NAME / SCENES_DIR_NAME
-    candidates = [category.output_file, category.exported_template_file]
+    candidates = [category.output_file]
     for output_root in (input_root, twin_root):
         if output_root.is_dir():
             candidates.extend(output_root.iterdir())

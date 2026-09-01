@@ -24,7 +24,6 @@ from .runner import (
     CategoryRunResult,
     QuestionGenerationResult,
     ensure_question_outputs_absent,
-    export_question_template,
 )
 from .scene import EntityRecord, SceneData
 from .templates import load_template_bundle
@@ -392,8 +391,6 @@ def generate_evolution_questions(
             "No completed evolution scene pairs are available; run "
             "'python main.py twin -t evolution' first"
         )
-    export_question_template(category)
-
     questions: list[GeneratedQuestion] = []
     generated_by_target: dict[tuple[str, str], int] = {}
     rng = random.Random(config.seed)
@@ -1808,10 +1805,7 @@ def _ensure_evolution_outputs_absent(
     evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
-    candidates = [
-        category.output_file,
-        category.exported_template_file,
-    ]
+    candidates = [category.output_file]
     for output_root in (evolution_input_root, evolution_scenes_root):
         if output_root.is_dir():
             candidates.extend(output_root.iterdir())

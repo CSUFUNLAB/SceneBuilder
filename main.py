@@ -1503,6 +1503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"Train output: {result.train_output_root}")
             print(f"Test output: {result.test_output_root}")
+            print(f"Question templates: {result.template_output_root}")
             for task in result.tasks:
                 print(
                     f"{task.task_type}: "

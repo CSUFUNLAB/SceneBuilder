@@ -12,7 +12,6 @@ QUESTION_DATASET_DIRS = {
     "evolution": "evo",
     "optimization": "opt",
 }
-EXPORTED_TEMPLATE_FILE_NAME = "question_template.yaml"
 
 
 @dataclass(frozen=True)
@@ -23,10 +22,6 @@ class CategoryConfig:
     template_file: Path
     output_file: Path
     options: dict[str, Any]
-
-    @property
-    def exported_template_file(self) -> Path:
-        return self.output_file.parent / EXPORTED_TEMPLATE_FILE_NAME
 
 
 @dataclass(frozen=True)

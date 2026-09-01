@@ -23,6 +23,10 @@ QUESTION_FILE_NAMES = {
     task_type: f"{task_type}_questions.jsonl"
     for task_type in QUESTION_CATEGORIES
 }
+QUESTION_TEMPLATE_FILE_NAMES = {
+    task_type: f"{task_type}.yaml"
+    for task_type in QUESTION_CATEGORIES
+}
 SOURCE_SCENE_GROUPS = {
     "analysis": "origin",
     "evolution": "origin",
@@ -35,6 +39,7 @@ class DatasetSplitConfig:
     question_config: Path
     train_output_root: Path
     test_output_root: Path
+    template_output_root: Path
     seed: int
 
 
@@ -53,6 +58,7 @@ class TaskSplitResult:
 class DatasetSplitResult:
     train_output_root: Path
     test_output_root: Path
+    template_output_root: Path
     train_ratio: float
     tasks: tuple[TaskSplitResult, ...]
 
@@ -90,6 +96,11 @@ def load_dataset_split_config(
             path.parent,
             "test_output_root",
         ),
+        template_output_root=_resolve_config_path(
+            raw.get("template_output_root"),
+            path.parent,
+            "template_output_root",
+        ),
         seed=seed,
     )
     _validate_output_roots(config)
@@ -109,6 +120,7 @@ def split_generated_dataset(
 
     train_stage = _create_stage(config.train_output_root)
     test_stage = _create_stage(config.test_output_root)
+    template_stage = _create_stage(config.template_output_root)
     try:
         task_results = _build_split(
             question_config,
@@ -117,18 +129,25 @@ def split_generated_dataset(
             train_ratio=effective_ratio,
             seed=config.seed,
         )
+        _copy_question_templates(question_config, template_stage)
         _replace_output_root(train_stage, config.train_output_root)
         train_stage = None
         _replace_output_root(test_stage, config.test_output_root)
         test_stage = None
+        _replace_output_root(
+            template_stage,
+            config.template_output_root,
+        )
+        template_stage = None
     finally:
-        for stage in (train_stage, test_stage):
+        for stage in (train_stage, test_stage, template_stage):
             if stage is not None and stage.exists():
                 shutil.rmtree(stage)
 
     return DatasetSplitResult(
         train_output_root=config.train_output_root,
         test_output_root=config.test_output_root,
+        template_output_root=config.template_output_root,
         train_ratio=effective_ratio,
         tasks=task_results,
     )
@@ -326,6 +345,23 @@ def _write_task_dataset(
     return len(scene_ids)
 
 
+def _copy_question_templates(
+    question_config: QuestionGeneratorConfig,
+    output_root: Path,
+) -> None:
+    output_root.mkdir(parents=True, exist_ok=True)
+    for task_type in QUESTION_CATEGORIES:
+        source_template = question_config.categories[task_type].template_file
+        if not source_template.is_file():
+            raise FileNotFoundError(
+                f"Question template does not exist: {source_template}"
+            )
+        shutil.copy2(
+            source_template,
+            output_root / QUESTION_TEMPLATE_FILE_NAMES[task_type],
+        )
+
+
 def _runtime_scene_id(
     record: dict[str, Any],
     *,
@@ -391,17 +427,22 @@ def _validate_ratio(value: float) -> float:
 
 
 def _validate_output_roots(config: DatasetSplitConfig) -> None:
-    train_root = config.train_output_root
-    test_root = config.test_output_root
-    if (
-        train_root == test_root
-        or train_root in test_root.parents
-        or test_root in train_root.parents
-    ):
-        raise ValueError(
-            "train_output_root and test_output_root must be separate, "
-            "non-nested directories."
-        )
+    output_roots = (
+        ("train_output_root", config.train_output_root),
+        ("test_output_root", config.test_output_root),
+        ("template_output_root", config.template_output_root),
+    )
+    for index, (left_name, left_root) in enumerate(output_roots):
+        for right_name, right_root in output_roots[index + 1:]:
+            if (
+                left_root == right_root
+                or left_root in right_root.parents
+                or right_root in left_root.parents
+            ):
+                raise ValueError(
+                    f"{left_name} and {right_name} must be separate, "
+                    "non-nested directories."
+                )
 
 
 def _validate_outputs_outside_sources(
@@ -412,6 +453,7 @@ def _validate_outputs_outside_sources(
     for label, output_root in (
         ("train_output_root", config.train_output_root),
         ("test_output_root", config.test_output_root),
+        ("template_output_root", config.template_output_root),
     ):
         if (
             output_root == source_root
@@ -430,6 +472,7 @@ def _ensure_output_roots_empty(
     for label, output_root in (
         ("train_output_root", config.train_output_root),
         ("test_output_root", config.test_output_root),
+        ("template_output_root", config.template_output_root),
     ):
         if output_root.is_symlink():
             raise ValueError(

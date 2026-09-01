@@ -214,7 +214,7 @@ TO0001/TO0003/TO0004 的标签是 `Cxxxx` 信道 ID，TO0002/TO0005/TO0006 的�
 接口 ID。
 问题的 `scene_name` 指向未施加动作的上下文 Twin，候选 Twin 只用于离线计算标签。
 
-问题生成不会删除或覆盖已有问题列表和导出模板。目标问题输出已经存在时，命令会立即
+问题生成不会删除或覆盖已有问题列表。目标问题输出已经存在时，命令会立即
 停止并提示先运行：
 
 ```bash
@@ -246,11 +246,12 @@ python main.py split -r 0.8
 - `question_config`：问题列表和生成场景根目录所使用的问题配置。
 - `train_output_root`：训练集输出目录。
 - `test_output_root`：测试集输出目录。
+- `template_output_root`：训练集和测试集共用的问题模板目录。
 - `seed`：可复现划分所使用的随机种子。
 
 `-r` 是 `--train-ratio` 的简写，必须在 `0` 和 `1` 之间；配置文件不提供默认划分比例。
 
-`train_output_root` 和 `test_output_root` 必须都不存在或为空。任一输出目录非空时，
+`train_output_root`、`test_output_root` 和 `template_output_root` 必须都不存在或为空。任一输出目录非空时，
 `split` 会在创建临时数据前直接停止，不会删除或覆盖已有数据集；需要先显式清空对应目录
 或在配置中改用新的输出路径。
 
@@ -259,12 +260,17 @@ python main.py split -r 0.8
 `analysis/evolution/optimization` 分任务，每个任务目录包含该任务的问题列表和
 `scenes/`；其中 `scenes/` 直接保存问题涉及的 `<scene_id>.jsonl` Twin，不创建场景子目录，
 也不复制原始输入、标签或其他文件。某个训练或测试分片中没有对应任务的问题时，不创建
-该任务目录。
+该任务目录。三类任务模板只复制一份，集中保存在数据集根目录的 `question_template/` 中，
+不会在 `train/` 和 `test/` 下重复保存。
 
 默认配置输出到：
 
 ```text
-/home/STN-Runtime/datasets/scene_tasks/
+/home/STN-Runtime/datasets/STN_tasks/
+├── question_template/
+│   ├── analysis.yaml
+│   ├── evolution.yaml
+│   └── optimization.yaml
 ├── train/
 │   ├── analysis/
 │   ├── evolution/
@@ -303,7 +309,7 @@ python main.py clean -o twin
 ```
 
 该命令保留 `origin/input` 中的原始场景输入，删除 origin Twin 和标签、全部
-`evo/input`、`evo/scenes`、`opt/input` 与 `opt/scenes`，并删除所有问题列表和导出模板。
+`evo/input`、`evo/scenes`、`opt/input` 与 `opt/scenes`，并删除所有问题列表。
 使用其他问题配置时可增加 `-c <question_config>`。
 
 也可以只清理指定的 Twin 分组及其对应问题：
@@ -330,7 +336,7 @@ origin。
 python main.py clean -o questions
 ```
 
-该命令只删除分析、演化和优化问题列表、导出模板以及兼容旧目录时发现的局部问题文件，
+该命令只删除分析、演化和优化问题列表，以及兼容旧目录时发现的局部问题文件，
 不删除场景输入、Twin 或标签。
 
 也可以只清理一种问题：
@@ -341,7 +347,7 @@ python main.py clean -o questions -t evolution
 python main.py clean -o questions -t optimization
 ```
 
-三个命令分别只删除 analysis、evolution 或 optimization 的问题列表和对应导出模板，
+三个命令分别只删除 analysis、evolution 或 optimization 的问题列表，
 不会删除其他类型的问题，也不会删除任何场景输入、Twin 或标签。
 
 所有生成命令都不会自动调用这些清理操作；清理只能由上述显式命令触发。
@@ -390,7 +396,6 @@ cd /home/lb/STN/SceneBuilder
 ```text
 generated/
 ├── origin/
-│   ├── question_template.yaml
 │   ├── analysis_questions.jsonl
 │   ├── input/
 │   │   └── <original_scene_id>/
@@ -404,7 +409,6 @@ generated/
 │   └── scenes/
 │       └── <original_scene_id>.jsonl
 ├── evo/
-│   ├── question_template.yaml
 │   ├── evolution_questions.jsonl
 │   ├── input/
 │   │   └── <evolved_scene_id>/
@@ -412,7 +416,6 @@ generated/
 │   └── scenes/
 │       └── <evolved_scene_id>.jsonl
 └── opt/
-    ├── question_template.yaml
     ├── optimization_questions.jsonl
     ├── input/
     │   ├── <optimization_context_scene_id>/
@@ -576,9 +579,9 @@ generated/
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。
 
-每次成功生成某一类问题时，生成器会把该类 `template_file` 原样复制到问题文件同目录的
-`question_template.yaml`。因此 `origin`、`evo` 和 `opt` 都包含问题列表、原始模板、
-`input/` 和 `scenes/`。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
+问题生成阶段不会把模板复制到 `generated/`。运行 `split` 时，三类 `template_file` 才会
+分别复制为 `STN_tasks/question_template/analysis.yaml`、`evolution.yaml` 和
+`optimization.yaml`，供训练集和测试集共用。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
 `answer: [value1, value2]` 声明允许的标签；优化问题的答案格式由对应模板 ID 的生成规则确定。
 
 模板文件是 `schema_version: 1` 的 YAML。分析和演化任务的 `templates` 每项包含唯一的
