@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from typing import Any
 
 
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
+UNKNOWN_ANSWER_LABEL = "unknown"
 
 
 EVOLUTION_EVENT_SEMANTICS = {
@@ -39,6 +41,7 @@ class QuestionTemplate:
     strategy: str | None = None
     answer_fields: tuple[str, ...] = ()
     answer_item_fields: tuple[str, ...] = ()
+    unknown_answer: str | None = None
 
     @property
     def has_id_answer(self) -> bool:
@@ -85,6 +88,7 @@ class QuestionTemplateBundle:
 class QuestionCandidate:
     replacements: dict[str, str]
     label: str
+    evidence: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -97,9 +101,10 @@ class GeneratedQuestion:
     scene_name: str
     original_scene_id: str | None = None
     evolved_scene_id: str | None = None
+    evidence: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        value = {
+    def to_dict(self) -> dict[str, Any]:
+        value: dict[str, Any] = {
             "question_id": self.question_id,
             "question_type": self.question_type,
             "template_id": self.template_id,
@@ -111,6 +116,8 @@ class GeneratedQuestion:
             value["original_scene_id"] = self.original_scene_id
         if self.evolved_scene_id is not None:
             value["evolved_scene_id"] = self.evolved_scene_id
+        if self.evidence is not None:
+            value["evidence"] = dict(self.evidence)
         return value
 
 

@@ -1,6 +1,11 @@
 schema_version: 1
 question_type: optimization
 
+unknown_answer:
+  label: unknown
+  description: Use only when the candidate set is valid but the candidate Twin evidence cannot establish one unique objective winner.
+  evidence_required: true
+
 # Optimization scene construction and question generation share this strategy
 # catalog. Every template declares exactly one strategy.
 strategies:
@@ -12,10 +17,10 @@ strategies:
     description: Compare exactly two counterfactual repair choices for two explicitly listed failed nodes, channels, or interfaces. Each candidate Twin contains only the disabled failure that would remain after repairing the other entity, while topology, routing, capacity, traffic demand, and all unrelated physical states remain unchanged.
 
 # Candidate alternatives are listed in each generated question. Emit a
-# question only when at least two feasible candidates exist, exactly one
-# candidate optimizes the objective beyond the configured tolerance, and that
-# candidate produces a real improvement over the baseline when improvement is
-# part of the question.
+# question only when at least two feasible candidates exist. Use the concrete
+# candidate ID when exactly one candidate satisfies the objective thresholds;
+# otherwise use unknown and record why the evidence cannot establish a unique
+# qualifying winner.
 templates:
   - id: TO0001
     strategy: channel_expansion

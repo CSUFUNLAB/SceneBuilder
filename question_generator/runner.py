@@ -171,19 +171,30 @@ def _generator_for(category: str) -> QuestionCategoryGenerator:
 
 
 def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[str, int]]:
+    unknown_answer = template.unknown_answer
     if not template.answer_values:
-        return [("", total_count)]
+        return (
+            [("", total_count)]
+            if unknown_answer is None
+            else [(unknown_answer, total_count)]
+        )
     if template.has_id_answer:
-        return [(template.answer_values[0], total_count)]
+        targets = [template.answer_values[0]]
+        if unknown_answer is not None:
+            targets.append(unknown_answer)
+    else:
+        targets = list(template.answer_values)
+        if unknown_answer is not None:
+            targets.append(unknown_answer)
 
-    label_count = len(template.answer_values)
+    label_count = len(targets)
     if total_count % label_count != 0:
         raise ValueError(
             f"{template.template_id} requests {total_count} questions but has {label_count} labels; "
             "questions_per_question must be divisible by the label count"
         )
     count_per_label = total_count // label_count
-    return [(label, count_per_label) for label in template.answer_values]
+    return [(label, count_per_label) for label in targets]
 
 
 def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
@@ -234,6 +245,7 @@ def _generate_category(
                     question=template.render(candidate.replacements),
                     label=candidate.label,
                     scene_name=scene.scene_name,
+                    evidence=candidate.evidence,
                 )
                 questions.append(question)
                 question_number += 1

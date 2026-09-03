@@ -11,6 +11,7 @@ from .models import (
     OptimizationStrategy,
     QuestionTemplate,
     QuestionTemplateBundle,
+    UNKNOWN_ANSWER_LABEL,
     evolution_event_semantics,
 )
 
@@ -295,6 +296,7 @@ def _load_templates(
     raw_templates: object,
     template_path: Path,
     category: str,
+    unknown_answer: str,
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
@@ -369,9 +371,32 @@ def _load_templates(
                 strategy=strategy,
                 answer_fields=answer_fields,
                 answer_item_fields=answer_item_fields,
+                unknown_answer=unknown_answer,
             )
         )
     return tuple(templates)
+
+
+def _load_unknown_answer(
+    raw_policy: object,
+    template_path: Path,
+) -> str:
+    location = f"{template_path}:unknown_answer"
+    policy = _mapping(raw_policy, location)
+    _reject_unknown(
+        policy,
+        {"label", "description", "evidence_required"},
+        location,
+    )
+    label = _identifier(policy.get("label"), f"{location}.label")
+    if label != UNKNOWN_ANSWER_LABEL:
+        raise ValueError(
+            f"{location}.label must be {UNKNOWN_ANSWER_LABEL!r}"
+        )
+    _text(policy.get("description"), f"{location}.description")
+    if policy.get("evidence_required") is not True:
+        raise ValueError(f"{location}.evidence_required must be true")
+    return label
 
 
 def load_template_bundle(
@@ -392,6 +417,7 @@ def load_template_bundle(
             "question_type",
             "events",
             "strategies",
+            "unknown_answer",
             "templates",
         },
         str(template_path),
@@ -409,6 +435,10 @@ def load_template_bundle(
         raise ValueError(
             f"{template_path}: question_type is {question_type}, expected {category}"
         )
+    unknown_answer = _load_unknown_answer(
+        root.get("unknown_answer"),
+        template_path,
+    )
     event_types = _load_event_types(
         root.get("events"),
         template_path,
@@ -423,6 +453,7 @@ def load_template_bundle(
         root.get("templates", []),
         template_path,
         category,
+        unknown_answer,
     )
     if category == "optimization":
         _validate_optimization_strategy_coverage(

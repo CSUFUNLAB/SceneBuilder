@@ -47,7 +47,7 @@ python main.py <模式> [选项]
 
 可用模式：
 
-- `initial`：首次克隆后，把指定的 ns-3 压缩包解压到项目的 `ns-3` 目录。
+- `initial`：首次克隆后解压、配置并编译 ns-3。
 - `scenes`：生成网络场景的原始输入。
 - `twin`：生成 `origin`、`evolution` 或 `optimization` Twin。
 - `questions`：从已有 Twin 和标签生成问题。
@@ -70,9 +70,16 @@ python main.py initial
 ```
 
 命令会自动识别压缩包内的 ns-3 源码根目录，将内容解压到项目的 `ns-3/`，并跳过
-Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。如果 `ns-3/ns3` 已经存在，
-命令会拒绝再次初始化，避免混合不同版本的源码。尚未初始化时运行 `scenes` 或
-`twin`，程序会停止并提示先执行 `initial`。
+Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。解压完成后会自动依次执行：
+
+```bash
+./ns3 configure --enable-python-bindings --build-profile=debug
+./ns3 build
+```
+
+任一命令执行失败都会使 `initial` 返回失败。如果 `ns-3/ns3` 已经存在，命令会拒绝
+再次初始化，避免混合不同版本的源码。尚未初始化时运行 `scenes` 或 `twin`，程序会
+停止并提示先执行 `initial`。
 
 ### 1. 生成场景
 
@@ -203,12 +210,12 @@ python main.py questions -t analysis \
 `python main.py twin -t evolution`，通过比较变更前后的 Twin 生成实际满足目标变化的问题。
 普通演化模板针对每个模板及目标答案打乱对应事件的演化 Twin，逐个尝试生成问题；
 状态预测矩阵则按模板总数从具有双侧状态证据的候选中采样实际标签，不为某个事件无法产生的
-状态制造伪样本。每个 Twin 对同一模板最多贡献一道题，达到配置数量后立即停止。
-
-信道扩容和路由调整问题比较同一候选组的上下文 Twin 和全部候选 Twin。只有最优候选相对
-原场景存在超过阈值的正向提升，并且领先第二名超过胜出阈值时才生成问题。故障修复问题
-只比较两个单故障候选 Twin 的绝对结果，不使用正常 context 作为改善基准；两个修复结果
-没有形成唯一最优时跳过该候选组。
+状态制造伪样本；事件或目标有效但状态/指标证据不足时改为生成 `unknown`。每个 Twin 对同一
+模板最多贡献一道题，达到配置数量后立即停止。信道扩容和路由调整问题比较同一候选组的
+上下文 Twin 和全部候选 Twin。最优候选相对原场景存在超过阈值的正向提升，并且领先第二名
+超过胜出阈值时生成其实体 ID，否则生成 `unknown`。故障修复问题只比较两个单故障候选 Twin
+的绝对结果，不使用正常 context 作为改善基准；两个修复结果没有形成唯一最优时同样生成
+`unknown`。
 TO0001/TO0003/TO0004 的标签是 `Cxxxx` 信道 ID，TO0002/TO0005/TO0006 的标签是问题中
 列出的 `Nxxxx` 下一跳节点 ID，TO0007/TO0008/TO0009 的标签是应当修复的节点、信道或
 接口 ID。
@@ -365,10 +372,7 @@ python main.py clean --help
 
 ## 环境准备
 
-先按“初始化 ns-3”一节解压源码。`initial` 只使用 Python 标准库，因此可以在安装项目
-依赖之前执行。
-
-安装 Python 依赖：
+先安装 Python 依赖以及 ns-3 所需的编译工具：
 
 ```bash
 cd /home/lb/STN/SceneBuilder
@@ -377,13 +381,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-首次使用 ns-3 时进行配置和编译：
-
-```bash
-cd /home/lb/STN/SceneBuilder/ns-3
-./ns3 configure -d debug --enable-examples --disable-tests
-./ns3 build TwinGenerate
-```
+然后按“初始化 ns-3”一节运行 `initial`；该命令会自动解压、配置并完整编译 ns-3，
+无需再手动执行 `./ns3 configure` 或 `./ns3 build`。
 
 之后返回项目根目录运行 SceneBuilder：
 
@@ -527,6 +526,14 @@ generated/
 若某类标签的场景数或答案分布不足以达到配置数量，生成器保留已生成的问题，并在命令行
 报告实际数量。
 
+三类问题模板共用文件顶层的 `unknown_answer` 策略，标签固定为 `unknown`。问题及目标必须
+先满足对应模板的结构和语义前提；只有可用 Twin 证据缺失、相互矛盾或不能支持唯一答案时，
+才生成 `label: "unknown"`。物理或逻辑上不可能成立的问题不会借此恢复为候选，损坏的场景
+文件也不会作为 `unknown` 样本。每条 `unknown` 记录还包含 `evidence`，其中
+`status: "insufficient"`、`reason` 和 `required_evidence` 分别说明证据状态、无法判断的直接
+原因以及要得到确定答案仍缺少的证据。已有问题文件不会被自动重写，重新运行 `questions`
+后才会产生新标签。
+
 数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
 
 问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。
@@ -574,7 +581,8 @@ generated/
 
 - `scenes_root`：包含场景及孪生体的目录。
 - `seed`：问题实体选择的随机种子。
-- `questions_per_question`：每条问题模板期望生成的总数量。
+- `questions_per_question`：每条问题模板期望生成的总数量；生成器会把 `unknown` 与该模板的
+  其他答案目标一起纳入数量分配。
 - `template_file`：该类问题使用的模板文件。
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。
@@ -583,6 +591,8 @@ generated/
 分别复制为 `STN_tasks/question_template/analysis.yaml`、`evolution.yaml` 和
 `optimization.yaml`，供训练集和测试集共用。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
 `answer: [value1, value2]` 声明允许的标签；优化问题的答案格式由对应模板 ID 的生成规则确定。
+三个文件顶层都必须声明同一份 `unknown_answer` 策略；加载器会将该标签加入文件中的每条
+问题模板，无需在每个 `answer` 中重复书写。
 
 模板文件是 `schema_version: 1` 的 YAML。分析和演化任务的 `templates` 每项包含唯一的
 `id`、问题文本 `question` 和 `answer`；演化模板的 `answer` 是标签列表，不再重复声明
@@ -595,8 +605,10 @@ generated/
 每个事件条目包含 `id`、`entity_type` 和非空的 `description`；事件 ID 是生成行为的唯一
 标识，具体变更方式由代码中的事件语义映射确定，描述用于说明该事件对场景的修改语义。
 `TE0026` 至 `TE0057` 组成 8 类事件与 node/channel/nic/data_flow 四类目标实体的
-完整状态预测矩阵，答案标签与分析状态标签一致。此类模板不为物理上不可能出现的状态强行
-凑平衡样本；事件实体和已有目标必须在原始 Twin 中有状态证据，目标在演化后 Twin 中的状态
+完整状态预测矩阵，答案标签从分析状态标签中按事件语义取理论可达子集。例如，信道故障不会
+使节点变为 `disabled`，恢复、负载变化和新增流也不会产生新的物理 `disabled` 状态；当前事件
+规则不会在演化后保留或创建 `degraded` 信道。此类模板不为物理上不可能出现的状态强行凑平衡
+样本；事件实体和已有目标必须在原始 Twin 中有状态证据，目标在演化后 Twin 中的状态
 也必须能由可观测属性重新推导且与标签一致。新增流不存在原始状态，因此改为检查其端点存在、
 当前路由证据可查询，并要求新增后的流状态满足同样的证据一致性。
 
@@ -606,7 +618,9 @@ generated/
 每个优化模板通过自身的 `strategy` 字段声明所属策略。模板加载器要求
 三种策略同时存在，并保证每个 TO 模板恰好属于一种已声明策略。生成问题时必须把候选下一跳、
 候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
-真实改善或存在并列最优时不应生成问题；故障修复使用单独的双候选绝对指标比较规则。
+真实改善、指标证据不完整或存在并列最优时无法确定唯一答案，并生成带证据说明的
+`unknown`；候选不足两个等不满足问题结构的场景仍不生成。故障修复使用单独的双候选绝对
+指标比较规则。
 `TO0007/TO0008/TO0009` 使用 `fault_repair`，分别优化全网吞吐量、全网包加权平均延迟和
 全网聚合丢包率。三个模板使用同一组两个单故障候选：只保留故障 B 的 Twin 表示修复 A，
 只保留故障 A 的 Twin 表示修复 B。正常 context 只提供共同拓扑、路由和流量背景，不生成

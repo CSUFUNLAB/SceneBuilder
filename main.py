@@ -27,6 +27,13 @@ DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 DEFAULT_DATASET_SPLIT_CONFIG = (
     PROJECT_ROOT / "configs" / "dataset_split.yaml"
 )
+NS3_CONFIGURE_COMMAND = (
+    "./ns3",
+    "configure",
+    "--enable-python-bindings",
+    "--build-profile=debug",
+)
+NS3_BUILD_COMMAND = ("./ns3", "build")
 TWIN_FILE_NAME = "twin.jsonl"
 LABEL_FILE_NAME = "labels.jsonl"
 REQUIRED_BASE_SCENE_FILES = {
@@ -143,7 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     initial_parser = subparsers.add_parser(
         "initial",
-        help="Extract an ns-3 source archive into the project",
+        help="Extract, configure, and build ns-3 in the project",
     )
     initial_parser.add_argument(
         "archive",
@@ -424,6 +431,25 @@ def _extract_ns3_member(
     return True
 
 
+def _configure_and_build_ns3(destination: Path) -> None:
+    for command in (NS3_CONFIGURE_COMMAND, NS3_BUILD_COMMAND):
+        print(
+            f"Running in {destination}: {shlex.join(command)}",
+            flush=True,
+        )
+        try:
+            subprocess.run(
+                command,
+                cwd=destination,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(
+                "ns-3 initialization command failed with exit code "
+                f"{exc.returncode}: {shlex.join(command)}"
+            ) from exc
+
+
 def initialize_ns3(
     archive_value: str | Path | None,
     destination: str | Path = DEFAULT_NS3_ROOT,
@@ -508,6 +534,7 @@ def initialize_ns3(
         raise ValueError(
             f"Initialization did not create an executable ns-3 launcher: {launcher}"
         )
+    _configure_and_build_ns3(destination_path)
     return Ns3InitializationResult(
         archive=archive_path,
         source_prefix=source_prefix,
@@ -1363,17 +1390,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "initial":
             result = initialize_ns3(args.archive)
-            print(f"Initialized ns-3 in {result.destination}")
+            print(f"Initialized and built ns-3 in {result.destination}")
             print(f"Archive: {result.archive}")
             print(f"Source root: {result.source_prefix}")
             print(
                 f"Extracted {result.extracted_entries} archive entry/entries; "
                 f"skipped {result.skipped_entries} existing entry/entries"
             )
-            print("Next, configure and build ns-3:")
-            print(f"  cd {result.destination}")
-            print("  ./ns3 configure -d debug --enable-examples --disable-tests")
-            print("  ./ns3 build TwinGenerate")
             return 0
 
         if args.command == "scenes":
