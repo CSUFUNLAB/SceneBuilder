@@ -21,6 +21,8 @@ class TopologySourceConfig:
 
 @dataclass(frozen=True)
 class SceneConfig:
+    network_mode: str
+    scene_format: str
     output_root: Path
     seed: int
     scenes_per_topology: int
@@ -35,6 +37,7 @@ class SceneConfig:
     traffic_matrix: dict[str, Any]
     flow_feature: dict[str, Any]
     events: dict[str, Any]
+    wifi: dict[str, Any]
     config_path: Path
 
 
@@ -79,6 +82,7 @@ _DEFAULT_LINK_CONFIG = {
 }
 
 _DEFAULT_NIC_CONFIG = {
+    "wired_device_type": "point_to_point",
     "queue_policy_mode": "mixed",
     "queue_policy_mode_probabilities": {},
     "queue_policy_candidates": ["FIFO", "RED", "CoDel", "FqCoDel"],
@@ -182,6 +186,26 @@ _DEFAULT_EVENTS_CONFIG = {
         "increase_multiplier_range": [1.2, 2.0],
         "decrease_multiplier_range": [0.2, 0.8],
     },
+}
+
+_DEFAULT_WIFI_CONFIG = {
+    "standard": "802.11g",
+    "standard_probabilities": {},
+    "channel_numbers": [1, 6, 11],
+    "channel_width_mhz": 20,
+    "tx_power_candidates_dbm": [18.0],
+    "loss_exponent_candidates": [3.0],
+    "rate_manager": "IdealWifiManager",
+    "ip_cidr": "198.18.0.0/15",
+    "subnet_prefix": 24,
+    "area_width_m": 200.0,
+    "area_height_m": 150.0,
+    "min_ap_distance_m": 25.0,
+    "sta_distance_range_m": [5.0, 30.0],
+    "ap_height_m": 2.5,
+    "sta_height_m": 1.0,
+    "moving_sta_ratio": 0.0,
+    "sta_speed_range_mps": [0.5, 1.0],
 }
 
 def _resolve_path(base_dir: Path, raw_path: str | Path | None) -> Path:
@@ -324,6 +348,8 @@ def load_config(config_path: str | Path) -> SceneConfig:
     scenes_per_topology = int(raw.get("scenes_per_topology", 100))
     max_topology_nodes = int(raw.get("max_topology_nodes", 50))
     scene_duration = float(raw.get("scene_duration", 300.0))
+    network_mode = str(raw.get("network_mode", "wired")).strip().lower()
+    scene_format = str(raw.get("scene_format", "legacy_csv")).strip().lower()
 
     topology_sources = _parse_topology_sources(raw.get("topology_sources"), base_dir)
 
@@ -372,7 +398,13 @@ def load_config(config_path: str | Path) -> SceneConfig:
     flow_feature.pop("abr", None)
     events = _deep_merge(_DEFAULT_EVENTS_CONFIG, raw.get("events"))
     events = _replace_explicit_mapping_overrides(events, raw.get("events"), ("event_type_probabilities",))
+    wifi = _deep_merge(_DEFAULT_WIFI_CONFIG, raw.get("wifi"))
+    # Accept old configuration files without retaining an unused naming option.
+    # Wi-Fi SSIDs are derived from channel IDs by the simulator.
+    wifi.pop("ssid_prefix", None)
     config = SceneConfig(
+        network_mode=network_mode,
+        scene_format=scene_format,
         output_root=output_root,
         seed=seed,
         scenes_per_topology=scenes_per_topology,
@@ -387,6 +419,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         traffic_matrix=traffic_matrix,
         flow_feature=flow_feature,
         events=events,
+        wifi=wifi,
         config_path=path,
     )
 

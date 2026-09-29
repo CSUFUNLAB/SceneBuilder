@@ -16,5 +16,8 @@ build_lib(
     ${libflow-monitor}
     ${libinternet}
     ${libpoint-to-point}
+    ${libwifi}
+    ${libmobility}
+    ${libpropagation}
     ${libtraffic-control}
 )

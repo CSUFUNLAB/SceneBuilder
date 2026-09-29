@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -58,6 +59,7 @@ class NetworkSceneHelper
     struct NodeRecord
     {
         std::string id;
+        std::string role;
         std::string state;
     };
 
@@ -85,6 +87,34 @@ class NetworkSceneHelper
         uint32_t queueSizePackets{0};
         uint32_t simulationQueueSizePackets{0};
         std::string state;
+        std::string interfaceType{"wired"};
+        std::string bssId;
+        std::string wifiRole;
+    };
+
+    struct WifiBssRecord
+    {
+        std::string id;
+        std::string apNode;
+        std::string standard;
+        uint16_t channelNumber{0};
+        uint16_t channelWidthMhz{20};
+        double txPowerDbm{18.0};
+        double lossExponent{3.0};
+        std::string rateManager{"IdealWifiManager"};
+        std::string state;
+        std::vector<std::string> interfaceIds;
+    };
+
+    struct WifiAssociationRecord
+    {
+        std::string id;
+        std::string bssId;
+        std::string apNode;
+        std::string staNode;
+        std::string apNicId;
+        std::string staNicId;
+        std::string configuredState;
     };
 
     struct FlowRecord
@@ -127,6 +157,10 @@ class NetworkSceneHelper
     };
 
     void TraceIpv4Tx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface);
+    void TraceIpv4FlowTx(std::string nodeId,
+                         const Ipv4Header& header,
+                         Ptr<const Packet> packet,
+                         uint32_t interface);
     void TraceIpv4Rx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface);
     void TraceIpv4Drop(const Ipv4Header& header,
                        Ptr<const Packet> packet,
@@ -139,13 +173,28 @@ class NetworkSceneHelper
     void TraceDeviceRxDrop(std::string interfaceId, Ptr<const Packet> packet);
     std::string IdentifySceneFlow(Ptr<const Packet> packet) const;
     uint32_t GetCurrentQueuePackets(const std::string& interfaceId) const;
+    /** @brief Install the common traffic-control queue above a wired or WiFi device.
+     * @param interfaceId Scene NIC ID.
+     * @param device Actual simulated network device.
+     * @param policy FIFO, RED, CoDel or FqCoDel.
+     * @param nominalSize Nominal packet capacity before scene scaling.
+     */
+    void InstallInterfaceQueue(const std::string& interfaceId,
+                               Ptr<NetDevice> device,
+                               const std::string& policy,
+                               uint32_t nominalSize);
     void ResetForScene(const NetworkSceneData& scene);
     void LoadSceneRecords(const NetworkSceneData& scene);
     void InstallInternetStackAndTracing();
+    void InstallSceneMobility(const std::vector<NetworkScenePositionRow>& positions);
     void InstallSceneChannels(const std::vector<NetworkSceneChannelRow>& channels,
                            const std::vector<NetworkSceneNicRow>& nics,
                            std::unordered_map<std::string, std::string>& primaryAddressByNode,
                            std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces);
+    void InstallSceneWifi(const std::vector<NetworkSceneWifiBssRow>& wifiBss,
+                          const std::vector<NetworkSceneWifiInterfaceRow>& wifiInterfaces,
+                          std::unordered_map<std::string, std::string>& primaryAddressByNode,
+                          std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces);
     void InstallSceneRoutes(const std::vector<NetworkSceneNodeRow>& nodes,
                             const std::unordered_map<std::string, std::string>& primaryAddressByNode);
     void ApplyInitialDisabledStates(const std::vector<NetworkSceneNodeRow>& nodes,
@@ -180,13 +229,17 @@ class NetworkSceneHelper
     std::vector<NodeRecord> m_nodeRecords;
     std::vector<ChannelRecord> m_channelRecords;
     std::vector<InterfaceRecord> m_interfaceRecords;
+    std::vector<WifiBssRecord> m_wifiBssRecords;
+    std::vector<WifiAssociationRecord> m_wifiAssociationRecords;
     std::vector<FlowRecord> m_flowRecords;
     std::vector<EventRecord> m_eventRecords;
     std::vector<std::vector<int>> m_routingMatrix;
+    std::vector<std::vector<int>> m_nextHopMatrix;
     std::map<std::string, uint32_t> m_nodeIndexById;
     std::map<std::string, uint32_t> m_channelIndexById;
     std::map<std::string, uint32_t> m_interfaceIndexById;
     std::map<std::string, uint32_t> m_flowIndexById;
+    std::map<std::string, uint32_t> m_wifiBssIndexById;
     std::map<uint16_t, std::string> m_flowIdByPort;
     std::map<std::string, uint32_t> m_ipv4InterfaceById;
     std::map<uint32_t, std::string> m_nodeIdByNs3Node;
@@ -196,6 +249,7 @@ class NetworkSceneHelper
     std::map<std::string, PacketCounters> m_interfaceCounters;
     std::map<std::pair<std::string, std::string>, PacketCounters> m_interfaceFlowCounters;
     std::map<std::string, Ptr<QueueDisc>> m_queueDiscs;
+    std::map<std::string, NetworkScenePositionRow> m_positionByNode;
     std::map<std::string, FlowRuntime> m_flowRuntimeById;
     std::unique_ptr<FlowMonitorHelper> m_flowMonitorHelper;
     Ptr<FlowMonitor> m_flowMonitor;

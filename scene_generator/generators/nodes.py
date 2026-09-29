@@ -9,7 +9,7 @@ from ..rng import RandomManager
 from ..utils.graph_utils import ordered_nodes
 from .routing import build_node_id_map
 
-NODE_FIELDS = ["node_id", "state", "latitude", "longitude"]
+NODE_FIELDS = ["node_id", "role", "state", "latitude", "longitude"]
 
 _DEFAULT_TRUSTED_NODE_ROLE_FIELDS = [
     "source_node_role",
@@ -287,7 +287,7 @@ def generate_nodes(
     nodes_cfg = getattr(config, "nodes", {})
 
     if node_roles is None:
-        infer_node_roles(graph, nodes_cfg, rng)
+        node_roles = infer_node_roles(graph, nodes_cfg, rng)
 
     rows: list[dict[str, Any]] = []
     for node in nodes:
@@ -295,6 +295,7 @@ def generate_nodes(
         rows.append(
             {
                 "node_id": _public_node_id(int(node_id_map[node])),
+                "role": str(node_roles.get(node, "aggregation")),
                 "state": "normal",
                 "latitude": _as_optional_float(attrs.get("source_latitude")),
                 "longitude": _as_optional_float(attrs.get("source_longitude")),

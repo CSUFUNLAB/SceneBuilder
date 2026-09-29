@@ -6,7 +6,7 @@ from ..rng import RandomManager
 from ..utils.ip_mac import generate_channel_interface_ips, generate_unique_macs
 from ..utils.selection import weighted_pick
 
-NIC_FIELDS = ["nic_id", "node", "interface_index", "channel_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
+NIC_FIELDS = ["nic_id", "node", "interface_index", "channel_id", "ip", "mac", "queue_policy", "queue_size_packets", "state", "device_type", "queue_layer"]
 
 
 def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager) -> dict[str, Any]:
@@ -88,6 +88,23 @@ def _resolve_queue_size_by_role(
     return role_queue_sizes
 
 
+def generate_queue_attributes(
+    nics_cfg: dict[str, Any],
+    rng: RandomManager,
+    selection: dict[str, Any],
+    node_role: str = "",
+) -> dict[str, Any]:
+    """Common traffic-control queue configuration for wired and WiFi NICs."""
+    role_sizes = selection.get("active_rule", {}).get("queue_size_packets_by_role", {})
+    if node_role in role_sizes:
+        size = int(role_sizes[node_role])
+    else:
+        low, high = nics_cfg.get("queue_size_range_packets", [128, 2048])
+        size = rng.randint(low, high)
+    return {"queue_policy": _choose_queue_policy(nics_cfg, rng, selection),
+            "queue_size_packets": size, "queue_layer": "traffic_control"}
+
+
 def generate_nics(
     channel_rows: list[dict[str, Any]],
     config: Any,
@@ -109,9 +126,8 @@ def generate_nics(
     mac_cfg = dict(nics_cfg.get("mac", {}))
     locally_administered = bool(mac_cfg.get("locally_administered", True))
 
-    queue_size_range = nics_cfg.get("queue_size_range_packets", [128, 2048])
-    q_low, q_high = int(queue_size_range[0]), int(queue_size_range[1])
-    role_queue_sizes = _resolve_queue_size_by_role(nics_cfg, node_roles or {}, rng, queue_selection) if node_roles else {}
+    if node_roles:
+        _resolve_queue_size_by_role(nics_cfg, node_roles, rng, queue_selection)
 
     nic_count = len(channel_rows) * 2
     channel_interface_ips, ip_cidr_counts, channel_subnet_prefix_counts = generate_channel_interface_ips(
@@ -139,10 +155,7 @@ def generate_nics(
         for node, ip in ((str(channel["src"]), left_ip), (str(channel["dst"]), right_ip)):
             interface_counts_by_node[node] = int(interface_counts_by_node.get(node, 0)) + 1
             node_role = str(node_roles.get(node, "")) if node_roles else ""
-            if node_role and node_role in role_queue_sizes:
-                queue_size_packets = role_queue_sizes[node_role]
-            else:
-                queue_size_packets = rng.randint(q_low, q_high)
+            queue_attributes = generate_queue_attributes(nics_cfg, rng, queue_selection, node_role)
             rows.append(
                 {
                     "nic_id": f"IF{nic_idx:04d}",
@@ -151,8 +164,8 @@ def generate_nics(
                     "channel_id": channel_id,
                     "ip": ip,
                     "mac": macs[nic_idx - 1],
-                    "queue_policy": _choose_queue_policy(nics_cfg, rng, queue_selection),
-                    "queue_size_packets": queue_size_packets,
+                    **queue_attributes,
+                    "device_type": str(nics_cfg.get("wired_device_type", "point_to_point")),
                     "state": "normal",
                 }
             )

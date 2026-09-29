@@ -25,6 +25,8 @@ ALLOWED_EVENT_TYPES = {
     "nic": {"fault", "recovery"},
     "data_flow": {"increase", "decrease"},
 }
+ALLOWED_NETWORK_MODES = {"wired", "hybrid"}
+ALLOWED_SCENE_FORMATS = {"legacy_csv", "unified_jsonl"}
 
 
 def _ensure_probability(value: float, name: str) -> None:
@@ -116,6 +118,16 @@ def _ensure_positive_range(value: object, name: str) -> None:
 
 
 def validate_scene_config(config: "SceneConfig") -> None:
+    if str(config.network_mode) not in ALLOWED_NETWORK_MODES:
+        raise ValueError(
+            f"Unsupported network_mode: {config.network_mode}; "
+            f"expected one of {sorted(ALLOWED_NETWORK_MODES)}"
+        )
+    if str(config.scene_format) not in ALLOWED_SCENE_FORMATS:
+        raise ValueError(
+            f"Unsupported scene_format: {config.scene_format}; "
+            f"expected one of {sorted(ALLOWED_SCENE_FORMATS)}"
+        )
     if int(config.scenes_per_topology) <= 0:
         raise ValueError("scenes_per_topology must be a positive integer")
     if int(config.max_topology_nodes) <= 0:
@@ -175,6 +187,8 @@ def validate_scene_config(config: "SceneConfig") -> None:
             "link_generation.role_based_random.derived_link_role.core_edge_uplink_probability",
         )
 
+    if config.nics.get("wired_device_type", "point_to_point") != "point_to_point":
+        raise ValueError("nics.wired_device_type currently supports only point_to_point; Ethernet is not implemented")
     queue_policy_mode = str(config.nics.get("queue_policy_mode", "mixed"))
     if queue_policy_mode not in ALLOWED_QUEUE_POLICY_MODES:
         raise ValueError(f"Unsupported nics.queue_policy_mode: {queue_policy_mode}")
@@ -207,6 +221,9 @@ def validate_scene_config(config: "SceneConfig") -> None:
         if queue_probabilities and sum(float(v) for v in queue_probabilities.values()) <= 0:
             raise ValueError("nics.queue_policy_probabilities must include positive weights")
     _ensure_range(config.nics.get("queue_size_range_packets", [0, 0]), "nics.queue_size_range_packets")
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 1 or v > 1000000
+           for v in config.nics.get("queue_size_range_packets", [])):
+        raise ValueError("nics.queue_size_range_packets requires integers from 1 to 1000000")
     try:
         nic_network = ipaddress.ip_network(str(config.nics.get("ip_cidr", "10.0.0.0/8")), strict=False)
     except ValueError as exc:
@@ -362,3 +379,62 @@ def validate_scene_config(config: "SceneConfig") -> None:
         data_flow_events.get("decrease_multiplier_range", [0.2, 0.8]),
         "events.data_flow.decrease_multiplier_range",
     )
+
+    if str(config.network_mode) == "hybrid":
+        wifi = config.wifi
+        channel_numbers = wifi.get("channel_numbers", [])
+        if not isinstance(channel_numbers, (list, tuple)) or not channel_numbers:
+            raise ValueError("wifi.channel_numbers must be a non-empty list")
+        if any(int(channel) <= 0 for channel in channel_numbers):
+            raise ValueError("wifi.channel_numbers must contain positive integers")
+
+        standard_probabilities = wifi.get("standard_probabilities", {})
+        if standard_probabilities:
+            if not isinstance(standard_probabilities, dict):
+                raise ValueError("wifi.standard_probabilities must be a mapping")
+            unsupported = set(standard_probabilities) - {"802.11g", "802.11n"}
+            if unsupported:
+                raise ValueError(f"Unsupported Wi-Fi standards: {sorted(unsupported)}")
+            if any(float(weight) < 0 for weight in standard_probabilities.values()) or sum(
+                float(weight) for weight in standard_probabilities.values()
+            ) <= 0:
+                raise ValueError("wifi.standard_probabilities must contain positive total weight")
+        elif str(wifi.get("standard", "802.11g")) not in {"802.11g", "802.11n"}:
+            raise ValueError("wifi.standard must be 802.11g or 802.11n")
+
+        if int(wifi.get("channel_width_mhz", 20)) != 20:
+            raise ValueError("The simple Wi-Fi version supports only 20 MHz channels")
+        tx_power_candidates = wifi.get("tx_power_candidates_dbm", [])
+        if not isinstance(tx_power_candidates, (list, tuple)) or not tx_power_candidates:
+            raise ValueError("wifi.tx_power_candidates_dbm must be a non-empty list")
+        if any(float(value) <= 0 for value in tx_power_candidates):
+            raise ValueError("wifi.tx_power_candidates_dbm must contain positive values")
+        loss_exponents = wifi.get("loss_exponent_candidates", [])
+        if not isinstance(loss_exponents, (list, tuple)) or not loss_exponents:
+            raise ValueError("wifi.loss_exponent_candidates must be a non-empty list")
+        if any(float(value) <= 0 for value in loss_exponents):
+            raise ValueError("wifi.loss_exponent_candidates must contain positive values")
+        if str(wifi.get("rate_manager", "IdealWifiManager")) != "IdealWifiManager":
+            raise ValueError("The simple Wi-Fi version supports only IdealWifiManager")
+        moving_ratio = float(wifi.get("moving_sta_ratio", 0.0))
+        if moving_ratio < 0.0 or moving_ratio > 1.0:
+            raise ValueError("wifi.moving_sta_ratio must be between 0 and 1")
+        _ensure_positive_range(
+            wifi.get("sta_speed_range_mps", [0.5, 1.0]),
+            "wifi.sta_speed_range_mps",
+        )
+
+        try:
+            wifi_network = ipaddress.ip_network(str(wifi.get("ip_cidr", "198.18.0.0/15")), strict=False)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported wifi.ip_cidr: {wifi.get('ip_cidr')}") from exc
+        subnet_prefix = int(wifi.get("subnet_prefix", 24))
+        if subnet_prefix <= int(wifi_network.prefixlen) or subnet_prefix > int(wifi_network.max_prefixlen):
+            raise ValueError("wifi.subnet_prefix must be larger than the base CIDR prefix")
+
+        sta_range = wifi.get("sta_distance_range_m", [5.0, 30.0])
+        _ensure_positive_range(sta_range, "wifi.sta_distance_range_m")
+        if float(wifi.get("area_width_m", 0.0)) <= 0 or float(wifi.get("area_height_m", 0.0)) <= 0:
+            raise ValueError("wifi area dimensions must be > 0")
+        if float(wifi.get("min_ap_distance_m", 0.0)) < 0:
+            raise ValueError("wifi.min_ap_distance_m must be >= 0")

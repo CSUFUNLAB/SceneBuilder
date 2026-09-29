@@ -1,0 +1,9 @@
+seed: 2026092102
+scenes_root: ../generated/wifi_v2_normal_example
+
+categories:
+  analysis:
+    enabled: true
+    questions_per_question: 60
+    template_file: ../question_generator/templates/analysis.yaml
+    output_file: ../generated/wifi_v2_normal_example/origin/analysis_questions.jsonl

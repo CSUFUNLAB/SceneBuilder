@@ -5,7 +5,11 @@
 #include "ns3/network-scene-traffic.h"
 
 #include "ns3/data-rate.h"
+#include "ns3/double.h"
+#include "ns3/boolean.h"
+#include "ns3/constant-velocity-mobility-model.h"
 #include "ns3/flow-monitor-helper.h"
+#include "ns3/frame-exchange-manager.h"
 #include "ns3/inet-socket-address.h"
 #include "ns3/internet-stack-helper.h"
 #include "ns3/ipv4.h"
@@ -16,6 +20,8 @@
 #include "ns3/ipv4-static-routing.h"
 #include "ns3/log.h"
 #include "ns3/mac48-address.h"
+#include "ns3/mobility-helper.h"
+#include "ns3/mobility-model.h"
 #include "ns3/node.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
@@ -24,11 +30,15 @@
 #include "ns3/ppp-header.h"
 #include "ns3/queue-disc.h"
 #include "ns3/simulator.h"
+#include "ns3/ssid.h"
 #include "ns3/string.h"
 #include "ns3/traffic-control-helper.h"
 #include "ns3/uinteger.h"
 #include "ns3/udp-header.h"
 #include "ns3/udp-socket-factory.h"
+#include "ns3/wifi-helper.h"
+#include "ns3/wifi-net-device.h"
+#include "ns3/yans-wifi-helper.h"
 
 #include <algorithm>
 #include <cmath>
@@ -252,10 +262,13 @@ NetworkSceneHelper::Install()
     ResetForScene(scene);
     LoadSceneRecords(scene);
     InstallInternetStackAndTracing();
+    InstallSceneMobility(scene.positions);
 
     std::unordered_map<std::string, std::string> primaryAddressByNode;
     std::vector<std::pair<std::string, uint32_t>> disabledInterfaces;
     InstallSceneChannels(scene.channels, scene.nics, primaryAddressByNode, disabledInterfaces);
+    InstallSceneWifi(
+        scene.wifiBss, scene.wifiInterfaces, primaryAddressByNode, disabledInterfaces);
     InstallSceneRoutes(scene.nodes, primaryAddressByNode);
     ApplyInitialDisabledStates(scene.nodes, disabledInterfaces);
     if (LEGACY_RUNTIME_EVENTS_ENABLED)
@@ -288,13 +301,17 @@ NetworkSceneHelper::ResetForScene(const NetworkSceneData& scene)
     m_nodeRecords.clear();
     m_channelRecords.clear();
     m_interfaceRecords.clear();
+    m_wifiBssRecords.clear();
+    m_wifiAssociationRecords.clear();
     m_flowRecords.clear();
     m_eventRecords.clear();
     m_routingMatrix = scene.routingMatrix;
+    m_nextHopMatrix = scene.nextHopMatrix;
     m_nodeIndexById.clear();
     m_channelIndexById.clear();
     m_interfaceIndexById.clear();
     m_flowIndexById.clear();
+    m_wifiBssIndexById.clear();
     m_flowIdByPort.clear();
     m_ipv4InterfaceById.clear();
     m_nodeIdByNs3Node.clear();
@@ -304,6 +321,7 @@ NetworkSceneHelper::ResetForScene(const NetworkSceneData& scene)
     m_interfaceCounters.clear();
     m_interfaceFlowCounters.clear();
     m_queueDiscs.clear();
+    m_positionByNode.clear();
     m_flowRuntimeById.clear();
     m_flowMonitorHelper.reset();
     m_flowMonitor = nullptr;
@@ -317,7 +335,7 @@ NetworkSceneHelper::LoadSceneRecords(const NetworkSceneData& scene)
     for (uint32_t i = 0; i < scene.nodes.size(); ++i)
     {
         m_nodeIndexById[scene.nodes[i].id] = i;
-        m_nodeRecords.push_back({scene.nodes[i].id, scene.nodes[i].state});
+        m_nodeRecords.push_back({scene.nodes[i].id, scene.nodes[i].role, scene.nodes[i].state});
         m_nodeIdByNs3Node[m_nodes.Get(i)->GetId()] = scene.nodes[i].id;
     }
     for (const auto& channel : scene.channels)
@@ -352,7 +370,10 @@ NetworkSceneHelper::LoadSceneRecords(const NetworkSceneData& scene)
                                       ScaledQueueSizePackets(
                                           nic.queueSizePackets,
                                           m_valueScaleFactor),
-                                      nic.state});
+                                      nic.state,
+                                      "wired",
+                                      "",
+                                      ""});
         m_interfaceIndexById[nic.id] = static_cast<uint32_t>(m_interfaceRecords.size() - 1);
         m_interfaceIdByNodeInterface[{nic.node, nic.interfaceIndex}] = nic.id;
         auto channelIt = channelRecordIndex.find(nic.channelId);
@@ -368,6 +389,54 @@ NetworkSceneHelper::LoadSceneRecords(const NetworkSceneData& scene)
             m_peerInterfaceById[channel.interfaceIds[0]] = channel.interfaceIds[1];
             m_peerInterfaceById[channel.interfaceIds[1]] = channel.interfaceIds[0];
         }
+    }
+    for (const auto& bss : scene.wifiBss)
+    {
+        m_wifiBssIndexById[bss.id] = static_cast<uint32_t>(m_wifiBssRecords.size());
+        m_wifiBssRecords.push_back(
+            {bss.id,
+             bss.apNode,
+             bss.standard,
+             bss.channelNumber,
+             bss.channelWidthMhz,
+             bss.txPowerDbm,
+             bss.lossExponent,
+             bss.rateManager,
+             bss.state,
+             {}});
+    }
+    for (const auto& iface : scene.wifiInterfaces)
+    {
+        m_interfaceRecords.push_back({iface.id,
+                                      iface.node,
+                                      iface.interfaceIndex,
+                                      "",
+                                      iface.ipCidr,
+                                      iface.mac,
+                                      iface.queuePolicy,
+                                      iface.queueSizePackets,
+                                      ScaledQueueSizePackets(iface.queueSizePackets, m_valueScaleFactor),
+                                      iface.state,
+                                      "wifi",
+                                      iface.bssId,
+                                      iface.wifiRole});
+        m_interfaceIndexById[iface.id] = static_cast<uint32_t>(m_interfaceRecords.size() - 1);
+        m_interfaceIdByNodeInterface[{iface.node, iface.interfaceIndex}] = iface.id;
+        auto bssIt = m_wifiBssIndexById.find(iface.bssId);
+        if (bssIt != m_wifiBssIndexById.end())
+        {
+            m_wifiBssRecords[bssIt->second].interfaceIds.push_back(iface.id);
+        }
+    }
+    for (const auto& association : scene.wifiAssociations)
+    {
+        m_wifiAssociationRecords.push_back({association.id,
+                                            association.bssId,
+                                            association.apNode,
+                                            association.staNode,
+                                            association.apNicId,
+                                            association.staNicId,
+                                            association.configuredState});
     }
     if (LEGACY_RUNTIME_EVENTS_ENABLED)
     {
@@ -390,10 +459,57 @@ NetworkSceneHelper::InstallInternetStackAndTracing()
     internet.Install(m_nodes);
     for (uint32_t i = 0; i < m_nodes.GetN(); ++i)
     {
-        Ptr<Ipv4> ipv4 = m_nodes.Get(i)->GetObject<Ipv4>();
+        Ptr<Node> node = m_nodes.Get(i);
+        Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
+        const std::string nodeId = m_nodeIdByNs3Node.at(node->GetId());
         ipv4->TraceConnectWithoutContext("Tx", MakeCallback(&NetworkSceneHelper::TraceIpv4Tx, this));
         ipv4->TraceConnectWithoutContext("Rx", MakeCallback(&NetworkSceneHelper::TraceIpv4Rx, this));
         ipv4->TraceConnectWithoutContext("Drop", MakeCallback(&NetworkSceneHelper::TraceIpv4Drop, this));
+        ipv4->TraceConnectWithoutContext(
+            "SendOutgoing",
+            MakeCallback(&NetworkSceneHelper::TraceIpv4FlowTx, this, nodeId));
+        ipv4->TraceConnectWithoutContext(
+            "UnicastForward",
+            MakeCallback(&NetworkSceneHelper::TraceIpv4FlowTx, this, nodeId));
+    }
+}
+
+void
+NetworkSceneHelper::InstallSceneMobility(const std::vector<NetworkScenePositionRow>& positions)
+{
+    if (positions.empty())
+    {
+        return;
+    }
+
+    MobilityHelper mobility;
+    mobility.SetMobilityModel("ns3::ConstantVelocityMobilityModel");
+    mobility.Install(m_nodes);
+    for (const auto& position : positions)
+    {
+        auto nodeIt = m_nodeIndexById.find(position.node);
+        if (nodeIt == m_nodeIndexById.end())
+        {
+            throw std::runtime_error("Unknown node in positions.csv: " + position.node);
+        }
+        Ptr<ConstantVelocityMobilityModel> model =
+            m_nodes.Get(nodeIt->second)->GetObject<ConstantVelocityMobilityModel>();
+        if (!model)
+        {
+            throw std::runtime_error("Missing mobility model for node " + position.node);
+        }
+        model->SetPosition(Vector(position.x, position.y, position.z));
+        if (position.mobilityModel == "constant_velocity")
+        {
+            model->SetVelocity(
+                Vector(position.velocityX, position.velocityY, position.velocityZ));
+        }
+        else if (position.mobilityModel != "constant")
+        {
+            throw std::runtime_error("Unsupported mobility model for " + position.node +
+                                     ": " + position.mobilityModel);
+        }
+        m_positionByNode[position.node] = position;
     }
 }
 
@@ -424,17 +540,12 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
         for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
         {
             const auto& nic = channelNics[endpoint];
-            const uint32_t simulationQueueSizePackets =
-                ScaledQueueSizePackets(nic.queueSizePackets, m_valueScaleFactor);
             Ptr<PointToPointNetDevice> device =
                 DynamicCast<PointToPointNetDevice>(devices.Get(endpoint));
             if (device == nullptr)
             {
                 throw std::runtime_error("Expected point-to-point device for " + nic.id);
             }
-            device->TraceConnectWithoutContext(
-                "PhyTxBegin",
-                MakeCallback(&NetworkSceneHelper::TracePhyTxBegin, this).Bind(nic.id));
             device->TraceConnectWithoutContext(
                 "MacTxDrop",
                 MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(nic.id));
@@ -445,20 +556,7 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
                 "PhyRxDrop",
                 MakeCallback(&NetworkSceneHelper::TraceDeviceRxDrop, this).Bind(nic.id));
 
-            TrafficControlHelper trafficControl;
-            trafficControl.SetRootQueueDisc(QueueDiscTypeForPolicy(nic.queuePolicy),
-                                            "MaxSize",
-                                            StringValue(
-                                                std::to_string(simulationQueueSizePackets) + "p"));
-            QueueDiscContainer queueDiscs = trafficControl.Install(devices.Get(endpoint));
-            if (queueDiscs.GetN() != 1)
-            {
-                throw std::runtime_error("Expected one root queue disc for " + nic.id);
-            }
-            m_queueDiscs[nic.id] = queueDiscs.Get(0);
-            m_queueDiscs[nic.id]->TraceConnectWithoutContext(
-                "Drop",
-                MakeCallback(&NetworkSceneHelper::TraceQueueDiscDrop, this).Bind(nic.id));
+            InstallInterfaceQueue(nic.id, devices.Get(endpoint), nic.queuePolicy, nic.queueSizePackets);
 
             Ptr<Node> node = m_nodes.Get(m_nodeIndexById.at(nic.node));
             Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
@@ -483,6 +581,193 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
             if (nic.state == "disabled" || channel.state == "disabled")
             {
                 disabledInterfaces.push_back({nic.node, ifIndex});
+            }
+        }
+    }
+}
+
+void
+NetworkSceneHelper::InstallInterfaceQueue(const std::string& interfaceId,
+                                          Ptr<NetDevice> device,
+                                          const std::string& policy,
+                                          uint32_t nominalSize)
+{
+    // One common root queue disc. WiFi's MAC queues and access categories stay below it.
+    TrafficControlHelper trafficControl;
+    trafficControl.SetRootQueueDisc(
+        QueueDiscTypeForPolicy(policy),
+        "MaxSize",
+        StringValue(std::to_string(ScaledQueueSizePackets(nominalSize, m_valueScaleFactor)) + "p"));
+    QueueDiscContainer queueDiscs = trafficControl.Install(device);
+    if (queueDiscs.GetN() != 1)
+    {
+        throw std::runtime_error("Expected one root queue disc for " + interfaceId);
+    }
+    m_queueDiscs[interfaceId] = queueDiscs.Get(0);
+    m_queueDiscs[interfaceId]->TraceConnectWithoutContext(
+        "Drop", MakeCallback(&NetworkSceneHelper::TraceQueueDiscDrop, this).Bind(interfaceId));
+}
+
+void
+NetworkSceneHelper::InstallSceneWifi(
+    const std::vector<NetworkSceneWifiBssRow>& wifiBss,
+    const std::vector<NetworkSceneWifiInterfaceRow>& wifiInterfaces,
+    std::unordered_map<std::string, std::string>& primaryAddressByNode,
+    std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces)
+{
+    if (wifiBss.empty())
+    {
+        return;
+    }
+
+    std::map<std::string, std::vector<NetworkSceneWifiInterfaceRow>> interfacesByBss;
+    for (const auto& iface : wifiInterfaces)
+    {
+        interfacesByBss[iface.bssId].push_back(iface);
+    }
+    const double lossExponent = wifiBss.front().lossExponent;
+    for (const auto& bss : wifiBss)
+    {
+        if (std::abs(bss.lossExponent - lossExponent) > 0.000001)
+        {
+            throw std::runtime_error(
+                "The simple Wi-Fi version requires one loss exponent per scene");
+        }
+    }
+    YansWifiChannelHelper channelHelper;
+    channelHelper.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
+    channelHelper.AddPropagationLoss("ns3::LogDistancePropagationLossModel",
+                                     "Exponent",
+                                     DoubleValue(lossExponent));
+    Ptr<YansWifiChannel> sharedWifiChannel = channelHelper.Create();
+
+    auto attachInterface = [&](const NetworkSceneWifiInterfaceRow& iface,
+                               Ptr<NetDevice> device) {
+        Ptr<Node> node = m_nodes.Get(m_nodeIndexById.at(iface.node));
+        Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
+        Ptr<WifiNetDevice> wifiDevice = DynamicCast<WifiNetDevice>(device);
+        if (!wifiDevice)
+        {
+            throw std::runtime_error("Expected a Wi-Fi device for " + iface.id);
+        }
+        NS_LOG_INFO("Wi-Fi interface " << iface.id << " channel " << iface.bssId
+                                        << " configured " << wifiDevice->GetMac()->GetSsid());
+        Mac48Address configuredAddress(iface.mac.c_str());
+        wifiDevice->SetAddress(configuredAddress);
+        wifiDevice->GetMac()->GetFrameExchangeManager()->SetAddress(configuredAddress);
+        InstallInterfaceQueue(iface.id, device, iface.queuePolicy, iface.queueSizePackets);
+        uint32_t ifIndex = ipv4->AddInterface(device);
+        if (ifIndex != iface.interfaceIndex)
+        {
+            throw std::runtime_error("IPv4 interface index mismatch for " + iface.id);
+        }
+        const auto [address, prefix] = SplitCidr(iface.ipCidr);
+        ipv4->AddAddress(ifIndex,
+                         Ipv4InterfaceAddress(Ipv4Address(address.c_str()),
+                                              Ipv4Mask(MaskFromPrefix(prefix).c_str())));
+        ipv4->SetMetric(ifIndex, 1);
+        ipv4->SetUp(ifIndex);
+        m_ipv4InterfaceById[iface.id] = ifIndex;
+        if (primaryAddressByNode.find(iface.node) == primaryAddressByNode.end())
+        {
+            primaryAddressByNode[iface.node] = address;
+        }
+        if (iface.state == "disabled")
+        {
+            disabledInterfaces.push_back({iface.node, ifIndex});
+        }
+    };
+
+    for (const auto& bss : wifiBss)
+    {
+        if (bss.standard != "802.11g" && bss.standard != "802.11n")
+        {
+            throw std::runtime_error("Unsupported Wi-Fi standard: " + bss.standard);
+        }
+        if (bss.channelWidthMhz != 20)
+        {
+            throw std::runtime_error("The simple Wi-Fi version supports only 20 MHz channels");
+        }
+        if (bss.rateManager != "IdealWifiManager")
+        {
+            throw std::runtime_error("Unsupported Wi-Fi rate manager: " + bss.rateManager);
+        }
+        auto rowsIt = interfacesByBss.find(bss.id);
+        if (rowsIt == interfacesByBss.end())
+        {
+            throw std::runtime_error("No Wi-Fi interfaces found for " + bss.id);
+        }
+
+        const NetworkSceneWifiInterfaceRow* apRow = nullptr;
+        std::vector<const NetworkSceneWifiInterfaceRow*> staRows;
+        NodeContainer staNodes;
+        for (const auto& iface : rowsIt->second)
+        {
+            if (iface.wifiRole == "ap")
+            {
+                if (apRow != nullptr)
+                {
+                    throw std::runtime_error("Multiple AP interfaces found for " + bss.id);
+                }
+                apRow = &iface;
+            }
+            else if (iface.wifiRole == "sta")
+            {
+                staRows.push_back(&iface);
+                staNodes.Add(m_nodes.Get(m_nodeIndexById.at(iface.node)));
+            }
+        }
+        // An infrastructure BSS can have an AP without any configured stations.
+        if (apRow == nullptr)
+        {
+            throw std::runtime_error("BSS must contain one AP: " + bss.id);
+        }
+
+        YansWifiPhyHelper phy;
+        phy.SetChannel(sharedWifiChannel);
+        phy.Set("TxPowerStart", DoubleValue(bss.txPowerDbm));
+        phy.Set("TxPowerEnd", DoubleValue(bss.txPowerDbm));
+        phy.Set("ChannelSettings",
+                StringValue("{" + std::to_string(bss.channelNumber) +
+                            ", " + std::to_string(bss.channelWidthMhz) +
+                            ", BAND_2_4GHZ, 0}"));
+
+        WifiHelper wifi;
+        wifi.SetStandard(bss.standard == "802.11n" ? WIFI_STANDARD_80211n
+                                                   : WIFI_STANDARD_80211g);
+        wifi.SetRemoteStationManager("ns3::IdealWifiManager");
+        WifiMacHelper mac;
+        // SSID is an internal Wi-Fi setting derived from the wireless channel ID.
+        if (bss.id.empty() || bss.id.size() > 32)
+        {
+            throw std::runtime_error("Wi-Fi channel ID must contain 1 to 32 bytes for its SSID");
+        }
+        Ssid ssid(bss.id);
+
+        mac.SetType("ns3::StaWifiMac",
+                    "Ssid",
+                    SsidValue(ssid),
+                    "ActiveProbing",
+                    BooleanValue(false));
+        NetDeviceContainer staDevices = wifi.Install(phy, mac, staNodes);
+
+        mac.SetType("ns3::ApWifiMac", "Ssid", SsidValue(ssid));
+        NetDeviceContainer apDevices =
+            wifi.Install(phy, mac, m_nodes.Get(m_nodeIndexById.at(apRow->node)));
+
+        m_devices.Add(staDevices);
+        m_devices.Add(apDevices);
+        for (uint32_t i = 0; i < staDevices.GetN(); ++i)
+        {
+            attachInterface(*staRows[i], staDevices.Get(i));
+        }
+        attachInterface(*apRow, apDevices.Get(0));
+
+        if (bss.state == "disabled")
+        {
+            for (const auto& iface : rowsIt->second)
+            {
+                disabledInterfaces.push_back({iface.node, iface.interfaceIndex});
             }
         }
     }
@@ -521,8 +806,49 @@ NetworkSceneHelper::InstallSceneRoutes(const std::vector<NetworkSceneNodeRow>& n
             {
                 continue;
             }
-            staticRouting->AddHostRouteTo(Ipv4Address(addressIt->second.c_str()),
-                                          static_cast<uint32_t>(outInterface));
+            std::string gatewayAddress;
+            if (src < m_nextHopMatrix.size() && dst < m_nextHopMatrix[src].size())
+            {
+                int nextHopIndex = m_nextHopMatrix[src][dst];
+                if (nextHopIndex >= 0 &&
+                    static_cast<std::size_t>(nextHopIndex) < nodes.size())
+                {
+                    const std::string& nextHopNode =
+                        nodes[static_cast<std::size_t>(nextHopIndex)].id;
+                    auto ifaceIdIt = m_interfaceIdByNodeInterface.find(
+                        {nodes[src].id, static_cast<uint32_t>(outInterface)});
+                    if (ifaceIdIt != m_interfaceIdByNodeInterface.end())
+                    {
+                        const auto& iface =
+                            m_interfaceRecords[m_interfaceIndexById.at(ifaceIdIt->second)];
+                        for (const auto& candidate : m_interfaceRecords)
+                        {
+                            const bool sharesResource =
+                                iface.interfaceType == "wifi"
+                                    ? candidate.interfaceType == "wifi" &&
+                                          candidate.bssId == iface.bssId
+                                    : candidate.interfaceType == "wired" &&
+                                          candidate.channelId == iface.channelId;
+                            if (candidate.node == nextHopNode && sharesResource)
+                            {
+                                gatewayAddress = SplitCidr(candidate.ipCidr).first;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (gatewayAddress.empty())
+            {
+                staticRouting->AddHostRouteTo(Ipv4Address(addressIt->second.c_str()),
+                                              static_cast<uint32_t>(outInterface));
+            }
+            else
+            {
+                staticRouting->AddHostRouteTo(Ipv4Address(addressIt->second.c_str()),
+                                              Ipv4Address(gatewayAddress.c_str()),
+                                              static_cast<uint32_t>(outInterface));
+            }
         }
     }
 }
@@ -684,6 +1010,13 @@ NetworkSceneHelper::IsInterfaceOperational(const InterfaceRecord& iface) const
         return false;
     }
 
+    if (iface.interfaceType == "wifi")
+    {
+        auto bssIt = m_wifiBssIndexById.find(iface.bssId);
+        return bssIt != m_wifiBssIndexById.end() &&
+               m_wifiBssRecords[bssIt->second].state != "disabled";
+    }
+
     auto channelIt = m_channelIndexById.find(iface.channelId);
     if (channelIt == m_channelIndexById.end() ||
         !IsChannelOperational(m_channelRecords[channelIt->second]))
@@ -823,6 +1156,36 @@ NetworkSceneHelper::TraceIpv4Tx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32
 }
 
 void
+NetworkSceneHelper::TraceIpv4FlowTx(std::string nodeId,
+                                    const Ipv4Header& header,
+                                    Ptr<const Packet> packet,
+                                    uint32_t interface)
+{
+    if (packet == nullptr || header.GetProtocol() != 17 || header.GetFragmentOffset() != 0)
+    {
+        return;
+    }
+
+    Ptr<Packet> copy = packet->Copy();
+    UdpHeader udp;
+    if (copy->GetSize() < udp.GetSerializedSize() || copy->RemoveHeader(udp) == 0)
+    {
+        return;
+    }
+
+    auto flowIt = m_flowIdByPort.find(udp.GetDestinationPort());
+    auto ifaceIt = m_interfaceIdByNodeInterface.find({nodeId, interface});
+    if (flowIt == m_flowIdByPort.end() || ifaceIt == m_interfaceIdByNodeInterface.end())
+    {
+        return;
+    }
+
+    auto& counters = m_interfaceFlowCounters[{ifaceIt->second, flowIt->second}];
+    counters.txPackets++;
+    counters.txBytes += packet->GetSize() + header.GetSerializedSize();
+}
+
+void
 NetworkSceneHelper::TraceIpv4Rx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface)
 {
     const std::string nodeId = m_nodeIdByNs3Node[ipv4->GetObject<Node>()->GetId()];
@@ -897,10 +1260,9 @@ NetworkSceneHelper::IdentifySceneFlow(Ptr<const Packet> packet) const
 
     Ptr<Packet> copy = packet->Copy();
     PppHeader ppp;
-    copy->RemoveHeader(ppp);
-    if (ppp.GetProtocol() != 0x0021)
+    if (copy->PeekHeader(ppp) > 0 && ppp.GetProtocol() == 0x0021)
     {
-        return "";
+        copy->RemoveHeader(ppp);
     }
 
     Ipv4Header ipv4;

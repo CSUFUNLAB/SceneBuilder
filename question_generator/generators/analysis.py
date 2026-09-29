@@ -12,6 +12,7 @@ from ..evidence import (
     infer_entity_state,
     infer_flow_failure_cause,
     infer_nic_unavailability_cause,
+    infer_wifi_association_state,
 )
 from .base import QuestionCategoryGenerator
 from ..models import (
@@ -39,6 +40,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             "TA0009": self._flow_failure_cause,
             "TA0010": self._channel_unavailability_cause,
             "TA0011": self._nic_unavailability_cause,
+            "TA0012": self._wifi_channel_state,
+            "TA0013": self._wifi_association_state,
         }
 
     def generate_candidate(
@@ -67,6 +70,26 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         if template.unknown_answer != UNKNOWN_ANSWER_LABEL:
             return None
 
+        if template.template_id in {"TA0012", "TA0013"}:
+            association_question = template.template_id == "TA0013"
+            return cls._choose_unknown_entity(
+                scene, "nic" if association_question else "channel",
+                "nic_id" if association_question else "channel_id",
+                lambda entity: infer_wifi_association_state(scene, entity)
+                if association_question else infer_entity_state(scene, entity),
+                "wireless_state_not_derivable_from_observed_properties",
+                "configured channel and AP relation, interface status, and observed STA association",
+                rng,
+                predicate=lambda entity: (
+                    entity.properties.get("interface_type") == "wifi"
+                    and entity.properties.get("wifi_role") == "sta"
+                    and scene.nic_association_states.get(entity.entity_id, "") in {"", UNKNOWN_ANSWER_LABEL}
+                ) if association_question else (
+                    entity.properties.get("medium_type") == "wifi"
+                    and entity.label in {"", UNKNOWN_ANSWER_LABEL}
+                ),
+            )
+
         state_specs = {
             "TA0001": ("node", "node_id"),
             "TA0002": ("channel", "channel_id"),
@@ -86,6 +109,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
                     "sufficient to reproduce one supported state"
                 ),
                 rng,
+                predicate=lambda entity: entity.label in {"", UNKNOWN_ANSWER_LABEL}
+                and (template.template_id != "TA0002" or entity.properties.get("medium_type") != "wifi"),
             )
 
         specs: dict[
@@ -233,12 +258,14 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         placeholder: str,
         target_label: str,
         rng: random.Random,
+        predicate: Callable[[EntityRecord], bool] | None = None,
     ) -> QuestionCandidate | None:
         candidates = [
             entity
             for entity in scene.entities(entity_type)
             if entity.label == target_label
             and scene.entity_is_in_flow_scope(entity_type, entity.entity_id)
+            and (predicate is None or predicate(entity))
         ]
         if not candidates:
             return None
@@ -249,13 +276,42 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         return self._choose_entity_by_label(scene, "node", "node_id", target_label, rng)
 
     def _channel_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
-        return self._choose_entity_by_label(scene, "channel", "channel_id", target_label, rng)
+        return self._choose_entity_by_label(scene, "channel", "channel_id", target_label, rng,
+                                            lambda c: c.properties.get("medium_type") != "wifi")
 
     def _nic_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
         return self._choose_entity_by_label(scene, "nic", "nic_id", target_label, rng)
 
     def _flow_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
         return self._choose_entity_by_label(scene, "data_flow", "data_flow_id", target_label, rng)
+
+    def _wifi_channel_state(
+        self,
+        scene: SceneData,
+        target_label: str,
+        rng: random.Random,
+    ) -> QuestionCandidate | None:
+        return self._choose_entity_by_label(
+            scene, "channel", "channel_id", target_label, rng,
+            lambda c: c.properties.get("medium_type") == "wifi"
+            and infer_entity_state(scene, c) == target_label,
+        )
+
+    def _wifi_association_state(
+        self,
+        scene: SceneData,
+        target_label: str,
+        rng: random.Random,
+    ) -> QuestionCandidate | None:
+        candidates = [nic for nic in scene.entities("nic")
+                      if nic.properties.get("interface_type") == "wifi"
+                      and nic.properties.get("wifi_role") == "sta"
+                      and scene.entity_is_in_flow_scope("nic", nic.entity_id)
+                      and scene.nic_association_states.get(nic.entity_id) == target_label
+                      and infer_wifi_association_state(scene, nic) == target_label]
+        if not candidates:
+            return None
+        return QuestionCandidate({"nic_id": rng.choice(candidates).entity_id}, target_label)
 
     @staticmethod
     def _flow_bandwidth_constraint(

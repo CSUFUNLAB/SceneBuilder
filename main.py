@@ -30,8 +30,8 @@ DEFAULT_DATASET_SPLIT_CONFIG = (
 NS3_CONFIGURE_COMMAND = (
     "./ns3",
     "configure",
-    "--enable-python-bindings",
     "--build-profile=debug",
+    "--enable-modules=network-scene",
 )
 NS3_BUILD_COMMAND = ("./ns3", "build")
 TWIN_FILE_NAME = "twin.jsonl"
@@ -43,6 +43,13 @@ REQUIRED_BASE_SCENE_FILES = {
     "traffic.jsonl",
 }
 CHANNEL_SCENE_FILES = {"channels.csv", "links.csv"}
+REQUIRED_UNIFIED_SCENE_FILES = {
+    "nodes.jsonl",
+    "nics.jsonl",
+    "channels.jsonl",
+    "routes.jsonl",
+    "traffic.jsonl",
+}
 PROGRESS_RE = re.compile(
     r"NS3_PROGRESS sim_time=([0-9.eE+-]+) stop_time=([0-9.eE+-]+) events=([0-9]+)"
 )
@@ -581,7 +588,11 @@ def is_scene_dir(path: Path) -> bool:
     if not path.is_dir():
         return False
     names = {item.name for item in path.iterdir()}
-    return REQUIRED_BASE_SCENE_FILES.issubset(names) and bool(CHANNEL_SCENE_FILES & names)
+    is_legacy_scene = REQUIRED_BASE_SCENE_FILES.issubset(names) and bool(
+        CHANNEL_SCENE_FILES & names
+    )
+    is_unified_scene = REQUIRED_UNIFIED_SCENE_FILES.issubset(names)
+    return is_legacy_scene or is_unified_scene
 
 
 def discover_scenes(scene_root: Path) -> list[Path]:

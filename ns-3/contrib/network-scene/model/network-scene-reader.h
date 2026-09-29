@@ -13,6 +13,7 @@ namespace ns3
 struct NetworkSceneNodeRow
 {
     std::string id;
+    std::string role;
     std::string state;
 };
 
@@ -37,6 +38,60 @@ struct NetworkSceneNicRow
     std::string queuePolicy;
     uint32_t queueSizePackets{0};
     std::string state;
+    std::string deviceType{"point_to_point"}; ///< Concrete simulated device model.
+    std::string queueLayer{"traffic_control"}; ///< Layer represented by queue fields.
+};
+
+struct NetworkSceneWifiBssRow
+{
+    std::string id; ///< Wireless channel ID, also used as the runtime SSID.
+    std::string apNode;
+    std::string standard;
+    uint16_t channelNumber{0};
+    uint16_t channelWidthMhz{20};
+    double txPowerDbm{18.0};
+    double lossExponent{3.0};
+    std::string rateManager{"IdealWifiManager"};
+    std::string state;
+};
+
+struct NetworkSceneWifiInterfaceRow
+{
+    std::string id;
+    std::string node;
+    uint32_t interfaceIndex{0};
+    std::string bssId;
+    std::string wifiRole;
+    std::string ipCidr;
+    std::string mac;
+    std::string state;
+    std::string queuePolicy{"FIFO"}; ///< Common traffic-control policy; legacy default.
+    uint32_t queueSizePackets{256}; ///< Nominal queue capacity; legacy default.
+    std::string deviceType{"wifi"}; ///< Concrete simulated device model.
+    std::string queueLayer{"traffic_control"}; ///< Does not describe the WiFi MAC queue.
+};
+
+struct NetworkSceneWifiAssociationRow
+{
+    std::string id;
+    std::string bssId;
+    std::string apNode;
+    std::string staNode;
+    std::string apNicId;
+    std::string staNicId;
+    std::string configuredState;
+};
+
+struct NetworkScenePositionRow
+{
+    std::string node;
+    double x{0.0};
+    double y{0.0};
+    double z{0.0};
+    std::string mobilityModel;
+    double velocityX{0.0};
+    double velocityY{0.0};
+    double velocityZ{0.0};
 };
 
 struct NetworkSceneEventRow
@@ -51,10 +106,16 @@ struct NetworkSceneEventRow
 
 struct NetworkSceneData
 {
+    std::string networkMode{"wired"};
     std::vector<NetworkSceneNodeRow> nodes;
     std::vector<NetworkSceneChannelRow> channels;
     std::vector<NetworkSceneNicRow> nics;
+    std::vector<NetworkSceneWifiBssRow> wifiBss;
+    std::vector<NetworkSceneWifiInterfaceRow> wifiInterfaces;
+    std::vector<NetworkSceneWifiAssociationRow> wifiAssociations;
+    std::vector<NetworkScenePositionRow> positions;
     std::vector<std::vector<int>> routingMatrix;
+    std::vector<std::vector<int>> nextHopMatrix;
     std::vector<NetworkSceneTrafficPattern> traffic;
     std::vector<NetworkSceneEventRow> events;
     double sceneDurationSeconds{300.0};

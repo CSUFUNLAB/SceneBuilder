@@ -1,5 +1,21 @@
 # SceneBuilder
 
+本分支在原有有线流程上扩展了正常 WiFi 场景，包含位置/移动、无线设备与队列、信道、
+ns-3 导入、统一 Twin 与分析问题。使用方式、测试和已知限制见
+[WiFi 第二版说明](docs/wifi_v2.md)。20 节点仅为自建示例，输入拓扑已放入仓库；
+生成的场景、Twin、标签、交付包和本机环境不纳入 Git。
+
+WiFi 示例（先按下文初始化 ns-3）：
+
+```bash
+python main.py scenes -c configs/wifi_v2_normal_example.yaml
+python main.py twin -t origin -c configs/wifi_v2_normal_example_questions.yaml
+python main.py questions -t analysis -c configs/wifi_v2_normal_example_questions.yaml
+```
+
+以下保留原工程通用命令说明。WiFi 当前只支持正常场景与分析问题，不能直接套用下文的
+演化、优化流程；这些原有有线功能保留不变。
+
 SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置转换为可供 ns-3 读取的网络
 场景，运行内置的 ns-3.48 仿真生成数字孪生体，并从孪生体生成带标签的问题数据。所有
 步骤统一通过项目根目录的 `main.py` 执行。
@@ -73,7 +89,7 @@ python main.py initial
 Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。解压完成后会自动依次执行：
 
 ```bash
-./ns3 configure --enable-python-bindings --build-profile=debug
+./ns3 configure --build-profile=debug --enable-modules=network-scene
 ./ns3 build
 ```
 

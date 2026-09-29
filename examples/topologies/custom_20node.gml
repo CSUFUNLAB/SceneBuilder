@@ -1,0 +1,56 @@
+graph [
+  directed 0
+
+  node [ id 0  label "Core-01" role "core" ]
+  node [ id 1  label "Core-02" role "core" ]
+  node [ id 2  label "Agg-01"  role "aggregation" ]
+  node [ id 3  label "Agg-02"  role "aggregation" ]
+  node [ id 4  label "Agg-03"  role "aggregation" ]
+  node [ id 5  label "Agg-04"  role "aggregation" ]
+  node [ id 6  label "Edge-01" role "edge" ]
+  node [ id 7  label "Edge-02" role "edge" ]
+  node [ id 8  label "Edge-03" role "edge" ]
+  node [ id 9  label "Edge-04" role "edge" ]
+  node [ id 10 label "Edge-05" role "edge" ]
+  node [ id 11 label "Edge-06" role "edge" ]
+  node [ id 12 label "Edge-07" role "edge" ]
+  node [ id 13 label "Edge-08" role "edge" ]
+  node [ id 14 label "Edge-09" role "edge" ]
+  node [ id 15 label "Edge-10" role "edge" ]
+  node [ id 16 label "Edge-11" role "edge" ]
+  node [ id 17 label "Edge-12" role "edge" ]
+  node [ id 18 label "Edge-13" role "edge" ]
+  node [ id 19 label "Edge-14" role "edge" ]
+
+  edge [ source 0 target 1  role "backbone" bandwidth 40000 ]
+
+  edge [ source 0 target 2  role "uplink" bandwidth 10000 ]
+  edge [ source 1 target 2  role "uplink" bandwidth 10000 ]
+  edge [ source 0 target 3  role "uplink" bandwidth 10000 ]
+  edge [ source 1 target 3  role "uplink" bandwidth 10000 ]
+  edge [ source 0 target 4  role "uplink" bandwidth 10000 ]
+  edge [ source 1 target 4  role "uplink" bandwidth 10000 ]
+  edge [ source 0 target 5  role "uplink" bandwidth 10000 ]
+  edge [ source 1 target 5  role "uplink" bandwidth 10000 ]
+
+  edge [ source 2 target 3  role "lateral" bandwidth 5000 ]
+  edge [ source 4 target 5  role "lateral" bandwidth 5000 ]
+
+  edge [ source 2 target 6  role "access" bandwidth 1000 ]
+  edge [ source 2 target 7  role "access" bandwidth 1000 ]
+  edge [ source 2 target 8  role "access" bandwidth 1000 ]
+  edge [ source 2 target 9  role "access" bandwidth 1000 ]
+
+  edge [ source 3 target 10 role "access" bandwidth 1000 ]
+  edge [ source 3 target 11 role "access" bandwidth 1000 ]
+  edge [ source 3 target 12 role "access" bandwidth 1000 ]
+
+  edge [ source 4 target 13 role "access" bandwidth 1000 ]
+  edge [ source 4 target 14 role "access" bandwidth 1000 ]
+  edge [ source 4 target 15 role "access" bandwidth 1000 ]
+  edge [ source 4 target 16 role "access" bandwidth 1000 ]
+
+  edge [ source 5 target 17 role "access" bandwidth 1000 ]
+  edge [ source 5 target 18 role "access" bandwidth 1000 ]
+  edge [ source 5 target 19 role "access" bandwidth 1000 ]
+]

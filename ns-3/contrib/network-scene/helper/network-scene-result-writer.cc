@@ -1,8 +1,13 @@
 #include "network-scene-helper.h"
 
+#include "ns3/mobility-model.h"
+
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
 #include "ns3/network-scene-topology.h"
+#include "ns3/sta-wifi-mac.h"
+#include "ns3/wifi-net-device.h"
+#include "ns3/queue-disc.h"
 
 #include <algorithm>
 #include <cmath>
@@ -134,6 +139,12 @@ BoundedRatio(double numerator, double denominator)
     return std::min(1.0, std::max(0.0, SafeRatio(numerator, denominator)));
 }
 
+std::pair<std::string, std::string>
+NodePair(const std::string& first, const std::string& second)
+{
+    return first < second ? std::make_pair(first, second) : std::make_pair(second, first);
+}
+
 } // namespace
 
 void
@@ -166,6 +177,7 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> nicStateLabels;
     std::vector<std::string> nodeStateLabels;
     std::vector<std::string> channelStateLabels;
+    std::vector<std::string> nicAssociationStateLabels;
     std::vector<std::string> dataFlowStateLabels;
     std::vector<std::string> channelUnavailabilityCauseLabels;
     std::vector<std::string> nicUnavailabilityCauseLabels;
@@ -200,6 +212,9 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
     std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
     std::map<std::pair<std::string, std::string>, std::string> interfaceIdByChannelNode;
+    std::map<std::pair<std::string, std::string>, std::string> channelIdByNodePair;
+    std::map<std::pair<std::string, std::string>, std::string> wifiBssIdByNodePair;
+    std::map<std::string, const WifiAssociationRecord*> associationByStaNic;
     std::map<std::string, std::vector<std::string>> routesByNode;
     std::map<std::string, std::vector<std::string>> actionsByNode;
     std::map<std::string, std::vector<std::string>> actionsByChannel;
@@ -208,6 +223,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::tuple<std::string, std::string, std::string>, std::vector<std::string>>
         routeDestinationsByKey;
     std::map<std::string, std::vector<std::string>> pathChannelsByFlow;
+    std::map<std::string, std::vector<std::string>> pathResourcesByFlow;
     std::map<std::string, std::vector<std::string>> originatedFlowsByNode;
     std::map<std::string, std::vector<std::string>> pathNodesByFlow;
     std::map<std::string, std::vector<std::string>> carriedFlowsByChannel;
@@ -248,6 +264,17 @@ NetworkSceneHelper::WriteResults() const
     for (const auto& channel : m_channelRecords)
     {
         channelById[channel.id] = channel;
+        channelIdByNodePair[NodePair(channel.src, channel.dst)] = channel.id;
+    }
+    for (const auto& association : m_wifiAssociationRecords)
+    {
+        wifiBssIdByNodePair[NodePair(association.apNode, association.staNode)] =
+            association.bssId;
+        if (!associationByStaNic.emplace(association.staNicId, &association).second)
+        {
+            throw std::runtime_error("Multiple configured associations for STA NIC: " +
+                                     association.staNicId);
+        }
     }
     for (const auto& iface : m_interfaceRecords)
     {
@@ -299,7 +326,6 @@ NetworkSceneHelper::WriteResults() const
                 continue;
             }
             auto ifaceIt = m_interfaceIdByNodeInterface.find({node.id, static_cast<uint32_t>(outInterface)});
-            auto nextIt = nextNodeByNodeInterface.find({node.id, static_cast<uint32_t>(outInterface)});
             std::string egressInterface;
             if (ifaceIt != m_interfaceIdByNodeInterface.end())
             {
@@ -308,7 +334,22 @@ NetworkSceneHelper::WriteResults() const
                                       ? ifaceIt->second
                                       : outputIfaceIt->second;
             }
-            const std::string nextHop = nextIt == nextNodeByNodeInterface.end() ? "" : nextIt->second;
+            std::string nextHop;
+            if (srcIndex < m_nextHopMatrix.size() &&
+                dstIndex < m_nextHopMatrix[srcIndex].size())
+            {
+                int nextIndex = m_nextHopMatrix[srcIndex][dstIndex];
+                if (nextIndex >= 0 && static_cast<std::size_t>(nextIndex) < m_nodeRecords.size())
+                {
+                    nextHop = m_nodeRecords[static_cast<std::size_t>(nextIndex)].id;
+                }
+            }
+            if (nextHop.empty())
+            {
+                auto nextIt =
+                    nextNodeByNodeInterface.find({node.id, static_cast<uint32_t>(outInterface)});
+                nextHop = nextIt == nextNodeByNodeInterface.end() ? "" : nextIt->second;
+            }
             routeDestinationsByKey[{node.id, egressInterface, nextHop}].push_back(dstNode.id);
         }
     }
@@ -345,10 +386,11 @@ NetworkSceneHelper::WriteResults() const
     auto buildFlowPath = [&](const std::string& src, const std::string& dst) {
         std::vector<std::string> pathNodes;
         std::vector<std::string> pathChannels;
+        std::vector<std::string> pathResources;
         pathNodes.push_back(src);
         if (src == dst)
         {
-            return std::make_pair(pathNodes, pathChannels);
+            return std::make_tuple(pathNodes, pathChannels, pathResources);
         }
 
         std::string current = src;
@@ -367,23 +409,49 @@ NetworkSceneHelper::WriteResults() const
                 break;
             }
 
-            auto nextIt =
-                nextNodeByNodeInterface.find({current, static_cast<uint32_t>(outInterface)});
-            if (nextIt == nextNodeByNodeInterface.end())
+            std::string nextNode;
+            if (srcIndex < m_nextHopMatrix.size() &&
+                dstIndex < m_nextHopMatrix[srcIndex].size())
+            {
+                int nextIndex = m_nextHopMatrix[srcIndex][dstIndex];
+                if (nextIndex >= 0 && static_cast<std::size_t>(nextIndex) < m_nodeRecords.size())
+                {
+                    nextNode = m_nodeRecords[static_cast<std::size_t>(nextIndex)].id;
+                }
+            }
+            if (nextNode.empty())
+            {
+                auto nextIt =
+                    nextNodeByNodeInterface.find({current, static_cast<uint32_t>(outInterface)});
+                if (nextIt != nextNodeByNodeInterface.end())
+                {
+                    nextNode = nextIt->second;
+                }
+            }
+            if (nextNode.empty())
             {
                 break;
             }
 
-            const std::string& nextNode = nextIt->second;
             if (std::find(pathNodes.begin(), pathNodes.end(), nextNode) != pathNodes.end())
             {
                 break;
             }
             auto channelIt =
                 channelIdByNodeInterface.find({current, static_cast<uint32_t>(outInterface)});
-            if (channelIt != channelIdByNodeInterface.end())
+            if (channelIt != channelIdByNodeInterface.end() && !channelIt->second.empty())
             {
                 pathChannels.push_back(channelIt->second);
+                pathResources.push_back(channelIt->second);
+            }
+            else
+            {
+                auto wifiBssIt = wifiBssIdByNodePair.find(NodePair(current, nextNode));
+                if (wifiBssIt != wifiBssIdByNodePair.end())
+                {
+                    pathChannels.push_back(wifiBssIt->second);
+                    pathResources.push_back(wifiBssIt->second);
+                }
             }
             pathNodes.push_back(nextNode);
             if (nextNode == dst)
@@ -392,14 +460,15 @@ NetworkSceneHelper::WriteResults() const
             }
             current = nextNode;
         }
-        return std::make_pair(pathNodes, pathChannels);
+        return std::make_tuple(pathNodes, pathChannels, pathResources);
     };
 
     for (const auto& flow : m_flowRecords)
     {
-        auto [pathNodes, pathChannels] = buildFlowPath(flow.src, flow.dst);
+        auto [pathNodes, pathChannels, pathResources] = buildFlowPath(flow.src, flow.dst);
         pathNodesByFlow[flow.id] = std::move(pathNodes);
         pathChannelsByFlow[flow.id] = pathChannels;
+        pathResourcesByFlow[flow.id] = std::move(pathResources);
         for (const auto& channelId : pathChannels)
         {
             carriedFlowsByChannel[channelId].push_back(flow.id);
@@ -434,6 +503,23 @@ NetworkSceneHelper::WriteResults() const
                                      : std::string{"channel_or_interface_fault"};
     };
 
+    // Association is an observed STA property, separate from interface up/down.
+    auto wifiDeviceForInterface = [&](const std::string& interfaceId) -> Ptr<WifiNetDevice> {
+        auto ifaceIt = m_interfaceIndexById.find(interfaceId);
+        auto ipv4It = m_ipv4InterfaceById.find(interfaceId);
+        if (ifaceIt == m_interfaceIndexById.end() || ipv4It == m_ipv4InterfaceById.end())
+        {
+            return nullptr;
+        }
+        auto nodeIt = m_nodeIndexById.find(m_interfaceRecords[ifaceIt->second].node);
+        if (nodeIt == m_nodeIndexById.end())
+        {
+            return nullptr;
+        }
+        Ptr<Ipv4> ipv4 = m_nodes.Get(nodeIt->second)->GetObject<Ipv4>();
+        return DynamicCast<WifiNetDevice>(ipv4->GetNetDevice(ipv4It->second));
+    };
+
     for (const auto& iface : m_interfaceRecords)
     {
         auto counters = m_interfaceCounters.find(iface.id) == m_interfaceCounters.end()
@@ -443,6 +529,12 @@ NetworkSceneHelper::WriteResults() const
             counters.txBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         double rxRateMbps = counters.rxBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         uint32_t currentQueuePackets = GetCurrentQueuePackets(iface.id);
+        auto queueIt = m_queueDiscs.find(iface.id);
+        if (queueIt == m_queueDiscs.end() || !queueIt->second)
+        {
+            throw std::runtime_error("Missing traffic-control queue for NIC " + iface.id);
+        }
+        const auto& queueStats = queueIt->second->GetStats();
         double queueUtilization =
             BoundedRatio(currentQueuePackets, iface.simulationQueueSizePackets);
         uint32_t outputCurrentQueuePackets = static_cast<uint32_t>(
@@ -459,17 +551,68 @@ NetworkSceneHelper::WriteResults() const
         output << "{\"entity_type\":\"nic\",\"entity_id\":"
                << JsonString(outputInterfaceIdById[iface.id])
                << ",\"properties\":{\"interface_index\":" << iface.interfaceIndex
+               << ",\"interface_type\":" << JsonString(iface.interfaceType)
+               << ",\"device_type\":"
+               << JsonString(iface.interfaceType == "wifi" ? "wifi" : "point_to_point")
+               << ",\"operational\":" << (IsInterfaceOperational(iface) ? "true" : "false")
                << ",\"rx_rate_mbps\":" << rxRateMbps
                << ",\"tx_rate_mbps\":" << txRateMbps
                << ",\"queue_policy\":" << JsonString(iface.queuePolicy)
+               << ",\"queue_layer\":\"traffic_control\""
+               << ",\"queue_disc_type\":" << JsonString(queueIt->second->GetInstanceTypeId().GetName())
+               << ",\"simulation_queue_size_packets\":" << queueIt->second->GetMaxSize().GetValue()
+               << ",\"queue_enqueued_packets\":" << queueStats.nTotalEnqueuedPackets
+               << ",\"queue_dropped_packets\":" << queueStats.nTotalDroppedPackets
                << ",\"queue_size_packets\":" << iface.queueSizePackets
                << ",\"queue_current_packets\":" << outputCurrentQueuePackets
                << ",\"rx_packets\":" << counters.rxPackets
                << ",\"tx_packets\":" << counters.txPackets
                << ",\"rx_drop_packets\":" << counters.rxDropPackets
-               << ",\"tx_drop_packets\":" << counters.txDropPackets << "}"
-               << ",\"relations\":{\"node\":" << JsonString(iface.node)
-               << ",\"channel\":" << JsonString(iface.channelId) << "}";
+               << ",\"tx_drop_packets\":" << counters.txDropPackets;
+        if (iface.interfaceType == "wifi")
+        {
+            output << ",\"wifi_role\":" << JsonString(iface.wifiRole);
+            auto associationIt = associationByStaNic.find(iface.id);
+            if (associationIt != associationByStaNic.end())
+            {
+                const auto& association = *associationIt->second;
+                Ptr<WifiNetDevice> staDevice = wifiDeviceForInterface(iface.id);
+                Ptr<WifiNetDevice> apDevice = wifiDeviceForInterface(association.apNicId);
+                Ptr<StaWifiMac> staMac =
+                    staDevice ? DynamicCast<StaWifiMac>(staDevice->GetMac()) : nullptr;
+                const bool associated = staMac && apDevice && staMac->IsAssociated() &&
+                                        staMac->GetBssid(0) == apDevice->GetMac()->GetAddress();
+                const auto apIt = m_interfaceIndexById.find(association.apNicId);
+                const bool enabled = association.configuredState != "disabled" &&
+                                     IsInterfaceOperational(iface) &&
+                                     apIt != m_interfaceIndexById.end() &&
+                                     IsInterfaceOperational(m_interfaceRecords[apIt->second]);
+                const std::string associationState =
+                    !enabled ? "disabled" : (associated ? "associated" : "not_associated");
+                output << ",\"association_configured_state\":"
+                       << JsonString(association.configuredState)
+                       << ",\"association_observed\":" << (associated ? "true" : "false");
+                nicAssociationStateLabels.push_back(
+                    "{\"entity_id\":" + JsonString(outputInterfaceIdById[iface.id]) +
+                    ",\"label\":" + JsonString(associationState) + "}");
+            }
+        }
+        output << "},\"relations\":{\"node\":" << JsonString(iface.node);
+        if (iface.interfaceType == "wifi")
+        {
+            output << ",\"channel\":" << JsonString(iface.bssId);
+            auto associationIt = associationByStaNic.find(iface.id);
+            if (associationIt != associationByStaNic.end())
+            {
+                output << ",\"ap_nic\":"
+                       << JsonString(outputInterfaceIdById.at(associationIt->second->apNicId));
+            }
+        }
+        else
+        {
+            output << ",\"channel\":" << JsonString(iface.channelId);
+        }
+        output << "}";
         auto actionIt = actionsByInterface.find(iface.id);
         if (actionIt != actionsByInterface.end())
         {
@@ -503,8 +646,26 @@ NetworkSceneHelper::WriteResults() const
                             ? PacketCounters{}
                             : m_nodeCounters.at(node.id);
         output << "{\"entity_type\":\"node\",\"entity_id\":" << JsonString(node.id)
-               << ",\"properties\":{\"rx_packets\":" << counters.rxPackets
-               << ",\"tx_packets\":" << counters.txPackets << "}"
+               << ",\"properties\":{\"role\":" << JsonString(node.role)
+               << ",\"rx_packets\":" << counters.rxPackets
+               << ",\"tx_packets\":" << counters.txPackets;
+        auto positionIt = m_positionByNode.find(node.id);
+        if (positionIt != m_positionByNode.end())
+        {
+            Ptr<MobilityModel> mobility =
+                m_nodes.Get(m_nodeIndexById.at(node.id))->GetObject<MobilityModel>();
+            Vector position = mobility ? mobility->GetPosition()
+                                       : Vector(positionIt->second.x,
+                                                positionIt->second.y,
+                                                positionIt->second.z);
+            output << ",\"position_m\":{\"x\":" << position.x << ",\"y\":" << position.y
+                   << ",\"z\":" << position.z << "}"
+                   << ",\"mobility_model\":" << JsonString(positionIt->second.mobilityModel)
+                   << ",\"velocity_mps\":{\"x\":" << positionIt->second.velocityX
+                   << ",\"y\":" << positionIt->second.velocityY
+                   << ",\"z\":" << positionIt->second.velocityZ << "}";
+        }
+        output << "}"
                << ",\"relations\":{\"interfaces\":" << JsonStringArray(interfacesByNode[node.id])
                << ",\"originates_flows\":" << JsonStringArray(originatedFlowsByNode[node.id])
                << ",\"routes\":" << JsonRawArray(routesByNode[node.id]) << "}";
@@ -533,15 +694,16 @@ NetworkSceneHelper::WriteResults() const
         }
         for (const auto& flowId : carriedFlowsByChannel[channel.id])
         {
-            const auto& pathChannels = pathChannelsByFlow[flowId];
+            const auto& pathResources = pathResourcesByFlow[flowId];
             const auto& pathNodes = pathNodesByFlow[flowId];
-            auto channelPosition = std::find(pathChannels.begin(), pathChannels.end(), channel.id);
-            if (channelPosition == pathChannels.end())
+            auto channelPosition =
+                std::find(pathResources.begin(), pathResources.end(), channel.id);
+            if (channelPosition == pathResources.end())
             {
                 continue;
             }
             std::size_t pathIndex =
-                static_cast<std::size_t>(std::distance(pathChannels.begin(), channelPosition));
+                static_cast<std::size_t>(std::distance(pathResources.begin(), channelPosition));
             if (pathIndex + 1 >= pathNodes.size())
             {
                 continue;
@@ -601,7 +763,7 @@ NetworkSceneHelper::WriteResults() const
         utilizationSquareSum += utilization * utilization;
         utilizationCount++;
         output << "{\"entity_type\":\"channel\",\"entity_id\":" << JsonString(channel.id)
-               << ",\"properties\":{\"original_capacity_mbps\":"
+               << ",\"properties\":{\"medium_type\":\"wired\",\"original_capacity_mbps\":"
                << channel.nominalCapacityMbps
                << ",\"delay_ms\":" << m_defaultChannelDelay.GetMilliSeconds() << "}"
                << ",\"relations\":{\"connects\":" << JsonStringArray(outputInterfaceIds)
@@ -625,6 +787,40 @@ NetworkSceneHelper::WriteResults() const
             }
         }
         channelStateById[channel.id] = state;
+    }
+
+    for (const auto& bss : m_wifiBssRecords)
+    {
+        std::vector<std::string> outputInterfaceIds;
+        std::string apInterfaceId;
+        for (const auto& ifaceId : bss.interfaceIds)
+        {
+            auto outputIfaceIt = outputInterfaceIdById.find(ifaceId);
+            outputInterfaceIds.push_back(outputIfaceIt == outputInterfaceIdById.end()
+                                             ? ifaceId
+                                             : outputIfaceIt->second);
+            const auto& iface = m_interfaceRecords.at(m_interfaceIndexById.at(ifaceId));
+            if (iface.wifiRole == "ap")
+            {
+                apInterfaceId = outputInterfaceIdById.at(ifaceId);
+            }
+        }
+        std::string state = bss.state == "disabled" ? "disabled" : "normal";
+        output << "{\"entity_type\":\"channel\",\"entity_id\":" << JsonString(bss.id)
+               << ",\"properties\":{\"medium_type\":\"wifi\",\"configured_state\":"
+               << JsonString(bss.state)
+               << ",\"standard\":" << JsonString(bss.standard)
+               << ",\"channel_number\":" << bss.channelNumber
+               << ",\"channel_width_mhz\":" << bss.channelWidthMhz
+               << ",\"tx_power_dbm\":" << bss.txPowerDbm
+               << ",\"loss_exponent\":" << bss.lossExponent
+               << ",\"rate_manager\":" << JsonString(bss.rateManager) << "}"
+               << ",\"relations\":{\"ap_node\":" << JsonString(bss.apNode)
+               << ",\"ap_nic\":" << JsonString(apInterfaceId)
+               << ",\"connects\":" << JsonStringArray(outputInterfaceIds)
+               << "}}\n";
+        channelStateLabels.push_back("{\"entity_id\":" + JsonString(bss.id) +
+                                    ",\"label\":" + JsonString(state) + "}");
     }
 
     for (const auto& flow : m_flowRecords)
@@ -865,7 +1061,9 @@ NetworkSceneHelper::WriteResults() const
                                                 ",\"label\":" + JsonString(constraint) + "}");
         }
 
-        if (flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
+        const bool wiredOnlyPath = std::all_of(pathChannels.begin(), pathChannels.end(),
+            [&](const std::string& id) { return channelById.count(id) != 0; });
+        if (wiredOnlyPath && flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
         {
             std::vector<std::string> faultEntityIds;
             auto addFaultEntity = [&faultEntityIds](const std::string& entityId) {
@@ -953,6 +1151,11 @@ NetworkSceneHelper::WriteResults() const
                 << JsonRawArray(nicStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"channel_state\",\"label\":"
                 << JsonRawArray(channelStateLabels) << "}\n";
+    if (!nicAssociationStateLabels.empty())
+    {
+        labelOutput << "{\"label_type\":\"nic_association_state\",\"label\":"
+                    << JsonRawArray(nicAssociationStateLabels) << "}\n";
+    }
     labelOutput << "{\"label_type\":\"data_flow_state\",\"label\":"
                 << JsonRawArray(dataFlowStateLabels) << "}\n";
     if (!channelUnavailabilityCauseLabels.empty())

@@ -70,3 +70,15 @@ templates:
     answer:
       type: enum
       values: [connected_node_fault, channel_or_interface_fault]
+
+  - id: TA0012
+    question: "What is the configured availability of wireless channel $channel_id$: normal (enabled) or disabled?"
+    answer:
+      type: enum
+      values: [normal, disabled]
+
+  - id: TA0013
+    question: "What is the association state of STA interface $nic_id$ with its configured AP: associated, not_associated, or disabled?"
+    answer:
+      type: enum
+      values: [associated, not_associated, disabled]

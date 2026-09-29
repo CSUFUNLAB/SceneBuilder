@@ -28,6 +28,7 @@ class SceneData:
         flow_failure_causes: list[tuple[str, str]] | None = None,
         channel_unavailability_causes: list[tuple[str, str]] | None = None,
         nic_unavailability_causes: list[tuple[str, str]] | None = None,
+        nic_association_states: dict[str, str] | None = None,
     ) -> None:
         self.scene_name = scene_name
         self.source_file = source_file
@@ -42,6 +43,8 @@ class SceneData:
         self.nic_unavailability_causes = tuple(
             nic_unavailability_causes or []
         )
+        # Association labels must never overwrite the NIC's operational label.
+        self.nic_association_states = dict(nic_association_states or {})
         self._evidence_cache: dict[str, object] = {}
         self._entities_by_type: dict[str, list[EntityRecord]] = {}
         self._entities_by_key: dict[tuple[str, str], EntityRecord] = {}
@@ -67,7 +70,13 @@ class SceneData:
                 if node_id and node_id not in endpoint_nodes:
                     endpoint_nodes.append(node_id)
             self._channel_nodes[channel.entity_id] = tuple(endpoint_nodes)
-            if len(endpoint_nodes) == 2:
+            if channel.properties.get("medium_type") == "wifi":
+                ap_node = str(channel.relations.get("ap_node", ""))
+                for sta_node in endpoint_nodes:
+                    if ap_node in endpoint_nodes and sta_node != ap_node:
+                        pair = tuple(sorted((ap_node, sta_node)))
+                        self._channels_by_node_pair.setdefault(pair, []).append(channel)
+            elif len(endpoint_nodes) == 2:
                 pair = tuple(sorted(endpoint_nodes))
                 self._channels_by_node_pair.setdefault(pair, []).append(channel)
 
@@ -79,6 +88,8 @@ class SceneData:
             "nic": set(),
             "channel": set(),
             "data_flow": set(),
+            "wifi_bss": set(),
+            "wifi_association": set(),
         }
         for flow in self.entities("data_flow"):
             self._flow_scope_ids["data_flow"].add(flow.entity_id)
@@ -90,9 +101,24 @@ class SceneData:
                 self._flow_scope_ids["node"].add(str(node_id))
             for channel in self.channels_on_flow_path(flow):
                 self._flow_scope_ids["channel"].add(channel.entity_id)
-                self._flow_scope_ids["node"].update(self.channel_endpoint_nodes(channel))
+                path_nodes = set(flow.relations.get("path_nodes", []))
+                wireless = channel.properties.get("medium_type") == "wifi"
                 for nic_id in channel.relations.get("connects", []):
+                    nic = self.entity("nic", str(nic_id))
+                    if nic and (not wireless or nic.relations.get("node") in path_nodes):
+                        self._flow_scope_ids["nic"].add(str(nic_id))
+                        self._flow_scope_ids["node"].add(str(nic.relations.get("node")))
+            for resource_id in flow.relations.get("path_resources", []):
+                bss = self.entity("wifi_bss", str(resource_id))
+                if bss is None:
+                    continue
+                self._flow_scope_ids["wifi_bss"].add(bss.entity_id)
+                for nic_id in bss.relations.get("interfaces", []):
                     self._flow_scope_ids["nic"].add(str(nic_id))
+                for association_id in bss.relations.get("associations", []):
+                    self._flow_scope_ids["wifi_association"].add(
+                        str(association_id)
+                    )
 
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "SceneData":
@@ -116,6 +142,7 @@ class SceneData:
                 else f"labels_{source_file.stem.removeprefix('twin_')}.jsonl"
             )
         entity_labels: dict[str, str] = {}
+        nic_association_states: dict[str, str] = {}
         bottlenecks: list[tuple[str, str]] = []
         congestion_patterns: list[tuple[str, str]] = []
         channel_saturation_causes: list[tuple[str, str]] = []
@@ -134,10 +161,20 @@ class SceneData:
                     except json.JSONDecodeError as exc:
                         raise ValueError(f"Invalid JSON at {label_file}:{line_number}: {exc.msg}") from exc
                     label_type = str(label_row.get("label_type", ""))
-                    if label_type == "state" or label_type in {
+                    if label_type == "nic_association_state":
+                        values = label_row.get("label", [])
+                        if not isinstance(values, list):
+                            raise ValueError(f"{label_file}:{line_number} association label must be a list")
+                        for value in values:
+                            if not isinstance(value, dict) or "entity_id" not in value or "label" not in value:
+                                raise ValueError(f"{label_file}:{line_number} invalid association label")
+                            nic_association_states[str(value["entity_id"])] = str(value["label"])
+                    elif label_type == "state" or label_type in {
                         "node_state",
                         "nic_state",
                         "channel_state",
+                        "wifi_bss_state",
+                        "wifi_association_state",
                         "data_flow_state",
                     }:
                         values = label_row.get("label", [])
@@ -304,6 +341,7 @@ class SceneData:
             flow_failure_causes=flow_failure_causes,
             channel_unavailability_causes=channel_unavailability_causes,
             nic_unavailability_causes=nic_unavailability_causes,
+            nic_association_states=nic_association_states,
         )
 
     def entities(self, entity_type: str) -> list[EntityRecord]:
@@ -329,15 +367,19 @@ class SceneData:
 
         path_nodes = [str(node) for node in flow.relations.get("path_nodes", [])]
         channels: list[EntityRecord] = []
-        seen: set[str] = set()
         for src, dst in zip(path_nodes, path_nodes[1:]):
             pair = tuple(sorted((src, dst)))
             for channel in self._channels_by_node_pair.get(pair, []):
-                if channel.entity_id in seen:
-                    continue
-                seen.add(channel.entity_id)
                 channels.append(channel)
         return channels
+
+    def channel_supports_hop(self, channel: EntityRecord, src: str, dst: str) -> bool:
+        endpoints = set(self.channel_endpoint_nodes(channel))
+        if src == dst or not {src, dst}.issubset(endpoints):
+            return False
+        if channel.properties.get("medium_type") == "wifi":
+            return channel.relations.get("ap_node") in {src, dst}
+        return endpoints == {src, dst}
 
     def flow_direction_on_channel(
         self,

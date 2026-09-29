@@ -19,3 +19,42 @@ ns-3/*
 !ns-3/contrib/**
 
 analysis_questions.jsonl
+
+# Local environments, generated experiments and delivery archives.
+/.runtime/
+/.venv/
+/venv/
+/.vscode/
+/deliverables/
+/generated*/
+*.zip
+*.7z
+*.tar.gz
+*.log
+.env
+.env.*
+!.env.example
+
+# Personal notes and historical local experiment configurations (keep on disk).
+/AI_HANDOFF.md
+/CODE_GUIDE_CN.md
+/NEXT_AI_PROMPT.txt
+/configs/terminal_three_step*.yaml
+/configs/test_run.yaml
+/configs/wifi_first_version*.yaml
+
+# Local document/ZIP helpers and historical delivery-specific verification.
+/tools/build_*.py
+/tools/package_*.py
+/tools/*_README.md
+/tools/run_wifi_*_example.py
+/tools/cleanup_temporary_outputs.ps1
+/tools/compare_premerge_writer.py
+/tools/summarize_ids_additional.py
+/tools/verify_derived_ssid.py
+/tools/verify_ids_additional.py
+/tools/verify_nic_common_model.py
+/tools/verify_nic_package_smoke.py
+/tools/verify_nic_queue_boundaries.py
+/tools/verify_unified_channel_ids.py
+/tools/verify_wifi_twin_merge.py

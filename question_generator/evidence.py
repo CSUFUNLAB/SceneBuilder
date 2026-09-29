@@ -31,6 +31,8 @@ def channel_directional_throughputs(
 ) -> tuple[float, float] | None:
     """Reconstruct both directional throughputs from carries and flow paths."""
 
+    if channel.properties.get("medium_type") == "wifi":
+        return None  # Shared radio airtime is not a two-ended fixed-capacity link.
     endpoint_nodes = scene.channel_endpoint_nodes(channel)
     if len(endpoint_nodes) != 2 or endpoint_nodes[0] == endpoint_nodes[1]:
         return None
@@ -160,6 +162,11 @@ def _channel_directional_measurements(
 
 
 def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
+    if channel.properties.get("medium_type") == "wifi":
+        # This reports configured BSS availability, not airtime/capacity or all STA associations.
+        return {"enabled": "normal", "normal": "normal", "disabled": "disabled"}.get(
+            str(channel.properties.get("configured_state", ""))
+        )
     original_capacity = _number(channel.properties, "original_capacity_mbps")
     current_throughput = _maximum_channel_throughput(scene, channel)
     if (
@@ -230,24 +237,24 @@ def _complete_path_channels(
         channel_ids = [str(channel_id) for channel_id in explicit_channel_ids]
         if any(not channel_id for channel_id in channel_ids):
             return None
-        if len(set(channel_ids)) != len(channel_ids):
-            return None
         channels = scene.channels_on_flow_path(flow)
         if [channel.entity_id for channel in channels] != channel_ids:
+            return None
+        if any(channel_ids.count(c.entity_id) > 1 and c.properties.get("medium_type") != "wifi"
+               for c in channels):
             return None
         return channels
 
     path_nodes = [str(node_id) for node_id in flow.relations.get("path_nodes", [])]
     if len(path_nodes) < 2:
         return None
-    discovered = scene.channels_on_flow_path(flow)
+    discovered = {c.entity_id: c for c in scene.channels_on_flow_path(flow)}
     ordered: list[EntityRecord] = []
     for source, destination in zip(path_nodes, path_nodes[1:]):
-        pair = {source, destination}
         matches = [
             channel
-            for channel in discovered
-            if set(scene.channel_endpoint_nodes(channel)) == pair
+            for channel in discovered.values()
+            if scene.channel_supports_hop(channel, source, destination)
         ]
         if len(matches) != 1:
             return None
@@ -282,10 +289,7 @@ def _complete_flow_path(
     if channels is None or len(channels) + 1 != len(path_node_ids):
         return None
     for index, channel in enumerate(channels):
-        if set(scene.channel_endpoint_nodes(channel)) != {
-            path_node_ids[index],
-            path_node_ids[index + 1],
-        }:
+        if not scene.channel_supports_hop(channel, path_node_ids[index], path_node_ids[index + 1]):
             return None
     return path_node_ids, channels
 
@@ -303,6 +307,8 @@ def _infer_unique_physical_fault(scene: SceneData) -> str | None:
 def _compute_unique_physical_fault(scene: SceneData) -> str | None:
     """Infer one physical fault from complete static paths and flow outcomes."""
 
+    if any(c.properties.get("medium_type") == "wifi" for c in scene.entities("channel")):
+        return None  # Wireless fault attribution is outside this version's scope.
     flow_paths: dict[str, tuple[list[str], list[EntityRecord]]] = {}
     failed_flow_ids: set[str] = set()
     for flow in scene.entities("data_flow"):
@@ -402,6 +408,18 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
 
 
 def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
+    if nic.properties.get("interface_type") == "wifi":
+        operational = nic.properties.get("operational")
+        if operational is not True:
+            return "disabled" if operational is False else None
+        if nic.properties.get("queue_layer") == "traffic_control":
+            size = _number(nic.properties, "queue_size_packets")
+            current = _number(nic.properties, "queue_current_packets")
+            if size is None or current is None or size <= 0 or current < 0:
+                return None
+            if current / size >= SATURATION_THRESHOLD:
+                return "saturated"
+        return "normal"
     channel_id = str(nic.relations.get("channel", ""))
     channel = scene.entity("channel", channel_id)
     if channel is None:
@@ -460,6 +478,66 @@ def infer_nic_unavailability_cause(
     return infer_channel_unavailability_cause(scene, channel)
 
 
+def infer_wifi_bss_state(
+    scene: SceneData,
+    bss: EntityRecord,
+) -> str | None:
+    interface_ids = bss.relations.get("interfaces")
+    if not isinstance(interface_ids, list) or not interface_ids:
+        return None
+    interfaces = [scene.entity("nic", str(interface_id)) for interface_id in interface_ids]
+    if any(interface is None for interface in interfaces):
+        return None
+    states = [infer_nic_state(scene, interface) for interface in interfaces if interface]
+    if any(state is None for state in states):
+        return None
+    return "disabled" if any(state == "disabled" for state in states) else "normal"
+
+
+def infer_wifi_association_state(
+    scene: SceneData,
+    association: EntityRecord,
+) -> str | None:
+    if association.entity_type == "nic":
+        if association.properties.get("wifi_role") != "sta":
+            return None
+        configured = association.properties.get("association_configured_state")
+        ap = scene.entity("nic", str(association.relations.get("ap_nic", "")))
+        channel_id = str(association.relations.get("channel", ""))
+        channel = scene.entity("channel", channel_id)
+        if (ap is None or channel is None or ap.properties.get("wifi_role") != "ap"
+                or ap.relations.get("channel") != channel_id
+                or channel.properties.get("medium_type") != "wifi"
+                or channel.relations.get("ap_nic") != ap.entity_id
+                or association.entity_id not in channel.relations.get("connects", [])):
+            return None
+        states = [infer_nic_state(scene, nic) for nic in (association, ap)]
+        if configured == "disabled" or "disabled" in states:
+            return "disabled"
+        if configured != "enabled" or any(s is None for s in states):
+            return None
+        observed = association.properties.get("association_observed")
+        return "associated" if observed is True else ("not_associated" if observed is False else None)
+    configured_state = str(association.properties.get("configured_state", ""))
+    if configured_state == "disabled":
+        return "disabled"
+    if configured_state != "enabled":
+        return None
+    interface_ids = [
+        association.relations.get("ap_nic"),
+        association.relations.get("sta_nic"),
+    ]
+    if any(not interface_id for interface_id in interface_ids):
+        return None
+    interfaces = [scene.entity("nic", str(interface_id)) for interface_id in interface_ids]
+    if any(interface is None for interface in interfaces):
+        return None
+    states = [infer_nic_state(scene, interface) for interface in interfaces if interface]
+    if any(state is None for state in states):
+        return None
+    return "disabled" if any(state == "disabled" for state in states) else "associated"
+
+
 def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
     if entity.entity_type == "node":
         return infer_node_state(scene, entity)
@@ -469,6 +547,10 @@ def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
         return infer_nic_state(scene, entity)
     if entity.entity_type == "data_flow":
         return infer_flow_state(entity)
+    if entity.entity_type == "wifi_bss":
+        return infer_wifi_bss_state(scene, entity)
+    if entity.entity_type == "wifi_association":
+        return infer_wifi_association_state(scene, entity)
     return None
 
 
@@ -506,7 +588,7 @@ def infer_bandwidth_constraint(scene: SceneData, flow: EntityRecord) -> str | No
 
 def infer_congestion_pattern(scene: SceneData, flow: EntityRecord) -> str | None:
     channels = _complete_path_channels(scene, flow)
-    if channels is None:
+    if channels is None or any(c.properties.get("medium_type") == "wifi" for c in channels):
         return None
     states = [infer_channel_state(scene, channel) for channel in channels]
     if any(state not in {"normal", "saturated"} for state in states):
@@ -579,7 +661,7 @@ def infer_channel_saturation_cause(
 
 def infer_bottleneck(scene: SceneData, flow: EntityRecord) -> str | None:
     channels = _complete_path_channels(scene, flow)
-    if channels is None or len(channels) < 2:
+    if channels is None or len(channels) < 2 or any(c.properties.get("medium_type") == "wifi" for c in channels):
         return None
     states = [infer_channel_state(scene, channel) for channel in channels]
     if any(state not in {"normal", "saturated"} for state in states):
