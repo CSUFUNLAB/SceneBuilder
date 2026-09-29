@@ -171,21 +171,12 @@ def _generator_for(category: str) -> QuestionCategoryGenerator:
 
 
 def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[str, int]]:
-    unknown_answer = template.unknown_answer
     if not template.answer_values:
-        return (
-            [("", total_count)]
-            if unknown_answer is None
-            else [(unknown_answer, total_count)]
-        )
+        return [("", total_count)]
     if template.has_id_answer:
         targets = [template.answer_values[0]]
-        if unknown_answer is not None:
-            targets.append(unknown_answer)
     else:
         targets = list(template.answer_values)
-        if unknown_answer is not None:
-            targets.append(unknown_answer)
 
     label_count = len(targets)
     if total_count % label_count != 0:

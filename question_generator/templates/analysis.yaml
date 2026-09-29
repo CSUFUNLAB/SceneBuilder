@@ -1,11 +1,6 @@
 schema_version: 1
 question_type: analysis
 
-unknown_answer:
-  label: unknown
-  description: Use only when the target and question are valid but the available Twin evidence cannot determine one unique supported answer.
-  evidence_required: true
-
 templates:
   - id: TA0001
     question: "What is the current state of node $node_id$: normal or disabled?"

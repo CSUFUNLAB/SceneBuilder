@@ -22,7 +22,6 @@ from .models import (
     GeneratedQuestion,
     GenerationCount,
     QuestionTemplate,
-    UNKNOWN_ANSWER_LABEL,
     evolution_event_semantics,
 )
 from .runner import (
@@ -824,8 +823,6 @@ def _target_label_counts(
     total_count: int,
 ) -> tuple[tuple[str, int], ...]:
     labels = list(template.answer_values)
-    if template.unknown_answer is not None:
-        labels.append(template.unknown_answer)
     label_count = len(labels)
     if total_count % label_count != 0:
         raise ValueError(
@@ -846,20 +843,7 @@ def _generation_target_counts(
     total_count: int,
 ) -> tuple[tuple[str, int], ...]:
     if rule.comparison_kind == "state_prediction":
-        if template.unknown_answer is None:
-            return ((_EVIDENCE_BACKED_STATE_TARGET, total_count),)
-        label_count = len(template.answer_values) + 1
-        if total_count % label_count != 0:
-            raise ValueError(
-                f"{template.template_id} requests {total_count} questions "
-                f"but has {label_count} labels including unknown; "
-                "questions_per_question must be divisible by the label count"
-            )
-        unknown_count = total_count // label_count
-        return (
-            (_EVIDENCE_BACKED_STATE_TARGET, total_count - unknown_count),
-            (template.unknown_answer, unknown_count),
-        )
+        return ((_EVIDENCE_BACKED_STATE_TARGET, total_count),)
     return _target_label_counts(template, total_count)
 
 
@@ -1382,7 +1366,6 @@ def _find_evidence_candidates(
     event_entity_type = event_type.entity_type
     target_entity_type = rule.target_entity_type
     event_id = str(event["entity_id"])
-    wants_unknown = target_label == template.unknown_answer
     if (
         event_entity_type == "data_flow"
         and target_entity_type == "data_flow"
@@ -1412,7 +1395,7 @@ def _find_evidence_candidates(
             event,
         )
     )
-    if event_evidence_missing and not wants_unknown:
+    if event_evidence_missing:
         return []
 
     matching_targets: list[
@@ -1428,36 +1411,6 @@ def _find_evidence_candidates(
                 packet_loss_rate_change_threshold
             ),
         )
-        if wants_unknown:
-            if event_evidence_missing:
-                missing_reason = "event_state_evidence_missing"
-            else:
-                if answer_label is not None:
-                    continue
-                missing_reason = _missing_target_evidence_reason(
-                    before,
-                    after,
-                    rule,
-                    target_id,
-                )
-                if missing_reason is None:
-                    continue
-            matching_targets.append(
-                (
-                    target_id,
-                    UNKNOWN_ANSWER_LABEL,
-                    _unknown_evolution_evidence(
-                        before,
-                        after,
-                        event_type,
-                        event_id,
-                        rule,
-                        target_id,
-                        missing_reason,
-                    ),
-                )
-            )
-            continue
         if answer_label is None:
             continue
         if (
@@ -1530,108 +1483,6 @@ def _find_evidence_candidates(
             )
         )
     return candidates
-
-
-def _missing_target_evidence_reason(
-    before: SceneData,
-    after: SceneData,
-    rule: EvolutionQuestionRule,
-    target_id: str,
-) -> str | None:
-    """Return a reason only for a valid target with insufficient evidence."""
-
-    entity_type = rule.target_entity_type
-    before_entity = before.entity(entity_type, target_id)
-    after_entity = after.entity(entity_type, target_id)
-    if rule.comparison_kind == "state_prediction":
-        if after_entity is None:
-            return None
-        if _evidence_backed_entity_state(after, entity_type, target_id) is None:
-            return "after_state_not_derivable"
-        if (
-            before_entity is not None
-            and _evidence_backed_entity_state(
-                before,
-                entity_type,
-                target_id,
-            )
-            is None
-        ):
-            return "before_state_not_derivable"
-        return None
-    if rule.comparison_kind == "after_status":
-        if before_entity is not None or after_entity is None:
-            return None
-        return "after_state_missing" if not after_entity.label else None
-    if before_entity is None or after_entity is None:
-        return None
-    if rule.comparison_kind in {
-        "status",
-        "saturation_outcome",
-        "saturation_recovery",
-    }:
-        if not before_entity.label or not after_entity.label:
-            return "before_or_after_state_missing"
-        return None
-    if rule.metric_name == "maximum_directional_bandwidth_mbps":
-        if (
-            channel_directional_throughputs(before, before_entity) is None
-            or channel_directional_throughputs(after, after_entity) is None
-        ):
-            return "directional_channel_load_not_derivable"
-        return None
-    if rule.metric_name == "packet_loss_rate":
-        if (
-            _packet_loss_rate(before_entity) is None
-            or _packet_loss_rate(after_entity) is None
-        ):
-            return "packet_loss_rate_not_derivable"
-        return None
-    if rule.metric_name == "average_delay_ms":
-        before_rx_packets = _finite_number(
-            before_entity.properties.get("rx_packets")
-        )
-        after_rx_packets = _finite_number(
-            after_entity.properties.get("rx_packets")
-        )
-        if (
-            before_rx_packets is None
-            or after_rx_packets is None
-            or before_rx_packets <= 0
-            or after_rx_packets <= 0
-        ):
-            return "delay_not_observable_without_received_packets"
-    if (
-        _finite_number(before_entity.properties.get(rule.metric_name)) is None
-        or _finite_number(after_entity.properties.get(rule.metric_name)) is None
-    ):
-        return "before_or_after_metric_missing"
-    return None
-
-
-def _unknown_evolution_evidence(
-    before: SceneData,
-    after: SceneData,
-    event_type: EvolutionEventType,
-    event_id: str,
-    rule: EvolutionQuestionRule,
-    target_id: str,
-    reason: str,
-) -> dict[str, Any]:
-    return {
-        "status": "insufficient",
-        "reason": reason,
-        "required_evidence": (
-            "complete and mutually consistent before/after Twin evidence "
-            "for the event, target state, and requested metric"
-        ),
-        "event_entity_type": event_type.entity_type,
-        "event_entity_id": event_id,
-        "target_entity_type": rule.target_entity_type,
-        "target_entity_id": target_id,
-        "before_scene_name": before.scene_name,
-        "after_scene_name": after.scene_name,
-    }
 
 
 def _evidence_backed_entity_state(

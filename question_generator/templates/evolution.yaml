@@ -1,11 +1,6 @@
 schema_version: 1
 question_type: evolution
 
-unknown_answer:
-  label: unknown
-  description: Use only when the event and target are valid but the before/after Twin evidence cannot determine one unique supported answer.
-  evidence_required: true
-
 # Event types are independent of question templates. The evolution scene and
 # Twin generation stages use this catalog directly.
 events:
