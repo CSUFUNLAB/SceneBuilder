@@ -215,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     split_parser = subparsers.add_parser(
         "split",
         help=(
-            "Split generated questions by template into task-specific "
+            "Split generated questions by scene into task-specific "
             "training and test datasets"
         ),
     )
@@ -230,8 +230,8 @@ def build_parser() -> argparse.ArgumentParser:
         "-r",
         "--train-ratio",
         type=float,
-        required=True,
-        help="Required training-question ratio in the open interval (0, 1).",
+        default=None,
+        help="Override train_ratio from the split config (default 0.6). Must be in (0, 1).",
     )
     clean_parser = subparsers.add_parser(
         "clean",

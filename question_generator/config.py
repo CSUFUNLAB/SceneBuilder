@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import yaml
@@ -22,6 +22,7 @@ class CategoryConfig:
     template_file: Path
     output_file: Path
     options: dict[str, Any]
+    questions_per_template: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,14 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
         raise ValueError(f"categories.{name}.questions_per_question must be a non-negative integer")
     if enabled and count == 0:
         raise ValueError(f"categories.{name}.questions_per_question must be positive when enabled")
+    overrides = raw.get("questions_per_template", {})
+    if not isinstance(overrides, dict):
+        raise ValueError(f"categories.{name}.questions_per_template must be a mapping")
+    if overrides and name != "analysis":
+        raise ValueError("questions_per_template is currently supported for analysis only")
+    for template_id, quota in overrides.items():
+        if not isinstance(template_id, str) or isinstance(quota, bool) or not isinstance(quota, int) or quota < 1:
+            raise ValueError("questions_per_template must map template IDs to positive integers")
     options = raw.get("options", {})
     if not isinstance(options, dict):
         raise ValueError(f"categories.{name}.options must be a mapping")
@@ -78,6 +87,7 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
             f"categories.{name}.output_file",
         ),
         options=dict(options),
+        questions_per_template=dict(overrides),
     )
 
 

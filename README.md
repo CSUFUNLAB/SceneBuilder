@@ -35,8 +35,8 @@ python main.py twin -t optimization
 # 7. 生成优化问题
 python main.py questions -t optimization -c configs/question_generator.yaml
 
-# 8. 按问题划分训练集和测试集
-python main.py split -c configs/dataset_split.yaml -r 0.8
+# 8. 按场景隔离划分训练集和测试集
+python main.py split -c configs/dataset_split.yaml
 ```
 
 命令格式为：
@@ -233,18 +233,18 @@ python main.py clean -o questions
 
 ### 4. 划分训练集和测试集
 
-划分比例必须在每次运行时显式输入。例如按 80%/20% 划分：
+默认按训练 60% / 测试 40% 划分，比例来自 `configs/dataset_split.yaml` 的 `train_ratio: 0.6`：
 
 ```bash
 python main.py split \
   -c configs/dataset_split.yaml \
-  -r 0.8
+  -r 0.6
 ```
 
-配置文件默认是 `configs/dataset_split.yaml`，可以省略 `-c`，但不能省略比例：
+配置文件和命令行比例都可以省略：
 
 ```bash
-python main.py split -r 0.8
+python main.py split
 ```
 
 `configs/dataset_split.yaml` 配置：
@@ -254,15 +254,18 @@ python main.py split -r 0.8
 - `test_output_root`：测试集输出目录。
 - `template_output_root`：训练集和测试集共用的问题模板目录。
 - `seed`：可复现划分所使用的随机种子。
+- `train_ratio`：训练问题比例，默认 `0.6`。
 
-`-r` 是 `--train-ratio` 的简写，必须在 `0` 和 `1` 之间；配置文件不提供默认划分比例。
+`-r` 是 `--train-ratio` 的简写，可覆盖配置文件比例，必须在 `0` 和 `1` 之间。
 
 `train_output_root`、`test_output_root` 和 `template_output_root` 必须都不存在或为空。任一输出目录非空时，
 `split` 会在创建临时数据前直接停止，不会删除或覆盖已有数据集；需要先显式清空对应目录
 或在配置中改用新的输出路径。
 
-划分以问题为单位，并在每个任务内按 `template_id` 分层处理，不按场景整体划分。同一
-场景可以因为不同问题同时出现在训练集和测试集中。输出按
+每个任务按实际使用的场景整体划分，同一场景的所有问题只能进入训练或测试中的一侧。
+分类模板同时保持模板和标签配额；实体定位模板按模板配额划分，不把实体 ID 当作类别。
+analysis 当前生成 145 题，按默认比例分为训练 87 题、测试 58 题，每个分类标签各 3/2 题。
+如果整组场景无法满足配额，明确报错，不通过拆分场景凑数。输出按
 `analysis/evolution/optimization` 分任务，每个任务目录包含该任务的问题列表和
 `scenes/`；其中 `scenes/` 直接保存问题涉及的 `<scene_id>.jsonl` Twin，不创建场景子目录，
 也不复制原始输入、标签或其他文件。某个训练或测试分片中没有对应任务的问题时，不创建
@@ -577,6 +580,8 @@ generated/
 - `seed`：问题实体选择的随机种子。
 - `questions_per_question`：每条问题模板期望生成的总数量；分析和普通演化模板会在允许的
   确定答案之间分配目标数量，证据不足时实际数量可能更少。
+- `questions_per_template`：analysis 的逐模板数量覆盖；当前两分类模板各 10 题、三分类
+  15 题、四分类各 20 题、两个定位模板各 15 题，共 145 题。分类模板的数量必须能被标签数整除。
 - `template_file`：该类问题使用的模板文件。
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。

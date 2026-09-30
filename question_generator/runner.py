@@ -210,6 +210,9 @@ def _generate_category(
     if not templates:
         raise ValueError(f"Enabled category {category_config.name} has no question templates")
 
+    unknown = set(category_config.questions_per_template) - {t.template_id for t in templates}
+    if unknown:
+        raise ValueError(f"Unknown template IDs in questions_per_template: {sorted(unknown)}")
     generator = _generator_for(category_config.name)
     questions: list[GeneratedQuestion] = []
     counts: list[GenerationCount] = []
@@ -218,7 +221,9 @@ def _generate_category(
     for template in templates:
         for target_label, requested_count in _target_counts(
             template,
-            category_config.questions_per_question,
+            category_config.questions_per_template.get(
+                template.template_id, category_config.questions_per_question,
+            ),
         ):
             generated_count = 0
             candidate_scene_files = list(scene_files)
