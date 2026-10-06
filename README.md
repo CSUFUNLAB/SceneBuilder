@@ -116,6 +116,20 @@ python main.py clean
 python main.py twin -t origin
 ```
 
+使用 4 个线程并发生成（演化和优化 Twin 同样支持 `--threads`）：
+
+```bash
+python main.py twin -t origin --threads 4
+python main.py twin -t evolution --threads 4
+python main.py twin -t optimization --threads 4
+```
+
+场景由线程池分配，每个线程启动一个独立的 ns-3 进程，完成后继续领取下一个场景。
+运行前统一编译一次；每次仿真禁用隐式编译，避免并发操作构建目录。
+默认使用 1 个线程；并发数不会超过场景数量，并发日志带有场景标识。
+默认遇到失败后停止启动新场景，已运行的场景会正常结束；指定 `--continue-on-error`
+可继续处理其余场景。
+
 原始场景输入从 `origin/input/<scene_id>/` 读取，生成的 Twin 扁平保存为
 `origin/scenes/<scene_id>.jsonl`，标签保存到对应的
 `origin/input/<scene_id>/labels.jsonl`。`origin/scenes` 中只保存 Twin 文件。
@@ -667,9 +681,10 @@ generated/
 
 ## 常用选项
 
+- `--threads <正整数>`：Twin 生成的工作线程数，默认 `1`；每个线程运行一个独立的 ns-3 进程。
 - `--stop-time <秒>`：以绝对仿真时刻覆盖默认停止时刻；必须晚于应用启动时刻。
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
-- `--no-build`：跳过运行前的显式编译步骤。
+- `--no-build`：直接使用已有 ns-3 构建，跳过所有编译步骤。
 - `--continue-on-error`：单个场景失败后继续处理其他场景。
 - `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
   `twin -t optimization` 会创建派生场景，因此不支持该选项。

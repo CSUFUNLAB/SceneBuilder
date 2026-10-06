@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,8 +17,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from threading import Event, Lock
 import time
-from typing import Sequence
+from typing import Iterable, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -47,6 +49,7 @@ PROGRESS_RE = re.compile(
     r"NS3_PROGRESS sim_time=([0-9.eE+-]+) stop_time=([0-9.eE+-]+) events=([0-9]+)"
 )
 DISPLAY_REFRESH_INTERVAL = 5.0
+OUTPUT_LOCK = Lock()
 LEGACY_RUNTIME_EVENTS_ENABLED = False
 QUESTION_CATEGORIES = ("analysis", "evolution", "optimization")
 TWIN_TYPES = ("origin", "evo", "opt")
@@ -276,7 +279,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
+
+
 def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--threads",
+        type=positive_int,
+        default=1,
+        help="Number of scene workers running independent ns-3 processes (default: 1).",
+    )
     parser.add_argument(
         "--ns3-root",
         default=str(DEFAULT_NS3_ROOT),
@@ -298,11 +317,11 @@ def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
         default=5.0,
         help="Progress report interval in simulated seconds. 0 disables ns-3 progress reports.",
     )
-    parser.add_argument("--no-build", action="store_true", help="Skip the explicit ns-3 build step")
+    parser.add_argument("--no-build", action="store_true", help="Use the existing ns-3 build without compiling")
     parser.add_argument(
         "--continue-on-error",
         action="store_true",
-        help="Continue simulating remaining scenes after a failed scene.",
+        help="Continue after a failed scene; otherwise stop new scenes and let running scenes finish.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print ns-3 commands without running them")
 
@@ -622,6 +641,8 @@ def render_progress(
     sim_time: float | None,
     stop_time: float | None,
     events: int | None,
+    *,
+    dynamic: bool = True,
 ) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     elapsed = format_duration(time.monotonic() - started_at)
@@ -635,7 +656,7 @@ def render_progress(
         parts.append("sim=-")
     if events is not None:
         parts.append(f"sim_events={events}")
-    if sys.stdout.isatty():
+    if dynamic and sys.stdout.isatty():
         print("\r\033[K" + " | ".join(parts), end="", flush=True)
     else:
         print(" | ".join(parts), flush=True)
@@ -646,6 +667,8 @@ def run_command(
     dry_run: bool,
     scene_label: str | None = None,
     cwd: Path | None = None,
+    *,
+    line_output: bool = False,
 ) -> int:
     print("+ " + " ".join(shlex.quote(part) for part in command), flush=True)
     if dry_run:
@@ -662,6 +685,26 @@ def run_command(
         bufsize=1,
     )
     assert process.stdout is not None
+    if line_output:
+        # Parallel workers must not overwrite each other's terminal progress.
+        try:
+            for line in process.stdout:
+                match = PROGRESS_RE.search(line)
+                with OUTPUT_LOCK:
+                    if match:
+                        render_progress(
+                            scene_label, started_at, float(match.group(1)),
+                            float(match.group(2)), int(match.group(3)),
+                            dynamic=False,
+                        )
+                    else:
+                        print(f"{scene_label} | {line.rstrip()}", flush=True)
+            return process.wait()
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.terminate()
+                process.wait()
     dynamic_active = False
     sim_time: float | None = None
     stop_time: float | None = None
@@ -855,6 +898,7 @@ def run_twins(
     scenes: Sequence[Path] | None = None,
     ns3_root: str | Path = DEFAULT_NS3_ROOT,
     program: str = "TwinGenerate",
+    threads: int = 1,
     stop_time: float = 0.0,
     progress_interval: float = 5.0,
     no_build: bool = False,
@@ -865,6 +909,8 @@ def run_twins(
     event_seed: int = 1,
     event_list: str = "events.jsonl",
 ) -> TwinGenerationResult:
+    if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
+        raise ValueError("--threads must be a positive integer")
     event_groups, events_per_group = resolve_event_sampling(event_groups, events_per_group)
     resolved_scene_root = Path(scene_root).expanduser().resolve()
     resolved_twin_output_root = (
@@ -883,6 +929,8 @@ def run_twins(
         raise ValueError(f"Invalid generated scene directory: {invalid_scenes[0]}")
     if not scene_paths:
         raise ValueError("No generated scenes were provided for twin generation")
+    if len({scene.name for scene in scene_paths}) != len(scene_paths):
+        raise ValueError("Scene names must be unique to avoid Twin output collisions")
 
     existing_outputs = existing_twin_outputs(
         scene_paths,
@@ -911,7 +959,8 @@ def run_twins(
     failures: list[tuple[str, int]] = []
     generated_files: list[Path] = []
     total_jobs = len(scene_paths) * (event_groups + 1)
-    completed_jobs = 0
+    worker_count = min(threads, len(scene_paths))
+    stop_requested = Event()
     event_temp_context = (
         nullcontext(Path("/tmp/ns3-twin-events-dry-run"))
         if dry_run
@@ -919,7 +968,13 @@ def run_twins(
     )
     with event_temp_context as event_temp_root:
         event_work_root = Path(event_temp_root)
-        for scene in scene_paths:
+
+        def run_scene(item: tuple[int, Path]) -> TwinGenerationResult:
+            scene_index, scene = item
+            scene_files: list[Path] = []
+            scene_failures: list[tuple[str, int]] = []
+            if stop_requested.is_set():
+                return TwinGenerationResult((), ())
             try:
                 jobs = build_twin_jobs(
                     scene,
@@ -933,14 +988,15 @@ def run_twins(
                 )
             except (FileNotFoundError, ValueError) as exc:
                 print(str(exc), file=sys.stderr)
-                failures.append((scene.name, 1))
                 if not continue_on_error:
-                    break
-                continue
+                    stop_requested.set()
+                return TwinGenerationResult((), ((scene.name, 1),))
 
-            for group_id, event_file, result_file in jobs:
-                completed_jobs += 1
-                scene_label = f"[{completed_jobs}/{total_jobs}] {scene.name} group={group_id}"
+            for job_index, (group_id, event_file, result_file) in enumerate(jobs, start=1):
+                if stop_requested.is_set():
+                    break
+                job_number = scene_index * (event_groups + 1) + job_index
+                scene_label = f"[{job_number}/{total_jobs}] {scene.name} group={group_id}"
                 print(f"{scene_label} generating", flush=True)
                 rc = run_command(
                     [
@@ -954,10 +1010,12 @@ def run_twins(
                             event_file,
                             result_file,
                         ),
+                        "--no-build",
                     ],
                     dry_run,
                     scene_label,
                     cwd=resolved_ns3_root,
+                    line_output=worker_count > 1,
                 )
                 if rc == 0 and not dry_run:
                     generated_label_file = generated_label_path_for_twin(
@@ -981,13 +1039,30 @@ def run_twins(
                         ):
                             if partial_output.is_file():
                                 partial_output.unlink()
-                    failures.append((f"{scene.name} group={group_id}", rc))
+                    scene_failures.append((f"{scene.name} group={group_id}", rc))
                     if not continue_on_error:
+                        stop_requested.set()
                         break
                 else:
-                    generated_files.append(result_file)
-            if failures and not continue_on_error:
-                break
+                    scene_files.append(result_file)
+            return TwinGenerationResult(tuple(scene_files), tuple(scene_failures))
+
+        def collect_results(results: Iterable[TwinGenerationResult]) -> None:
+            for result in results:
+                generated_files.extend(result.generated_files)
+                failures.extend(result.failures)
+
+        if worker_count == 1 or dry_run:
+            # Keep previews deterministic and the default execution serial.
+            collect_results(map(run_scene, enumerate(scene_paths)))
+        else:
+            print(f"Generating Twins with {worker_count} scene worker(s).", flush=True)
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                try:
+                    collect_results(executor.map(run_scene, enumerate(scene_paths)))
+                except BaseException:
+                    stop_requested.set()
+                    raise
 
     if failures:
         print("\nFailed twin jobs:", file=sys.stderr)
@@ -1030,6 +1105,7 @@ def _run_twin_stage(
         scenes=scenes,
         ns3_root=args.ns3_root,
         program=args.program,
+        threads=args.threads,
         stop_time=args.stop_time,
         progress_interval=args.progress_interval,
         no_build=args.no_build,
