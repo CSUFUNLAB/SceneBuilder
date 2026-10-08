@@ -51,8 +51,8 @@ python main.py twin -t optimization
 # 7. 生成优化问题
 python main.py questions -t optimization -c configs/question_generator.yaml
 
-# 8. 按问题划分训练集和测试集
-python main.py split -c configs/dataset_split.yaml -r 0.8
+# 8. 按场景隔离划分训练集和测试集
+python main.py split -c configs/dataset_split.yaml
 ```
 
 命令格式为：
@@ -131,6 +131,20 @@ python main.py clean
 ```bash
 python main.py twin -t origin
 ```
+
+使用 4 个线程并发生成（演化和优化 Twin 同样支持 `--threads`）：
+
+```bash
+python main.py twin -t origin --threads 4
+python main.py twin -t evolution --threads 4
+python main.py twin -t optimization --threads 4
+```
+
+场景由线程池分配，每个线程启动一个独立的 ns-3 进程，完成后继续领取下一个场景。
+运行前统一编译一次；每次仿真禁用隐式编译，避免并发操作构建目录。
+默认使用 1 个线程；并发数不会超过场景数量，并发日志带有场景标识。
+默认遇到失败后停止启动新场景，已运行的场景会正常结束；指定 `--continue-on-error`
+可继续处理其余场景。
 
 原始场景输入从 `origin/input/<scene_id>/` 读取，生成的 Twin 扁平保存为
 `origin/scenes/<scene_id>.jsonl`，标签保存到对应的
@@ -226,12 +240,11 @@ python main.py questions -t analysis \
 `python main.py twin -t evolution`，通过比较变更前后的 Twin 生成实际满足目标变化的问题。
 普通演化模板针对每个模板及目标答案打乱对应事件的演化 Twin，逐个尝试生成问题；
 状态预测矩阵则按模板总数从具有双侧状态证据的候选中采样实际标签，不为某个事件无法产生的
-状态制造伪样本；事件或目标有效但状态/指标证据不足时改为生成 `unknown`。每个 Twin 对同一
+状态制造伪样本；事件或目标的状态、指标证据不足时直接跳过。每个 Twin 对同一
 模板最多贡献一道题，达到配置数量后立即停止。信道扩容和路由调整问题比较同一候选组的
 上下文 Twin 和全部候选 Twin。最优候选相对原场景存在超过阈值的正向提升，并且领先第二名
-超过胜出阈值时生成其实体 ID，否则生成 `unknown`。故障修复问题只比较两个单故障候选 Twin
-的绝对结果，不使用正常 context 作为改善基准；两个修复结果没有形成唯一最优时同样生成
-`unknown`。
+超过胜出阈值时生成其实体 ID，否则跳过该样本。故障修复问题只比较两个单故障候选 Twin
+的绝对结果，不使用正常 context 作为改善基准；两个修复结果没有形成唯一最优时也跳过。
 TO0001/TO0003/TO0004 的标签是 `Cxxxx` 信道 ID，TO0002/TO0005/TO0006 的标签是问题中
 列出的 `Nxxxx` 下一跳节点 ID，TO0007/TO0008/TO0009 的标签是应当修复的节点、信道或
 接口 ID。
@@ -250,18 +263,18 @@ python main.py clean -o questions
 
 ### 4. 划分训练集和测试集
 
-划分比例必须在每次运行时显式输入。例如按 80%/20% 划分：
+默认按训练 60% / 测试 40% 划分，比例来自 `configs/dataset_split.yaml` 的 `train_ratio: 0.6`：
 
 ```bash
 python main.py split \
   -c configs/dataset_split.yaml \
-  -r 0.8
+  -r 0.6
 ```
 
-配置文件默认是 `configs/dataset_split.yaml`，可以省略 `-c`，但不能省略比例：
+配置文件和命令行比例都可以省略：
 
 ```bash
-python main.py split -r 0.8
+python main.py split
 ```
 
 `configs/dataset_split.yaml` 配置：
@@ -271,15 +284,18 @@ python main.py split -r 0.8
 - `test_output_root`：测试集输出目录。
 - `template_output_root`：训练集和测试集共用的问题模板目录。
 - `seed`：可复现划分所使用的随机种子。
+- `train_ratio`：训练问题比例，默认 `0.6`。
 
-`-r` 是 `--train-ratio` 的简写，必须在 `0` 和 `1` 之间；配置文件不提供默认划分比例。
+`-r` 是 `--train-ratio` 的简写，可覆盖配置文件比例，必须在 `0` 和 `1` 之间。
 
 `train_output_root`、`test_output_root` 和 `template_output_root` 必须都不存在或为空。任一输出目录非空时，
 `split` 会在创建临时数据前直接停止，不会删除或覆盖已有数据集；需要先显式清空对应目录
 或在配置中改用新的输出路径。
 
-划分以问题为单位，并在每个任务内按 `template_id` 分层处理，不按场景整体划分。同一
-场景可以因为不同问题同时出现在训练集和测试集中。输出按
+每个任务按实际使用的场景整体划分，同一场景的所有问题只能进入训练或测试中的一侧。
+分类模板同时保持模板和标签配额；实体定位模板按模板配额划分，不把实体 ID 当作类别。
+analysis 当前生成 145 题，按默认比例分为训练 87 题、测试 58 题，每个分类标签各 3/2 题。
+如果整组场景无法满足配额，明确报错，不通过拆分场景凑数。输出按
 `analysis/evolution/optimization` 分任务，每个任务目录包含该任务的问题列表和
 `scenes/`；其中 `scenes/` 直接保存问题涉及的 `<scene_id>.jsonl` Twin，不创建场景子目录，
 也不复制原始输入、标签或其他文件。某个训练或测试分片中没有对应任务的问题时，不创建
@@ -542,13 +558,8 @@ generated/
 若某类标签的场景数或答案分布不足以达到配置数量，生成器保留已生成的问题，并在命令行
 报告实际数量。
 
-三类问题模板共用文件顶层的 `unknown_answer` 策略，标签固定为 `unknown`。问题及目标必须
-先满足对应模板的结构和语义前提；只有可用 Twin 证据缺失、相互矛盾或不能支持唯一答案时，
-才生成 `label: "unknown"`。物理或逻辑上不可能成立的问题不会借此恢复为候选，损坏的场景
-文件也不会作为 `unknown` 样本。每条 `unknown` 记录还包含 `evidence`，其中
-`status: "insufficient"`、`reason` 和 `required_evidence` 分别说明证据状态、无法判断的直接
-原因以及要得到确定答案仍缺少的证据。已有问题文件不会被自动重写，重新运行 `questions`
-后才会产生新标签。
+三类问题只生成能够由 Twin 证据确定唯一合法答案的样本。证据缺失、相互矛盾或不能支持
+唯一答案时直接跳过；物理或逻辑上不成立的问题和损坏的场景文件也不会成为候选。
 
 数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
 
@@ -597,8 +608,10 @@ generated/
 
 - `scenes_root`：包含场景及孪生体的目录。
 - `seed`：问题实体选择的随机种子。
-- `questions_per_question`：每条问题模板期望生成的总数量；生成器会把 `unknown` 与该模板的
-  其他答案目标一起纳入数量分配。
+- `questions_per_question`：每条问题模板期望生成的总数量；分析和普通演化模板会在允许的
+  确定答案之间分配目标数量，证据不足时实际数量可能更少。
+- `questions_per_template`：analysis 的逐模板数量覆盖；当前两分类模板各 10 题、三分类
+  15 题、四分类各 20 题、两个定位模板各 15 题，共 145 题。分类模板的数量必须能被标签数整除。
 - `template_file`：该类问题使用的模板文件。
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。
@@ -607,8 +620,7 @@ generated/
 分别复制为 `STN_tasks/question_template/analysis.yaml`、`evolution.yaml` 和
 `optimization.yaml`，供训练集和测试集共用。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
 `answer: [value1, value2]` 声明允许的标签；优化问题的答案格式由对应模板 ID 的生成规则确定。
-三个文件顶层都必须声明同一份 `unknown_answer` 策略；加载器会将该标签加入文件中的每条
-问题模板，无需在每个 `answer` 中重复书写。
+模板和生成数据都不接受不确定答案标签；无法确定唯一答案的样本不会写入问题列表。
 
 模板文件是 `schema_version: 1` 的 YAML。分析和演化任务的 `templates` 每项包含唯一的
 `id`、问题文本 `question` 和 `answer`；演化模板的 `answer` 是标签列表，不再重复声明
@@ -633,10 +645,9 @@ generated/
 路由表项，直接影响当前经过该转发节点的相关流；优化目标仍统计所有发往该目的节点的流。
 每个优化模板通过自身的 `strategy` 字段声明所属策略。模板加载器要求
 三种策略同时存在，并保证每个 TO 模板恰好属于一种已声明策略。生成问题时必须把候选下一跳、
-候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有
-真实改善、指标证据不完整或存在并列最优时无法确定唯一答案，并生成带证据说明的
-`unknown`；候选不足两个等不满足问题结构的场景仍不生成。故障修复使用单独的双候选绝对
-指标比较规则。
+候选扩容信道或候选修复实体直接列在问题中；候选不足两个、没有真实改善、指标证据不完整
+或存在并列最优时无法确定唯一答案，因此跳过该样本。故障修复使用单独的双候选绝对指标
+比较规则。
 `TO0007/TO0008/TO0009` 使用 `fault_repair`，分别优化全网吞吐量、全网包加权平均延迟和
 全网聚合丢包率。三个模板使用同一组两个单故障候选：只保留故障 B 的 Twin 表示修复 A，
 只保留故障 A 的 Twin 表示修复 B。正常 context 只提供共同拓扑、路由和流量背景，不生成
@@ -686,9 +697,10 @@ generated/
 
 ## 常用选项
 
+- `--threads <正整数>`：Twin 生成的工作线程数，默认 `1`；每个线程运行一个独立的 ns-3 进程。
 - `--stop-time <秒>`：以绝对仿真时刻覆盖默认停止时刻；必须晚于应用启动时刻。
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
-- `--no-build`：跳过运行前的显式编译步骤。
+- `--no-build`：直接使用已有 ns-3 构建，跳过所有编译步骤。
 - `--continue-on-error`：单个场景失败后继续处理其他场景。
 - `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
   `twin -t optimization` 会创建派生场景，因此不支持该选项。

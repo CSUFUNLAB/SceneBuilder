@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import random
 import shutil
 import tempfile
 from typing import Any
 
 import yaml
+
+from question_generator.scene_split import split_scene_groups
+from question_generator.templates import load_templates
 
 from question_generator.config import (
     QUESTION_CATEGORIES,
@@ -41,6 +43,7 @@ class DatasetSplitConfig:
     test_output_root: Path
     template_output_root: Path
     seed: int
+    train_ratio: float = 0.6
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,7 @@ def load_dataset_split_config(
             "template_output_root",
         ),
         seed=seed,
+        train_ratio=_validate_ratio(raw.get("train_ratio", 0.6)),
     )
     _validate_output_roots(config)
     return config
@@ -110,10 +114,10 @@ def load_dataset_split_config(
 def split_generated_dataset(
     config_path: str | Path,
     *,
-    train_ratio: float,
+    train_ratio: float | None = None,
 ) -> DatasetSplitResult:
     config = load_dataset_split_config(config_path)
-    effective_ratio = _validate_ratio(train_ratio)
+    effective_ratio = _validate_ratio(config.train_ratio if train_ratio is None else train_ratio)
     question_config = load_question_config(config.question_config)
     _validate_outputs_outside_sources(config, question_config)
     _ensure_output_roots_empty(config)
@@ -169,10 +173,13 @@ def _build_split(
             if source_path.is_file()
             else []
         )
-        train_records, test_records = _split_by_template(
+        templates = load_templates(question_config.categories[task_type].template_file, task_type)
+        train_records, test_records = split_scene_groups(
             records,
             train_ratio=train_ratio,
             seed=seed + task_offset,
+            enum_templates={t.template_id for t in templates if t.answer_type == "enum"},
+            scene_id=lambda record: _runtime_scene_id(record, task_type=task_type),
         )
         train_scenes = _write_task_dataset(
             train_root,
@@ -255,45 +262,6 @@ def _load_question_records(
             seen_question_ids.add(question_id)
             records.append(record)
     return records
-
-
-def _split_by_template(
-    records: list[dict[str, Any]],
-    *,
-    train_ratio: float,
-    seed: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    indices_by_template: dict[str, list[int]] = {}
-    for index, record in enumerate(records):
-        template_id = str(record["template_id"])
-        indices_by_template.setdefault(template_id, []).append(index)
-
-    train_indices: set[int] = set()
-    rng = random.Random(seed)
-    for template_id in sorted(indices_by_template):
-        indices = list(indices_by_template[template_id])
-        rng.shuffle(indices)
-        train_count = _train_count(len(indices), train_ratio)
-        train_indices.update(indices[:train_count])
-
-    train_records = [
-        record
-        for index, record in enumerate(records)
-        if index in train_indices
-    ]
-    test_records = [
-        record
-        for index, record in enumerate(records)
-        if index not in train_indices
-    ]
-    return train_records, test_records
-
-
-def _train_count(question_count: int, train_ratio: float) -> int:
-    if question_count <= 1:
-        return question_count
-    count = round(question_count * train_ratio)
-    return min(question_count - 1, max(1, count))
 
 
 def _write_task_dataset(

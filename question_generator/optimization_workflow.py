@@ -14,7 +14,6 @@ from typing import Any
 from .config import CategoryConfig, QuestionGeneratorConfig, load_config
 from .evidence import channel_directional_throughputs
 from .models import (
-    UNKNOWN_ANSWER_LABEL,
     GeneratedQuestion,
     GenerationCount,
     QuestionTemplate,
@@ -434,31 +433,16 @@ def generate_optimization_questions(
                         )
                 except (OSError, ValueError):
                     continue
-                wants_unknown = target_label == template.unknown_answer
-                if wants_unknown != (winner is None):
+                if winner is None:
                     continue
-                answer_label = (
-                    UNKNOWN_ANSWER_LABEL if wants_unknown else str(winner)
-                )
-                evidence = (
-                    _unknown_optimization_evidence(
-                        plan,
-                        objective_metric,
-                        candidate_scenes,
-                        context,
-                    )
-                    if wants_unknown
-                    else None
-                )
                 questions.append(
                     GeneratedQuestion(
                         question_id=f"Q{question_number:08d}",
                         question_type="optimization",
                         template_id=template.template_id,
                         question=template.render(plan.replacements),
-                        label=answer_label,
+                        label=str(winner),
                         scene_name=plan.context_scene_id,
-                        evidence=evidence,
                     )
                 )
                 question_number += 1
@@ -492,75 +476,7 @@ def _optimization_target_counts(
     template: QuestionTemplate,
     total_count: int,
 ) -> tuple[tuple[str, int], ...]:
-    if template.unknown_answer is None:
-        return (("", total_count),)
-    if total_count % 2 != 0:
-        raise ValueError(
-            f"{template.template_id} requests {total_count} questions; "
-            "questions_per_question must be divisible by 2 when unknown is enabled"
-        )
-    count_per_target = total_count // 2
-    return (
-        ("", count_per_target),
-        (template.unknown_answer, count_per_target),
-    )
-
-
-def _unknown_optimization_evidence(
-    plan: OptimizationPlan,
-    objective_metric: str,
-    candidate_scenes: dict[str, SceneData],
-    context: SceneData | None,
-) -> dict[str, Any]:
-    raw_flow_ids = plan.objective.get("flow_ids")
-    flow_ids = (
-        [str(flow_id) for flow_id in raw_flow_ids]
-        if isinstance(raw_flow_ids, list)
-        else []
-    )
-    candidate_values = {
-        candidate.candidate_id: (
-            _objective_value(
-                candidate_scenes[candidate.candidate_id],
-                flow_ids,
-                objective_metric,
-            )
-            if candidate.candidate_id in candidate_scenes and flow_ids
-            else None
-        )
-        for candidate in plan.candidates
-    }
-    baseline_value = (
-        _objective_value(context, flow_ids, objective_metric)
-        if context is not None and flow_ids
-        else None
-    )
-    if not flow_ids:
-        reason = "objective_flow_scope_missing"
-    elif any(value is None for value in candidate_values.values()):
-        reason = "candidate_objective_evidence_missing"
-    elif context is not None and baseline_value is None:
-        reason = "baseline_objective_evidence_missing"
-    else:
-        reason = "no_unique_qualifying_winner"
-    return {
-        "status": "insufficient",
-        "reason": reason,
-        "required_evidence": (
-            "complete comparable objective measurements and exactly one "
-            "candidate exceeding the configured improvement and winner margins"
-        ),
-        "objective_metric": objective_metric,
-        "baseline_value": baseline_value,
-        "candidate_values": candidate_values,
-        "context_scene_name": plan.context_scene_id,
-        "candidate_ids": [
-            candidate.candidate_id for candidate in plan.candidates
-        ],
-        "candidate_scene_names": [
-            candidate.scene_id for candidate in plan.candidates
-        ],
-    }
+    return (("", total_count),)
 
 
 def _validate_templates(templates: list[QuestionTemplate]) -> None:

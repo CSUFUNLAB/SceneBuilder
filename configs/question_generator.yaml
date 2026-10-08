@@ -4,7 +4,22 @@ scenes_root: ../generated
 categories:
   analysis:
     enabled: true
-    questions_per_question: 60
+    questions_per_question: 10
+    # 145 wired questions plus 25 WiFi questions when suitable scenes exist.
+    questions_per_template:
+      TA0001: 10
+      TA0002: 20
+      TA0003: 15
+      TA0004: 20
+      TA0005: 10
+      TA0006: 10
+      TA0007: 10
+      TA0008: 15
+      TA0009: 15
+      TA0010: 10
+      TA0011: 10
+      TA0012: 10
+      TA0013: 15
     template_file: ../question_generator/templates/analysis.yaml
     output_file: ../generated/origin/analysis_questions.jsonl
   evolution:

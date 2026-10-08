@@ -1,11 +1,6 @@
 schema_version: 1
 question_type: optimization
 
-unknown_answer:
-  label: unknown
-  description: Use only when the candidate set is valid but the candidate Twin evidence cannot establish one unique objective winner.
-  evidence_required: true
-
 # Optimization scene construction and question generation share this strategy
 # catalog. Every template declares exactly one strategy.
 strategies:
@@ -18,9 +13,8 @@ strategies:
 
 # Candidate alternatives are listed in each generated question. Emit a
 # question only when at least two feasible candidates exist. Use the concrete
-# candidate ID when exactly one candidate satisfies the objective thresholds;
-# otherwise use unknown and record why the evidence cannot establish a unique
-# qualifying winner.
+# candidate ID only when exactly one candidate satisfies the objective
+# thresholds. Skip the sample when there is no unique qualifying winner.
 templates:
   - id: TO0001
     strategy: channel_expansion

@@ -6,7 +6,6 @@ from typing import Any
 
 
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
-UNKNOWN_ANSWER_LABEL = "unknown"
 
 
 EVOLUTION_EVENT_SEMANTICS = {
@@ -41,7 +40,6 @@ class QuestionTemplate:
     strategy: str | None = None
     answer_fields: tuple[str, ...] = ()
     answer_item_fields: tuple[str, ...] = ()
-    unknown_answer: str | None = None
 
     @property
     def has_id_answer(self) -> bool:

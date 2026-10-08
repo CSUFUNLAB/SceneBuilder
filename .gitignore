@@ -8,6 +8,7 @@ __pycache__/
 
 scene_generator/__pycache__
 tests/*
+!tests/test_twin_parallel.py
 tests/__pycache__
 
 ns-3/*

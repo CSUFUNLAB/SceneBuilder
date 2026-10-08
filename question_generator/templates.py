@@ -11,7 +11,6 @@ from .models import (
     OptimizationStrategy,
     QuestionTemplate,
     QuestionTemplateBundle,
-    UNKNOWN_ANSWER_LABEL,
     evolution_event_semantics,
 )
 
@@ -40,6 +39,7 @@ _REQUIRED_OPTIMIZATION_STRATEGY_IDS = frozenset(
         "fault_repair",
     }
 )
+_INDETERMINATE_ANSWER_LABELS = frozenset({"unknown", "unkown"})
 
 
 def _mapping(value: object, location: str) -> dict[str, Any]:
@@ -233,6 +233,10 @@ def _load_answer(
     )
     if len(values) != len(set(values)):
         raise ValueError(f"{location}.values must be unique")
+    if any(value.casefold() in _INDETERMINATE_ANSWER_LABELS for value in values):
+        raise ValueError(
+            f"{location}.values cannot contain an indeterminate answer label"
+        )
     if answer_type == "enum" and not values:
         raise ValueError(f"{location}: enum answers require values")
     if answer_type != "enum" and values:
@@ -289,6 +293,10 @@ def _load_evolution_answer(
         raise ValueError(f"{location} must not be empty")
     if len(values) != len(set(values)):
         raise ValueError(f"{location} values must be unique")
+    if any(value.casefold() in _INDETERMINATE_ANSWER_LABELS for value in values):
+        raise ValueError(
+            f"{location} cannot contain an indeterminate answer label"
+        )
     return values
 
 
@@ -296,7 +304,6 @@ def _load_templates(
     raw_templates: object,
     template_path: Path,
     category: str,
-    unknown_answer: str,
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
@@ -371,32 +378,9 @@ def _load_templates(
                 strategy=strategy,
                 answer_fields=answer_fields,
                 answer_item_fields=answer_item_fields,
-                unknown_answer=unknown_answer,
             )
         )
     return tuple(templates)
-
-
-def _load_unknown_answer(
-    raw_policy: object,
-    template_path: Path,
-) -> str:
-    location = f"{template_path}:unknown_answer"
-    policy = _mapping(raw_policy, location)
-    _reject_unknown(
-        policy,
-        {"label", "description", "evidence_required"},
-        location,
-    )
-    label = _identifier(policy.get("label"), f"{location}.label")
-    if label != UNKNOWN_ANSWER_LABEL:
-        raise ValueError(
-            f"{location}.label must be {UNKNOWN_ANSWER_LABEL!r}"
-        )
-    _text(policy.get("description"), f"{location}.description")
-    if policy.get("evidence_required") is not True:
-        raise ValueError(f"{location}.evidence_required must be true")
-    return label
 
 
 def load_template_bundle(
@@ -417,7 +401,6 @@ def load_template_bundle(
             "question_type",
             "events",
             "strategies",
-            "unknown_answer",
             "templates",
         },
         str(template_path),
@@ -435,10 +418,6 @@ def load_template_bundle(
         raise ValueError(
             f"{template_path}: question_type is {question_type}, expected {category}"
         )
-    unknown_answer = _load_unknown_answer(
-        root.get("unknown_answer"),
-        template_path,
-    )
     event_types = _load_event_types(
         root.get("events"),
         template_path,
@@ -453,7 +432,6 @@ def load_template_bundle(
         root.get("templates", []),
         template_path,
         category,
-        unknown_answer,
     )
     if category == "optimization":
         _validate_optimization_strategy_coverage(
