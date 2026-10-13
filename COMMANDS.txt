@@ -3,11 +3,11 @@ python -m pip install -r requirements.txt
 python main.py initial ./ns-allinone-3.48.tar.bz2
 
 python main.py scenes -c configs/example.yaml
-python main.py twin -t origin --threads 4
+python main.py twin -t origin --threads 4 --scale 5
 python main.py questions -t analysis
-python main.py twin -t evolution --threads 4
+python main.py twin -t evolution --threads 4 -s 5
 python main.py questions -t evolution
-python main.py twin -t optimization --threads 4
+python main.py twin -t optimization --threads 4 -s 5
 python main.py questions -t optimization
 python main.py split -r 0.8
 

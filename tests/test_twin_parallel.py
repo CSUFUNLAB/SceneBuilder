@@ -37,9 +37,9 @@ import shlex
 import sys
 import time
 
-def log(event, scene=""):
+def log(event, scene="", **fields):
     fd = os.open("calls.jsonl", os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
-    os.write(fd, (json.dumps({"event": event, "scene": scene}) + "\\n").encode())
+    os.write(fd, (json.dumps({"event": event, "scene": scene, **fields}) + "\\n").encode())
     os.close(fd)
 
 if sys.argv[1] == "build":
@@ -49,7 +49,7 @@ assert sys.argv[-1] == "--no-build", sys.argv
 args = dict(part[2:].split("=", 1) for part in shlex.split(sys.argv[2])[1:])
 scene = Path(args["scene"]).name
 result = Path(args["result"])
-log("start", scene)
+log("start", scene, scale=float(args["scaleFactor"]))
 failure = scene == "scene0" and Path("fail").exists()
 time.sleep(0.05 if failure else 0.2)
 result.write_text(scene)
@@ -115,6 +115,36 @@ sys.exit(7 if failure else 0)
         result = self.run_twins()
         self.assertTrue(result.complete)
         self.assertEqual([c["event"] for c in self.calls()], ["build"] + ["start", "end"] * 6)
+        self.assertEqual({c["scale"] for c in self.calls() if c["event"] == "start"}, {5.0})
+
+    def test_scale_aliases_reach_ns3_for_each_twin_mode(self):
+        parser = main.build_parser()
+        for index, category in enumerate(("origin", "evolution", "optimization")):
+            self.assertEqual(parser.parse_args(["twin", "-t", category]).scale, 5.0)
+            for offset, (option, value) in enumerate((("--scale", 2.5), ("-s", 1.0))):
+                with self.subTest(category=category, option=option):
+                    scene = self.scenes[index * 2 + offset]
+                    args = parser.parse_args([
+                        "twin", "-t", category, option, str(value),
+                        "--ns3-root", str(self.ns3_root), "--no-build",
+                    ])
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        result = main._run_twin_stage(args, self.input_root, [scene])
+                    self.assertTrue(result.complete)
+                    call = next(c for c in self.calls() if c["event"] == "start" and c["scene"] == scene.name)
+                    self.assertEqual(call["scale"], value)
+
+    def test_invalid_scale_is_rejected_before_generating_outputs(self):
+        parser = main.build_parser()
+        for value in ("0", "-1", "0.5", "nan", "inf", "-inf", "invalid"):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(["twin", "-t", "origin", f"--scale={value}"])
+        for value in (0, -1, 0.5, float("nan"), float("inf"), True, None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "--scale"):
+                self.run_twins(scale=value)
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.output_root.exists())
 
     def test_dry_run_does_not_start_processes_or_write_outputs(self):
         result = self.run_twins(threads=4, dry_run=True)

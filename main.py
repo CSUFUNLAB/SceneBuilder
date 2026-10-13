@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import random
@@ -24,6 +25,7 @@ from typing import Iterable, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3"
+DEFAULT_SCALE = 5.0
 DEFAULT_SCENE_CONFIG = PROJECT_ROOT / "configs" / "example.yaml"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 DEFAULT_DATASET_SPLIT_CONFIG = (
@@ -289,7 +291,20 @@ def positive_int(value: str) -> int:
     return number
 
 
+def scale_factor(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number < 1:
+        raise argparse.ArgumentTypeError("must be a finite number greater than or equal to 1")
+    return number
+
+
 def _add_twin_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--scale", "-s",
+        type=scale_factor,
+        default=DEFAULT_SCALE,
+        help="Simulation scale factor (>= 1; default: 5). 1 disables scaling.",
+    )
     parser.add_argument(
         "--threads",
         type=positive_int,
@@ -878,6 +893,7 @@ def ns3_run_argument(
     progress_interval: float,
     event_file: Path | None,
     result_file: Path,
+    scale: float = DEFAULT_SCALE,
 ) -> str:
     parts = [program, f"--scene={scene}"]
     if event_file is not None:
@@ -888,6 +904,7 @@ def ns3_run_argument(
     if stop_time > 0.0:
         parts.append(f"--stopTime={stop_time}")
     parts.append(f"--progressInterval={progress_interval}")
+    parts.append(f"--scaleFactor={scale}")
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -899,6 +916,7 @@ def run_twins(
     ns3_root: str | Path = DEFAULT_NS3_ROOT,
     program: str = "TwinGenerate",
     threads: int = 1,
+    scale: float = DEFAULT_SCALE,
     stop_time: float = 0.0,
     progress_interval: float = 5.0,
     no_build: bool = False,
@@ -911,6 +929,13 @@ def run_twins(
 ) -> TwinGenerationResult:
     if isinstance(threads, bool) or not isinstance(threads, int) or threads < 1:
         raise ValueError("--threads must be a positive integer")
+    if (
+        isinstance(scale, bool)
+        or not isinstance(scale, (int, float))
+        or not math.isfinite(scale)
+        or scale < 1
+    ):
+        raise ValueError("--scale must be a finite number greater than or equal to 1")
     event_groups, events_per_group = resolve_event_sampling(event_groups, events_per_group)
     resolved_scene_root = Path(scene_root).expanduser().resolve()
     resolved_twin_output_root = (
@@ -1009,6 +1034,7 @@ def run_twins(
                             progress_interval,
                             event_file,
                             result_file,
+                            scale=scale,
                         ),
                         "--no-build",
                     ],
@@ -1106,6 +1132,7 @@ def _run_twin_stage(
         ns3_root=args.ns3_root,
         program=args.program,
         threads=args.threads,
+        scale=args.scale,
         stop_time=args.stop_time,
         progress_interval=args.progress_interval,
         no_build=args.no_build,

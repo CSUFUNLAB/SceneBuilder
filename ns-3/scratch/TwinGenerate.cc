@@ -76,7 +76,7 @@ main(int argc, char* argv[])
     double stopTime = 0.0;
     double progressInterval = 0.0;
     double wallProgressInterval = 5.0;
-    double scaleFactor = 10.0;
+    double scaleFactor = 5.0;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("scene", "Scene directory path or scene name under ./scenes", scene);

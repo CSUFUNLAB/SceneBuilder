@@ -702,6 +702,7 @@ generated/
 ## 常用选项
 
 - `--threads <正整数>`：Twin 生成的工作线程数，默认 `1`；每个线程运行一个独立的 ns-3 进程。
+- `--scale <倍数>` / `-s <倍数>`：仿真缩放倍数，默认 `5`，支持不小于 `1` 的有限数值；`1` 表示不缩放。三种 Twin 模式均支持。
 - `--stop-time <秒>`：以绝对仿真时刻覆盖默认停止时刻；必须晚于应用启动时刻。
 - `--progress-interval <秒>`：设置 ns-3 仿真进度报告间隔，`0` 表示关闭。
 - `--no-build`：直接使用已有 ns-3 构建，跳过所有编译步骤。
@@ -710,6 +711,9 @@ generated/
   `twin -t optimization` 会创建派生场景，因此不支持该选项。
 - `questions --scene-root <路径>`：覆盖问题配置中的孪生体场景目录。
 
+`--scale` 会传给 ns-3 的 `scaleFactor`；直接运行 `TwinGenerate` 时默认值也为 `5`。
+例如 `python main.py twin -t origin -s 5 --threads 4`。原始场景与用于比较的演化、优化
+场景应使用相同的缩放倍数。
 `scaleFactor` 会按相同比例缩小仿真中的信道容量、流量需求和队列包数。Twin 中的速率会
 恢复到原网络口径，`queue_size_packets` 也仍表示原网络的队列容量；队列当前包数按队列
 占用比例恢复。队列至少保留一个仿真包。
