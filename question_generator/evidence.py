@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from itertools import combinations
 
 from .scene import EntityRecord, SceneData
 
@@ -8,7 +9,7 @@ from .scene import EntityRecord, SceneData
 SATURATION_THRESHOLD = 0.95
 NORMAL_EVIDENCE_MIN_RATIO = 0.70
 NORMAL_EVIDENCE_MAX_RATIO = 0.90
-DEGRADATION_EVIDENCE_THRESHOLD = 0.95
+DEGRADATION_EVIDENCE_THRESHOLD = 0.60
 MIN_OFFERED_PACKET_SAMPLE = 10
 FLOAT_TOLERANCE = 1e-9
 _CACHE_MISS = object()
@@ -98,7 +99,14 @@ def infer_flow_state(flow: EntityRecord) -> str | None:
     lost_packets = _number(flow.properties, "lost_packets")
     throughput = _number(flow.properties, "throughput_mbps")
     demand = _number(flow.properties, "demand_mbps")
-    if None in (tx_packets, rx_packets, lost_packets, throughput, demand):
+    values = (tx_packets, rx_packets, lost_packets, throughput, demand)
+    if any(value is None or value < 0 for value in values):
+        return None
+    if (
+        demand <= 0
+        or rx_packets + lost_packets > tx_packets
+        or (rx_packets == 0 and throughput > FLOAT_TOLERANCE)
+    ):
         return None
     if tx_packets <= 0 or rx_packets <= 0:
         return "failed"
@@ -159,6 +167,37 @@ def _channel_directional_measurements(
     return tuple(measurements) if measurements else None
 
 
+def _channel_receive_rates(
+    scene: SceneData,
+    channel: EntityRecord,
+) -> tuple[float, float] | None:
+    """Check both endpoints, including the direction without a send sample."""
+    connected = channel.relations.get("connects")
+    if not isinstance(connected, list) or len(connected) != 2:
+        return None
+    if str(connected[0]) == str(connected[1]):
+        return None
+    rates: list[float] = []
+    for nic_id in connected:
+        nic = scene.entity("nic", str(nic_id))
+        if nic is None or nic.relations.get("channel") != channel.entity_id:
+            return None
+        rate = _number(nic.properties, "rx_rate_mbps")
+        if rate is None or rate < 0:
+            return None
+        rates.append(rate)
+    return rates[0], rates[1]
+
+
+def _channel_has_observed_outage(scene: SceneData, channel: EntityRecord) -> bool:
+    rates = _channel_receive_rates(scene, channel)
+    return (
+        rates is not None
+        and max(rates) <= FLOAT_TOLERANCE
+        and _channel_directional_measurements(scene, channel) is not None
+    )
+
+
 def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     original_capacity = _number(channel.properties, "original_capacity_mbps")
     current_throughput = _maximum_channel_throughput(scene, channel)
@@ -170,15 +209,15 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     ):
         return None
 
-    physical_fault_id = _infer_unique_physical_fault(scene)
-    if physical_fault_id == channel.entity_id:
+    # Path overlap and zero throughput do not establish a local outage. There
+    # must be a sampled send attempt, no peer delivery, and no delivery in the
+    # reverse direction contradicting a static channel outage.
+    if _channel_has_observed_outage(scene, channel):
         return "disabled"
-    failed_node = scene.entity("node", physical_fault_id or "")
-    if (
-        failed_node is not None
-        and failed_node.entity_id in scene.channel_endpoint_nodes(channel)
-    ):
-        return "disabled"
+
+    receive_rates = _channel_receive_rates(scene, channel)
+    if receive_rates is None or max(receive_rates) <= FLOAT_TOLERANCE:
+        return None
 
     throughput_ratio = current_throughput / original_capacity
     if throughput_ratio >= SATURATION_THRESHOLD:
@@ -197,7 +236,7 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     if measurements is None:
         return None
     if any(delivered <= FLOAT_TOLERANCE for _, delivered in measurements):
-        return "disabled"
+        return None
     if any(
         delivered
         < min(original_capacity, offered) * DEGRADATION_EVIDENCE_THRESHOLD
@@ -301,7 +340,11 @@ def _infer_unique_physical_fault(scene: SceneData) -> str | None:
 
 
 def _compute_unique_physical_fault(scene: SceneData) -> str | None:
-    """Infer one physical fault from complete static paths and flow outcomes."""
+    """Find one required cause under the generator's single/double-fault model.
+
+    An unattempted flow cannot identify a physical fault. A unique single-fault
+    explanation is insufficient if two other faults explain the same evidence.
+    """
 
     flow_paths: dict[str, tuple[list[str], list[EntityRecord]]] = {}
     failed_flow_ids: set[str] = set()
@@ -312,11 +355,34 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
             return None
         flow_paths[flow.entity_id] = path
         if state == "failed":
+            if _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE:
+                return None
             failed_flow_ids.add(flow.entity_id)
     if not failed_flow_ids:
         return None
 
-    possible_causes: set[str] = set()
+    # Missing endpoint observations must not silently remove competing causes.
+    receive_rates = {
+        channel.entity_id: _channel_receive_rates(scene, channel)
+        for channel in scene.entities("channel")
+    }
+    if any(rates is None for rates in receive_rates.values()):
+        return None
+    for node in scene.entities("node"):
+        counters = [_number(node.properties, name) for name in ("rx_packets", "tx_packets")]
+        if any(value is None or value < 0 for value in counters):
+            return None
+
+    observed_outages = {
+        channel.entity_id
+        for channel in scene.entities("channel")
+        if _channel_has_observed_outage(scene, channel)
+    }
+    if not observed_outages:
+        return None
+    # Each candidate records both the failed flows and local outages it can
+    # explain. Positive delivery and successful flows exclude that candidate.
+    possible_causes: dict[str, tuple[set[str], set[str]]] = {}
     for channel in scene.entities("channel"):
         original_capacity = _number(
             channel.properties,
@@ -327,9 +393,12 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
             original_capacity is None
             or original_capacity <= 0
             or current_throughput is None
-            or abs(current_throughput) > FLOAT_TOLERANCE
+            or current_throughput < 0
+            or current_throughput > original_capacity + FLOAT_TOLERANCE
             or len(scene.channel_endpoint_nodes(channel)) != 2
         ):
+            return None
+        if channel.entity_id not in observed_outages:
             continue
         predicted_failed = {
             flow_id
@@ -339,8 +408,8 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
                 for path_channel in channels
             )
         }
-        if predicted_failed == failed_flow_ids:
-            possible_causes.add(channel.entity_id)
+        if predicted_failed and predicted_failed <= failed_flow_ids:
+            possible_causes[channel.entity_id] = (predicted_failed, {channel.entity_id})
 
     for node in scene.entities("node"):
         rx_packets = _number(node.properties, "rx_packets")
@@ -351,19 +420,19 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
             or tx_packets is None
             or abs(rx_packets) > FLOAT_TOLERANCE
             or abs(tx_packets) > FLOAT_TOLERANCE
-            or len(incident_channels) < 2
+            or not incident_channels
         ):
             continue
-        incident_throughputs = [
-            _maximum_channel_throughput(scene, channel)
-            for channel in incident_channels
-        ]
+        # A silent leaf node is still a possible cause. Excluding it would
+        # incorrectly make its only incident channel the unique fault.
         if (
-            any(value is None for value in incident_throughputs)
-            or any(
-                abs(float(value)) > FLOAT_TOLERANCE
-                for value in incident_throughputs
-                if value is not None
+            any(
+                max(receive_rates[channel.entity_id]) > FLOAT_TOLERANCE
+                for channel in incident_channels
+            )
+            or not any(
+                channel.entity_id in observed_outages
+                for channel in incident_channels
             )
         ):
             continue
@@ -372,32 +441,43 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
             for flow_id, (node_ids, _) in flow_paths.items()
             if node.entity_id in node_ids
         }
-        if predicted_failed == failed_flow_ids:
-            possible_causes.add(node.entity_id)
+        if predicted_failed and predicted_failed <= failed_flow_ids:
+            possible_causes[node.entity_id] = (
+                predicted_failed,
+                {channel.entity_id for channel in incident_channels} & observed_outages,
+            )
 
-    return next(iter(possible_causes)) if len(possible_causes) == 1 else None
+    single_causes = [
+        entity_id
+        for entity_id, (failed, outages) in possible_causes.items()
+        if failed == failed_flow_ids and outages == observed_outages
+    ]
+    if len(single_causes) != 1:
+        return None
+    required_cause = single_causes[0]
+    alternatives = [
+        effects for entity_id, effects in possible_causes.items()
+        if entity_id != required_cause
+    ]
+    for (first_failed, first_outages), (second_failed, second_outages) in combinations(alternatives, 2):
+        if (
+            first_failed | second_failed == failed_flow_ids
+            and first_outages | second_outages == observed_outages
+        ):
+            return None
+    return required_cause
 
 
 def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
-    physical_fault_id = _infer_unique_physical_fault(scene)
-    if physical_fault_id is not None:
-        return (
-            "disabled"
-            if physical_fault_id == node.entity_id
-            else "normal"
-        )
-
     rx_packets = _number(node.properties, "rx_packets")
     tx_packets = _number(node.properties, "tx_packets")
-    if rx_packets is not None and tx_packets is not None and rx_packets + tx_packets > 0:
+    if any(value is None or value < 0 for value in (rx_packets, tx_packets)):
+        return None
+    if rx_packets + tx_packets > 0:
         return "normal"
-
-    incident_channels = _incident_channels(scene, node.entity_id)
-    channel_states = [
-        infer_channel_state(scene, channel) for channel in incident_channels
-    ]
-    if any(state in {"normal", "degraded", "saturated"} for state in channel_states):
-        return "normal"
+    if _infer_unique_physical_fault(scene) == node.entity_id:
+        return "disabled"
+    # A fault elsewhere provides no positive evidence about this idle node.
     return None
 
 
@@ -412,15 +492,23 @@ def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
         # NIC state is operational, not a physical-root label. An interface
         # attached to a disabled channel is itself unavailable regardless of
         # whether the channel, an endpoint node, or one NIC caused the fault.
+        # infer_channel_state already requires a sampled local send attempt.
         return "disabled"
 
     current_throughput = _maximum_channel_throughput(scene, channel)
     if current_throughput is None or current_throughput <= FLOAT_TOLERANCE:
         return None
+    receive_rates = _channel_receive_rates(scene, channel)
+    if receive_rates is None or max(receive_rates) <= FLOAT_TOLERANCE:
+        return None
 
     queue_size = _number(nic.properties, "queue_size_packets")
     queue_current = _number(nic.properties, "queue_current_packets")
-    if None in (queue_size, queue_current) or queue_size <= 0:
+    if (
+        None in (queue_size, queue_current)
+        or queue_size <= 0
+        or not 0 <= queue_current <= queue_size
+    ):
         return None
     if queue_current / queue_size >= SATURATION_THRESHOLD:
         return "saturated"
