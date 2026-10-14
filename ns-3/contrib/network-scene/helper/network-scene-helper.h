@@ -144,18 +144,16 @@ class NetworkSceneHelper
     void InstallInternetStackAndTracing();
     void InstallSceneChannels(const std::vector<NetworkSceneChannelRow>& channels,
                            const std::vector<NetworkSceneNicRow>& nics,
-                           std::unordered_map<std::string, std::string>& primaryAddressByNode,
-                           std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces);
+                           std::unordered_map<std::string, std::string>& primaryAddressByNode);
     void InstallSceneRoutes(const std::vector<NetworkSceneNodeRow>& nodes,
                             const std::unordered_map<std::string, std::string>& primaryAddressByNode);
-    void ApplyInitialDisabledStates(const std::vector<NetworkSceneNodeRow>& nodes,
-                                    const std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces);
     void ScheduleSceneEvents();
     void InstallSceneTraffic(const std::vector<NetworkSceneTrafficPattern>& traffic,
                              const std::unordered_map<std::string, std::string>& primaryAddressByNode);
     void InstallFlowMonitor();
     void ApplySceneEvent(std::string entityType, std::string entityId, std::string eventType, double rateMultiplier);
     void ApplyFlowRateEvent(const std::string& flowId, const std::string& eventType, double rateMultiplier);
+    /** Apply physical packet loss while preserving healthy nodes' send observations. */
     void ReconcileInterfaceStates();
     bool IsChannelOperational(const ChannelRecord& channel) const;
     bool IsInterfaceOperational(const InterfaceRecord& iface) const;

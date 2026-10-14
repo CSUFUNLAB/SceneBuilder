@@ -5,6 +5,7 @@
 #include "ns3/network-scene-traffic.h"
 
 #include "ns3/data-rate.h"
+#include "ns3/error-model.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/inet-socket-address.h"
 #include "ns3/internet-stack-helper.h"
@@ -254,10 +255,9 @@ NetworkSceneHelper::Install()
     InstallInternetStackAndTracing();
 
     std::unordered_map<std::string, std::string> primaryAddressByNode;
-    std::vector<std::pair<std::string, uint32_t>> disabledInterfaces;
-    InstallSceneChannels(scene.channels, scene.nics, primaryAddressByNode, disabledInterfaces);
+    InstallSceneChannels(scene.channels, scene.nics, primaryAddressByNode);
     InstallSceneRoutes(scene.nodes, primaryAddressByNode);
-    ApplyInitialDisabledStates(scene.nodes, disabledInterfaces);
+    ReconcileInterfaceStates();
     if (LEGACY_RUNTIME_EVENTS_ENABLED)
     {
         ScheduleSceneEvents();
@@ -400,8 +400,7 @@ NetworkSceneHelper::InstallInternetStackAndTracing()
 void
 NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRow>& channels,
                                       const std::vector<NetworkSceneNicRow>& nics,
-                                      std::unordered_map<std::string, std::string>& primaryAddressByNode,
-                                      std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces)
+                                      std::unordered_map<std::string, std::string>& primaryAddressByNode)
 {
     const auto nicsByChannel = GroupNetworkSceneNicsByChannel(nics);
     for (const auto& channel : channels)
@@ -480,10 +479,6 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
             {
                 primaryAddressByNode[nic.node] = address;
             }
-            if (nic.state == "disabled" || channel.state == "disabled")
-            {
-                disabledInterfaces.push_back({nic.node, ifIndex});
-            }
         }
     }
 }
@@ -525,33 +520,6 @@ NetworkSceneHelper::InstallSceneRoutes(const std::vector<NetworkSceneNodeRow>& n
                                           static_cast<uint32_t>(outInterface));
         }
     }
-}
-
-void
-NetworkSceneHelper::ApplyInitialDisabledStates(
-    const std::vector<NetworkSceneNodeRow>& nodes,
-    const std::vector<std::pair<std::string, uint32_t>>& disabledInterfaces)
-{
-    auto allDisabledInterfaces = disabledInterfaces;
-    for (uint32_t i = 0; i < nodes.size(); ++i)
-    {
-        if (nodes[i].state != "disabled")
-        {
-            continue;
-        }
-        Ptr<Ipv4> ipv4 = m_nodes.Get(i)->GetObject<Ipv4>();
-        for (uint32_t iface = 1; iface < ipv4->GetNInterfaces(); ++iface)
-        {
-            allDisabledInterfaces.push_back({nodes[i].id, iface});
-        }
-    }
-
-    for (const auto& item : allDisabledInterfaces)
-    {
-        Ptr<Ipv4> ipv4 = m_nodes.Get(m_nodeIndexById.at(item.first))->GetObject<Ipv4>();
-        ipv4->SetDown(item.second);
-    }
-    ReconcileInterfaceStates();
 }
 
 void
@@ -707,7 +675,11 @@ NetworkSceneHelper::ReconcileInterfaceStates()
         }
 
         Ptr<Ipv4> ipv4 = m_nodes.Get(nodeIt->second)->GetObject<Ipv4>();
-        if (IsInterfaceOperational(iface))
+        // Keep a healthy node's static egress route and actual send attempts
+        // observable. A physical link/NIC outage prevents peer delivery; it
+        // must not administratively disable both endpoints before any packet
+        // can reach the IPv4 Tx trace. A failed node itself remains silent.
+        if (m_nodeRecords[nodeIt->second].state != "disabled")
         {
             ipv4->SetUp(ipv4It->second);
         }
@@ -715,6 +687,17 @@ NetworkSceneHelper::ReconcileInterfaceStates()
         {
             ipv4->SetDown(ipv4It->second);
         }
+        Ptr<PointToPointNetDevice> device =
+            DynamicCast<PointToPointNetDevice>(ipv4->GetNetDevice(ipv4It->second));
+        auto channelIt = m_channelIndexById.find(iface.channelId);
+        if (device == nullptr || channelIt == m_channelIndexById.end())
+        {
+            throw std::runtime_error("Missing channel device for " + iface.id);
+        }
+        Ptr<RateErrorModel> outage = CreateObject<RateErrorModel>();
+        outage->SetUnit(RateErrorModel::ERROR_UNIT_PACKET);
+        outage->SetRate(IsChannelOperational(m_channelRecords[channelIt->second]) ? 0.0 : 1.0);
+        device->SetReceiveErrorModel(outage);
     }
 }
 

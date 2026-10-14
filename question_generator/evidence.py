@@ -353,11 +353,14 @@ def _compute_unique_physical_fault(scene: SceneData) -> str | None:
         path = _complete_flow_path(scene, flow)
         if state is None or path is None:
             return None
-        flow_paths[flow.entity_id] = path
         if state == "failed":
             if _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE:
-                return None
+                # No meaningful send sample: this flow neither establishes a
+                # fault nor disproves a cause supported by other flows. In
+                # particular, a failed node cannot originate its own probes.
+                continue
             failed_flow_ids.add(flow.entity_id)
+        flow_paths[flow.entity_id] = path
     if not failed_flow_ids:
         return None
 
@@ -681,7 +684,10 @@ def infer_bottleneck(scene: SceneData, flow: EntityRecord) -> str | None:
 
 
 def infer_flow_failure_cause(scene: SceneData, flow: EntityRecord) -> str | None:
-    if infer_flow_state(flow) != "failed":
+    if (
+        infer_flow_state(flow) != "failed"
+        or _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE
+    ):
         return None
     path = _complete_flow_path(scene, flow)
     physical_fault_id = _infer_unique_physical_fault(scene)
