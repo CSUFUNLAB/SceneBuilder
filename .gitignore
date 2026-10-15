@@ -7,11 +7,8 @@ __pycache__/
 =
 
 scene_generator/__pycache__
-tests/*
-!tests/test_twin_parallel.py
-!tests/test_nic_state_evidence.py
-!tests/test_analysis_evidence.py
-tests/__pycache__
+test/
+tests/
 
 ns-3/*
 !ns-3/.gitignore
