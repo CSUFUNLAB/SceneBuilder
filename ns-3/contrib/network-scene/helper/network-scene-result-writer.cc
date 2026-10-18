@@ -169,6 +169,7 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> dataFlowStateLabels;
     std::vector<std::string> channelUnavailabilityCauseLabels;
     std::vector<std::string> nicUnavailabilityCauseLabels;
+    std::map<std::string, std::string> nodeStateById;
     std::map<std::string, std::string> channelStateById;
     std::map<std::string, std::string> flowStateById;
 
@@ -526,6 +527,7 @@ NetworkSceneHelper::WriteResults() const
         const std::string state = isolatedByOutage ? "disabled" : "normal";
         nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
                                   ",\"label\":" + JsonString(state) + "}");
+        nodeStateById[node.id] = state;
     }
 
     for (const auto& channel : m_channelRecords)
@@ -710,74 +712,6 @@ NetworkSceneHelper::WriteResults() const
     std::vector<std::string> channelSaturationCauseLabels;
     std::vector<std::string> bandwidthConstraintLabels;
     std::vector<std::string> flowFailureCauseLabels;
-    auto isPhysicallyReachable = [&](const std::string& sourceNode,
-                                     const std::string& destinationNode,
-                                     const std::string& restoredNode,
-                                     const std::string& restoredChannel) {
-        std::map<std::string, std::vector<std::string>> adjacency;
-        for (const auto& channel : m_channelRecords)
-        {
-            if (channel.state == "disabled" && channel.id != restoredChannel)
-            {
-                continue;
-            }
-            if (channel.interfaceIds.size() != 2)
-            {
-                continue;
-            }
-
-            bool operational = true;
-            for (const auto& interfaceId : channel.interfaceIds)
-            {
-                auto interfaceIt = m_interfaceIndexById.find(interfaceId);
-                if (interfaceIt == m_interfaceIndexById.end())
-                {
-                    operational = false;
-                    break;
-                }
-                const auto& iface = m_interfaceRecords[interfaceIt->second];
-                if (iface.state == "disabled" && channel.id != restoredChannel)
-                {
-                    operational = false;
-                    break;
-                }
-                auto nodeIt = m_nodeIndexById.find(iface.node);
-                if (nodeIt == m_nodeIndexById.end() ||
-                    (m_nodeRecords[nodeIt->second].state == "disabled" &&
-                     iface.node != restoredNode))
-                {
-                    operational = false;
-                    break;
-                }
-            }
-            if (!operational)
-            {
-                continue;
-            }
-            adjacency[channel.src].push_back(channel.dst);
-            adjacency[channel.dst].push_back(channel.src);
-        }
-
-        std::set<std::string> visited{sourceNode};
-        std::vector<std::string> pending{sourceNode};
-        while (!pending.empty())
-        {
-            const std::string current = pending.back();
-            pending.pop_back();
-            if (current == destinationNode)
-            {
-                return true;
-            }
-            for (const auto& neighbor : adjacency[current])
-            {
-                if (visited.insert(neighbor).second)
-                {
-                    pending.push_back(neighbor);
-                }
-            }
-        }
-        return false;
-    };
     for (const auto& channel : m_channelRecords)
     {
         auto stateIt = channelStateById.find(channel.id);
@@ -877,82 +811,33 @@ NetworkSceneHelper::WriteResults() const
 
         if (flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
         {
-            std::vector<std::string> faultEntityIds;
-            auto addFaultEntity = [&faultEntityIds](const std::string& entityId) {
-                if (std::find(faultEntityIds.begin(), faultEntityIds.end(), entityId) ==
-                    faultEntityIds.end())
-                {
-                    faultEntityIds.push_back(entityId);
-                }
-            };
-            if (!isPhysicallyReachable(flow.src, flow.dst, "", ""))
-            {
-                for (const auto& node : m_nodeRecords)
-                {
-                    if (node.state == "disabled" &&
-                        isPhysicallyReachable(flow.src, flow.dst, node.id, ""))
-                    {
-                        addFaultEntity(node.id);
-                    }
-                }
-                for (const auto& channel : m_channelRecords)
-                {
-                    bool hasChannelFailure = channel.state == "disabled";
-                    for (const auto& interfaceId : channel.interfaceIds)
-                    {
-                        auto interfaceIt = m_interfaceIndexById.find(interfaceId);
-                        if (interfaceIt != m_interfaceIndexById.end() &&
-                            m_interfaceRecords[interfaceIt->second].state == "disabled")
-                        {
-                            hasChannelFailure = true;
-                        }
-                    }
-                    if (hasChannelFailure &&
-                        isPhysicallyReachable(flow.src, flow.dst, "", channel.id))
-                    {
-                        addFaultEntity(channel.id);
-                    }
-                }
-            }
+            // Locate network unavailability on this flow's path. An isolated
+            // node represents its incident outages, regardless of their cause.
+            std::set<std::string> isolatedNodes;
             for (const auto& nodeId : pathNodesByFlow[flow.id])
             {
-                auto nodeIt = m_nodeIndexById.find(nodeId);
-                if (nodeIt == m_nodeIndexById.end())
+                if (nodeStateById[nodeId] == "disabled")
                 {
-                    continue;
-                }
-                const auto& node = m_nodeRecords[nodeIt->second];
-                if (node.state == "disabled")
-                {
-                    addFaultEntity(nodeId);
+                    isolatedNodes.insert(nodeId);
                 }
             }
+            std::set<std::string> unavailableLocations = isolatedNodes;
             for (const auto& channelId : pathChannels)
             {
-                auto channelIt = channelById.find(channelId);
-                if (channelIt != channelById.end() && channelIt->second.state == "disabled")
+                const auto channelIt = channelById.find(channelId);
+                if (channelIt != channelById.end() &&
+                    channelStateById[channelId] == "disabled" &&
+                    isolatedNodes.count(channelIt->second.src) == 0 &&
+                    isolatedNodes.count(channelIt->second.dst) == 0)
                 {
-                    addFaultEntity(channelId);
-                }
-                if (channelIt != channelById.end())
-                {
-                    for (const auto& interfaceId : channelIt->second.interfaceIds)
-                    {
-                        auto interfaceIt = m_interfaceIndexById.find(interfaceId);
-                        if (interfaceIt != m_interfaceIndexById.end() &&
-                            m_interfaceRecords[interfaceIt->second].state == "disabled")
-                        {
-                            addFaultEntity(channelId);
-                        }
-                    }
+                    unavailableLocations.insert(channelId);
                 }
             }
-            if (faultEntityIds.size() == 1)
+            if (unavailableLocations.size() == 1)
             {
-                const std::string& faultEntityId = faultEntityIds[0];
                 flowFailureCauseLabels.push_back(
                     "{\"data_flow_id\":" + JsonString(flow.id) +
-                    ",\"entity_id\":" + JsonString(faultEntityId) + "}");
+                    ",\"entity_id\":" + JsonString(*unavailableLocations.begin()) + "}");
             }
         }
     }

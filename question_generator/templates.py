@@ -307,7 +307,7 @@ def _load_templates(
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
-    base_fields = {"id", "question", "enabled"}
+    base_fields = {"id", "question"}
     if category == "optimization":
         base_fields.add("strategy")
     else:
@@ -320,9 +320,6 @@ def _load_templates(
         location = f"{template_path}:templates[{index}]"
         item = _mapping(raw_template, location)
         _reject_unknown(item, base_fields, location)
-        enabled = item.get("enabled", True)
-        if not isinstance(enabled, bool):
-            raise ValueError(f"{location}.enabled must be true or false")
         template_id = _identifier(item.get("id"), f"{location}.id")
         if template_id in seen_ids:
             raise ValueError(f"{location}.id duplicates {template_id}")
@@ -370,8 +367,6 @@ def _load_templates(
                 f"{location}.answer",
             )
 
-        if not enabled:
-            continue
         templates.append(
             QuestionTemplate(
                 template_id=template_id,
