@@ -197,6 +197,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::vector<std::string>> interfacesByNode;
     std::map<std::string, std::string> outputInterfaceIdById;
     std::map<std::string, ChannelRecord> channelById;
+    std::map<std::string, bool> hasOperationalChannelByNode;
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
     std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
     std::map<std::pair<std::string, std::string>, std::string> interfaceIdByChannelNode;
@@ -248,6 +249,9 @@ NetworkSceneHelper::WriteResults() const
     for (const auto& channel : m_channelRecords)
     {
         channelById[channel.id] = channel;
+        const bool operational = IsChannelOperational(channel);
+        hasOperationalChannelByNode[channel.src] |= operational;
+        hasOperationalChannelByNode[channel.dst] |= operational;
     }
     for (const auto& iface : m_interfaceRecords)
     {
@@ -466,7 +470,6 @@ NetworkSceneHelper::WriteResults() const
                << ",\"queue_current_packets\":" << outputCurrentQueuePackets
                << ",\"rx_packets\":" << counters.rxPackets
                << ",\"tx_packets\":" << counters.txPackets
-               << ",\"rx_drop_packets\":" << counters.rxDropPackets
                << ",\"tx_drop_packets\":" << counters.txDropPackets << "}"
                << ",\"relations\":{\"node\":" << JsonString(iface.node)
                << ",\"channel\":" << JsonString(iface.channelId) << "}";
@@ -514,8 +517,15 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
+        // The exported state describes network availability; physical fault
+        // attribution continues to use node.state without modification.
+        const auto channelAvailability = hasOperationalChannelByNode.find(node.id);
+        const bool isolatedByOutage =
+            channelAvailability != hasOperationalChannelByNode.end() &&
+            !channelAvailability->second;
+        const std::string state = isolatedByOutage ? "disabled" : "normal";
         nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
-                                  ",\"label\":" + JsonString(node.state) + "}");
+                                  ",\"label\":" + JsonString(state) + "}");
     }
 
     for (const auto& channel : m_channelRecords)

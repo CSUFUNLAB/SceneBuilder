@@ -440,9 +440,8 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
             device->TraceConnectWithoutContext(
                 "PhyTxDrop",
                 MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(nic.id));
-            device->TraceConnectWithoutContext(
-                "PhyRxDrop",
-                MakeCallback(&NetworkSceneHelper::TraceDeviceRxDrop, this).Bind(nic.id));
+            // Fault-injected receive errors are simulator observations, not
+            // telemetry available from the failed device. Do not export them.
 
             TrafficControlHelper trafficControl;
             trafficControl.SetRootQueueDisc(QueueDiscTypeForPolicy(nic.queuePolicy),
@@ -841,10 +840,12 @@ NetworkSceneHelper::TraceIpv4Drop(const Ipv4Header& header,
                                   uint32_t interface)
 {
     (void)header;
+    (void)packet;
+    if (reason != Ipv4L3Protocol::DROP_TTL_EXPIRED)
+    {
+        return;
+    }
     const std::string nodeId = m_nodeIdByNs3Node[ipv4->GetObject<Node>()->GetId()];
-    auto& node = m_nodeCounters[nodeId];
-    node.dropPackets++;
-    node.dropBytes += packet->GetSize();
 
     auto ifaceIt = m_interfaceIdByNodeInterface.find({nodeId, interface});
     if (ifaceIt == m_interfaceIdByNodeInterface.end())
@@ -852,15 +853,7 @@ NetworkSceneHelper::TraceIpv4Drop(const Ipv4Header& header,
         return;
     }
 
-    auto& iface = m_interfaceCounters[ifaceIt->second];
-    if (reason == Ipv4L3Protocol::DROP_TTL_EXPIRED)
-    {
-        iface.txDropPackets++;
-    }
-    else
-    {
-        iface.rxDropPackets++;
-    }
+    m_interfaceCounters[ifaceIt->second].txDropPackets++;
 }
 
 void
@@ -923,14 +916,6 @@ NetworkSceneHelper::TraceDeviceTxDrop(std::string interfaceId, Ptr<const Packet>
     (void)packet;
     m_interfaceCounters[interfaceId].txDropPackets++;
 }
-
-void
-NetworkSceneHelper::TraceDeviceRxDrop(std::string interfaceId, Ptr<const Packet> packet)
-{
-    (void)packet;
-    m_interfaceCounters[interfaceId].rxDropPackets++;
-}
-
 
 NodeContainer
 NetworkSceneHelper::GetNodes() const

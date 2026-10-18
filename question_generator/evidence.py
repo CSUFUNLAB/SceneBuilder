@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import math
-from itertools import combinations
 
 from .scene import EntityRecord, SceneData
 
 
 SATURATION_THRESHOLD = 0.95
-NORMAL_EVIDENCE_MIN_RATIO = 0.70
-NORMAL_EVIDENCE_MAX_RATIO = 0.90
 DEGRADATION_EVIDENCE_THRESHOLD = 0.60
 MIN_OFFERED_PACKET_SAMPLE = 10
 FLOAT_TOLERANCE = 1e-9
-_CACHE_MISS = object()
 
 
 def _number(properties: dict[str, object], name: str) -> float | None:
@@ -222,16 +218,6 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     throughput_ratio = current_throughput / original_capacity
     if throughput_ratio >= SATURATION_THRESHOLD:
         return "saturated"
-    if (
-        NORMAL_EVIDENCE_MIN_RATIO - FLOAT_TOLERANCE
-        <= throughput_ratio
-        <= NORMAL_EVIDENCE_MAX_RATIO + FLOAT_TOLERANCE
-    ):
-        # Configured degradation multipliers are at most 0.5, so a channel
-        # carrying 70%-90% of its original capacity cannot be degraded,
-        # disabled, or saturated.
-        return "normal"
-
     measurements = _channel_directional_measurements(scene, channel)
     if measurements is None:
         return None
@@ -244,18 +230,10 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     ):
         return "degraded"
 
-    # Outside the explicit 70%-90% normal-evidence band, a low observed rate is
-    # not enough to prove normality. The degraded rule requires a sufficient
-    # sender-side packet sample and an observed per-hop delivery deficit.
+    # Throughput below the original capacity cannot establish normality:
+    # a reduced capacity above the current load yields the same observations.
+    # Scene-generation degradation ranges are not observable evidence.
     return None
-
-
-def _incident_channels(scene: SceneData, node_id: str) -> list[EntityRecord]:
-    return [
-        channel
-        for channel in scene.entities("channel")
-        if node_id in scene.channel_endpoint_nodes(channel)
-    ]
 
 
 def _complete_path_channels(
@@ -329,158 +307,44 @@ def _complete_flow_path(
     return path_node_ids, channels
 
 
-def _infer_unique_physical_fault(scene: SceneData) -> str | None:
-    cached = scene._evidence_cache.get("unique_physical_fault", _CACHE_MISS)
-    if cached is not _CACHE_MISS:
-        return cached if isinstance(cached, str) else None
+def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
+    """Infer availability, including isolation by failures of all adjacent links.
 
-    result = _compute_unique_physical_fault(scene)
-    scene._evidence_cache["unique_physical_fault"] = result
-    return result
-
-
-def _compute_unique_physical_fault(scene: SceneData) -> str | None:
-    """Find one required cause under the generator's single/double-fault model.
-
-    An unattempted flow cannot identify a physical fault. A unique single-fault
-    explanation is insufficient if two other faults explain the same evidence.
+    Transmit attempts alone do not establish connectivity. Missing or idle
+    links cannot establish an outage, and incomplete adjacency cannot establish
+    that *all* links are unavailable. No physical root cause is implied.
     """
+    raw_interfaces = node.relations.get("interfaces")
+    if not isinstance(raw_interfaces, list) or not raw_interfaces:
+        return None
+    interface_ids = {str(nic_id) for nic_id in raw_interfaces}
+    if len(interface_ids) != len(raw_interfaces) or interface_ids != {
+        nic.entity_id
+        for nic in scene.entities("nic")
+        if nic.relations.get("node") == node.entity_id
+    }:
+        return None
 
-    flow_paths: dict[str, tuple[list[str], list[EntityRecord]]] = {}
-    failed_flow_ids: set[str] = set()
-    for flow in scene.entities("data_flow"):
-        state = infer_flow_state(flow)
-        path = _complete_flow_path(scene, flow)
-        if state is None or path is None:
+    channels: dict[str, EntityRecord] = {}
+    for nic_id in interface_ids:
+        nic = scene.entity("nic", nic_id)
+        if nic is None:
             return None
-        if state == "failed":
-            if _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE:
-                # No meaningful send sample: this flow neither establishes a
-                # fault nor disproves a cause supported by other flows. In
-                # particular, a failed node cannot originate its own probes.
-                continue
-            failed_flow_ids.add(flow.entity_id)
-        flow_paths[flow.entity_id] = path
-    if not failed_flow_ids:
-        return None
-
-    # Missing endpoint observations must not silently remove competing causes.
-    receive_rates = {
-        channel.entity_id: _channel_receive_rates(scene, channel)
-        for channel in scene.entities("channel")
-    }
-    if any(rates is None for rates in receive_rates.values()):
-        return None
-    for node in scene.entities("node"):
-        counters = [_number(node.properties, name) for name in ("rx_packets", "tx_packets")]
-        if any(value is None or value < 0 for value in counters):
-            return None
-
-    observed_outages = {
-        channel.entity_id
-        for channel in scene.entities("channel")
-        if _channel_has_observed_outage(scene, channel)
-    }
-    if not observed_outages:
-        return None
-    # Each candidate records both the failed flows and local outages it can
-    # explain. Positive delivery and successful flows exclude that candidate.
-    possible_causes: dict[str, tuple[set[str], set[str]]] = {}
-    for channel in scene.entities("channel"):
-        original_capacity = _number(
-            channel.properties,
-            "original_capacity_mbps",
-        )
-        current_throughput = _maximum_channel_throughput(scene, channel)
+        channel = scene.entity("channel", str(nic.relations.get("channel", "")))
         if (
-            original_capacity is None
-            or original_capacity <= 0
-            or current_throughput is None
-            or current_throughput < 0
-            or current_throughput > original_capacity + FLOAT_TOLERANCE
+            channel is None
+            or not isinstance(channel.relations.get("connects"), list)
+            or nic_id not in channel.relations["connects"]
             or len(scene.channel_endpoint_nodes(channel)) != 2
         ):
             return None
-        if channel.entity_id not in observed_outages:
-            continue
-        predicted_failed = {
-            flow_id
-            for flow_id, (_, channels) in flow_paths.items()
-            if any(
-                path_channel.entity_id == channel.entity_id
-                for path_channel in channels
-            )
-        }
-        if predicted_failed and predicted_failed <= failed_flow_ids:
-            possible_causes[channel.entity_id] = (predicted_failed, {channel.entity_id})
+        channels[channel.entity_id] = channel
 
-    for node in scene.entities("node"):
-        rx_packets = _number(node.properties, "rx_packets")
-        tx_packets = _number(node.properties, "tx_packets")
-        incident_channels = _incident_channels(scene, node.entity_id)
-        if (
-            rx_packets is None
-            or tx_packets is None
-            or abs(rx_packets) > FLOAT_TOLERANCE
-            or abs(tx_packets) > FLOAT_TOLERANCE
-            or not incident_channels
-        ):
-            continue
-        # A silent leaf node is still a possible cause. Excluding it would
-        # incorrectly make its only incident channel the unique fault.
-        if (
-            any(
-                max(receive_rates[channel.entity_id]) > FLOAT_TOLERANCE
-                for channel in incident_channels
-            )
-            or not any(
-                channel.entity_id in observed_outages
-                for channel in incident_channels
-            )
-        ):
-            continue
-        predicted_failed = {
-            flow_id
-            for flow_id, (node_ids, _) in flow_paths.items()
-            if node.entity_id in node_ids
-        }
-        if predicted_failed and predicted_failed <= failed_flow_ids:
-            possible_causes[node.entity_id] = (
-                predicted_failed,
-                {channel.entity_id for channel in incident_channels} & observed_outages,
-            )
-
-    single_causes = [
-        entity_id
-        for entity_id, (failed, outages) in possible_causes.items()
-        if failed == failed_flow_ids and outages == observed_outages
-    ]
-    if len(single_causes) != 1:
-        return None
-    required_cause = single_causes[0]
-    alternatives = [
-        effects for entity_id, effects in possible_causes.items()
-        if entity_id != required_cause
-    ]
-    for (first_failed, first_outages), (second_failed, second_outages) in combinations(alternatives, 2):
-        if (
-            first_failed | second_failed == failed_flow_ids
-            and first_outages | second_outages == observed_outages
-        ):
-            return None
-    return required_cause
-
-
-def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
-    rx_packets = _number(node.properties, "rx_packets")
-    tx_packets = _number(node.properties, "tx_packets")
-    if any(value is None or value < 0 for value in (rx_packets, tx_packets)):
-        return None
-    if rx_packets + tx_packets > 0:
+    rates = [_channel_receive_rates(scene, channel) for channel in channels.values()]
+    if any(pair is not None and max(pair) > FLOAT_TOLERANCE for pair in rates):
         return "normal"
-    if _infer_unique_physical_fault(scene) == node.entity_id:
+    if all(_channel_has_observed_outage(scene, channel) for channel in channels.values()):
         return "disabled"
-    # A fault elsewhere provides no positive evidence about this idle node.
     return None
 
 
@@ -516,39 +380,6 @@ def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
     if queue_current / queue_size >= SATURATION_THRESHOLD:
         return "saturated"
     return "normal"
-
-
-def infer_channel_unavailability_cause(
-    scene: SceneData,
-    channel: EntityRecord,
-) -> str | None:
-    if infer_channel_state(scene, channel) != "disabled":
-        return None
-    physical_fault_id = _infer_unique_physical_fault(scene)
-    if physical_fault_id == channel.entity_id:
-        return "channel_or_interface_fault"
-    failed_node = scene.entity("node", physical_fault_id or "")
-    if (
-        failed_node is not None
-        and failed_node.entity_id in scene.channel_endpoint_nodes(channel)
-    ):
-        return "connected_node_fault"
-    return None
-
-
-def infer_nic_unavailability_cause(
-    scene: SceneData,
-    nic: EntityRecord,
-) -> str | None:
-    if infer_nic_state(scene, nic) != "disabled":
-        return None
-    channel = scene.entity(
-        "channel",
-        str(nic.relations.get("channel", "")),
-    )
-    if channel is None:
-        return None
-    return infer_channel_unavailability_cause(scene, channel)
 
 
 def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
@@ -683,24 +514,45 @@ def infer_bottleneck(scene: SceneData, flow: EntityRecord) -> str | None:
     return saturated[0] if len(saturated) == 1 else None
 
 
-def infer_flow_failure_cause(scene: SceneData, flow: EntityRecord) -> str | None:
+def infer_flow_failure_locations(
+    scene: SceneData,
+    flow: EntityRecord,
+) -> tuple[str, ...] | None:
+    """Locate observed interruptions on this flow's declared path.
+
+    An isolated node represents its unavailable incident links; those links are
+    not reported again. Unsampled downstream silence is not an interruption
+    observation. Multiple locations are allowed, independent of how many faults
+    the scene generator injected or what happens on unrelated paths.
+    """
     if (
         infer_flow_state(flow) != "failed"
         or _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE
     ):
         return None
     path = _complete_flow_path(scene, flow)
-    physical_fault_id = _infer_unique_physical_fault(scene)
-    if path is None or physical_fault_id is None:
+    if path is None:
         return None
     path_node_ids, path_channels = path
     if len(path_channels) < 2:
         return None
-    if physical_fault_id in path_node_ids:
-        return physical_fault_id
-    if any(
-        channel.entity_id == physical_fault_id
+    isolated_nodes = {
+        node_id
+        for node_id in path_node_ids
+        if (node := scene.entity("node", node_id)) is not None
+        and infer_node_state(scene, node) == "disabled"
+    }
+    interrupted_channels = {
+        channel.entity_id
         for channel in path_channels
-    ):
-        return physical_fault_id
-    return None
+        if not isolated_nodes.intersection(scene.channel_endpoint_nodes(channel))
+        and _channel_has_observed_outage(scene, channel)
+    }
+    return tuple(sorted(isolated_nodes | interrupted_channels))
+
+
+def infer_flow_failure_cause(scene: SceneData, flow: EntityRecord) -> str | None:
+    # The current dataset has a single-ID answer contract. This is an admission
+    # check on observed locations, not an assumption of one fault in the scene.
+    locations = infer_flow_failure_locations(scene, flow)
+    return locations[0] if locations is not None and len(locations) == 1 else None

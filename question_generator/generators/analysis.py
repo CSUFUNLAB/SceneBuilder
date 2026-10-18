@@ -8,11 +8,9 @@ from ..evidence import (
     infer_bandwidth_constraint,
     infer_bottleneck,
     infer_channel_saturation_cause,
-    infer_channel_unavailability_cause,
     infer_congestion_pattern,
     infer_entity_state,
     infer_flow_failure_cause,
-    infer_nic_unavailability_cause,
 )
 from ..models import (
     QuestionCandidate,
@@ -36,8 +34,6 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
             "TA0007": self._channel_saturation_cause,
             "TA0008": self._flow_bottleneck,
             "TA0009": self._flow_failure_cause,
-            "TA0010": self._channel_unavailability_cause,
-            "TA0011": self._nic_unavailability_cause,
         }
 
     def generate_candidate(
@@ -181,45 +177,3 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         if not candidates:
             return None
         return QuestionCandidate({"channel_id": rng.choice(candidates)}, target_label)
-
-    @staticmethod
-    def _channel_unavailability_cause(
-        scene: SceneData,
-        target_label: str,
-        rng: random.Random,
-    ) -> QuestionCandidate | None:
-        candidates = [
-            channel_id
-            for channel_id, label in scene.channel_unavailability_causes
-            if label == target_label
-            and (channel := scene.entity("channel", channel_id)) is not None
-            and scene.entity_is_in_flow_scope("channel", channel_id)
-            and infer_channel_unavailability_cause(scene, channel) == target_label
-        ]
-        if not candidates:
-            return None
-        return QuestionCandidate(
-            {"channel_id": rng.choice(candidates)},
-            target_label,
-        )
-
-    @staticmethod
-    def _nic_unavailability_cause(
-        scene: SceneData,
-        target_label: str,
-        rng: random.Random,
-    ) -> QuestionCandidate | None:
-        candidates = [
-            nic_id
-            for nic_id, label in scene.nic_unavailability_causes
-            if label == target_label
-            and (nic := scene.entity("nic", nic_id)) is not None
-            and scene.entity_is_in_flow_scope("nic", nic_id)
-            and infer_nic_unavailability_cause(scene, nic) == target_label
-        ]
-        if not candidates:
-            return None
-        return QuestionCandidate(
-            {"nic_id": rng.choice(candidates)},
-            target_label,
-        )

@@ -53,15 +53,3 @@ templates:
     question: "Which failed node or channel is responsible for data flow $data_flow_id$'s failure?"
     answer:
       type: entity_id
-
-  - id: TA0010
-    question: "What is causing channel $channel_id$ to be unavailable: an endpoint-node failure or a channel/interface-side fault?"
-    answer:
-      type: enum
-      values: [connected_node_fault, channel_or_interface_fault]
-
-  - id: TA0011
-    question: "What is causing interface $nic_id$ to be unavailable: a connected-node failure or a fault on its attached channel?"
-    answer:
-      type: enum
-      values: [connected_node_fault, channel_or_interface_fault]

@@ -5,7 +5,7 @@ categories:
   analysis:
     enabled: true
     questions_per_question: 10
-    # 145 total: 5 per enum label; 15 per localization template.
+    # 125 total: 5 per enum label; 15 per localization template.
     questions_per_template:
       TA0001: 10
       TA0002: 20
@@ -16,8 +16,6 @@ categories:
       TA0007: 10
       TA0008: 15
       TA0009: 15
-      TA0010: 10
-      TA0011: 10
     template_file: ../question_generator/templates/analysis.yaml
     output_file: ../generated/origin/analysis_questions.jsonl
   evolution:

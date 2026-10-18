@@ -118,12 +118,9 @@ class NetworkSceneHelper
     {
         uint64_t txPackets{0};
         uint64_t rxPackets{0};
-        uint64_t dropPackets{0};
         uint64_t txDropPackets{0};
-        uint64_t rxDropPackets{0};
         uint64_t txBytes{0};
         uint64_t rxBytes{0};
-        uint64_t dropBytes{0};
     };
 
     void TraceIpv4Tx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32_t interface);
@@ -136,7 +133,6 @@ class NetworkSceneHelper
     void TraceQueueDiscDrop(std::string interfaceId, Ptr<const QueueDiscItem> item);
     void TracePhyTxBegin(std::string interfaceId, Ptr<const Packet> packet);
     void TraceDeviceTxDrop(std::string interfaceId, Ptr<const Packet> packet);
-    void TraceDeviceRxDrop(std::string interfaceId, Ptr<const Packet> packet);
     std::string IdentifySceneFlow(Ptr<const Packet> packet) const;
     uint32_t GetCurrentQueuePackets(const std::string& interfaceId) const;
     void ResetForScene(const NetworkSceneData& scene);

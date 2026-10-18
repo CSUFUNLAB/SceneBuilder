@@ -261,11 +261,6 @@ _ENTITY_STATE_VALUES = {
     "nic": ("normal", "disabled", "saturated"),
     "data_flow": ("normal", "unstable", "degraded", "failed"),
 }
-_PHYSICAL_FAILURE_EVENT_TYPES = {
-    "node_failure",
-    "channel_failure",
-    "nic_failure",
-}
 _EVIDENCE_BACKED_STATE_TARGET = "evidence_backed_state"
 
 
@@ -727,28 +722,12 @@ def _question_rule(template: QuestionTemplate) -> EvolutionQuestionRule:
 def _reachable_state_prediction_answers(
     rule: EvolutionQuestionRule,
 ) -> tuple[str, ...]:
-    """Return states reachable under the configured after-event semantics."""
+    """Return the public state domain, independent of scene-sampling recipes.
 
-    entity_type = rule.target_entity_type
-    if entity_type == "node":
-        return (
-            _ENTITY_STATE_VALUES["node"]
-            if rule.event_type_id == "node_failure"
-            else ("normal",)
-        )
-    if entity_type == "channel":
-        return (
-            ("normal", "disabled", "saturated")
-            if rule.event_type_id in _PHYSICAL_FAILURE_EVENT_TYPES
-            else ("normal", "saturated")
-        )
-    if entity_type == "nic":
-        return (
-            _ENTITY_STATE_VALUES["nic"]
-            if rule.event_type_id in _PHYSICAL_FAILURE_EVENT_TYPES
-            else ("normal", "saturated")
-        )
-    return _ENTITY_STATE_VALUES["data_flow"]
+    Recovery does not rule out other unavailable or degraded dependencies, and
+    a load event does not establish that the baseline network was fault-free.
+    """
+    return _ENTITY_STATE_VALUES[rule.target_entity_type]
 
 
 def _evolution_options(category: CategoryConfig) -> dict[str, object]:
@@ -1005,6 +984,8 @@ def _choose_event_entity(
         if source.physical_faults:
             return None
     elif spec.change == "recovery":
+        # Recovery repairs an injected physical fault. Operational node labels
+        # also include isolation by adjacent links and cannot select this event.
         matching = [
             fault
             for fault in source.physical_faults
@@ -1533,6 +1514,9 @@ def _event_has_state_evidence(
             is not None
             for route in routes
         )
+    # The event is a stated physical intervention chosen from source inputs.
+    # This check only establishes the preceding operating state; an isolated
+    # node's "disabled" label does not identify a physical node fault.
     return (
         _evidence_backed_entity_state(
             before,
@@ -1766,8 +1750,12 @@ def _evaluate_target(
         "saturation_outcome",
         "saturation_recovery",
     }:
-        before_state = before_entity.label
-        after_state = after_entity.label
+        if rule.comparison_kind == "status" and target_entity_type == "node":
+            before_state = _evidence_backed_entity_state(before, "node", target_id)
+            after_state = _evidence_backed_entity_state(after, "node", target_id)
+        else:
+            before_state = before_entity.label
+            after_state = after_entity.label
         if not before_state or not after_state:
             return None
         if rule.comparison_kind == "saturation_outcome":
