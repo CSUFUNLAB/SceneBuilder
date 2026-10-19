@@ -72,7 +72,7 @@ TWIN_TYPE_BY_COMMAND_TYPE = {
 }
 SCENES_DIR_NAME = "scenes"
 INPUT_DIR_NAME = "input"
-COMMANDS = ("initial", "scenes", "twin", "questions", "split", "clean")
+COMMANDS = ("init", "scenes", "twin", "questions", "split", "clean")
 
 
 def _load_project_dependencies() -> None:
@@ -134,8 +134,8 @@ class TwinGenerationResult:
 
 @dataclass(frozen=True)
 class Ns3InitializationResult:
-    archive: Path
-    source_prefix: PurePosixPath
+    archive: Path | None
+    source_prefix: PurePosixPath | None
     destination: Path
     extracted_entries: int
     skipped_entries: int
@@ -153,16 +153,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="{" + ",".join(COMMANDS) + "}",
     )
 
-    initial_parser = subparsers.add_parser(
-        "initial",
-        help="Extract, configure, and build ns-3 in the project",
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Configure and build ns-3, optionally extracting a source archive first",
     )
-    initial_parser.add_argument(
-        "archive",
-        nargs="?",
+    init_parser.add_argument(
+        "-p",
+        "--archive",
+        dest="archive",
+        metavar="PATH",
         help=(
-            "Path to an ns-3 source archive, for example "
-            "./ns-allinone-3.48.tar.bz2. Prompts when omitted."
+            "Extract an ns-3 source archive before initialization, for example "
+            "./ns-allinone-3.48.tar.bz2. When omitted, configure and build "
+            "the sources already extracted into the project's ns-3/ directory."
         ),
     )
 
@@ -485,7 +488,7 @@ def _configure_and_build_ns3(destination: Path) -> None:
 
 
 def initialize_ns3(
-    archive_value: str | Path | None,
+    archive_value: str | Path | None = None,
     destination: str | Path = DEFAULT_NS3_ROOT,
 ) -> Ns3InitializationResult:
     destination_path = Path(destination).expanduser()
@@ -496,18 +499,29 @@ def initialize_ns3(
         )
     destination_path = destination_path.resolve()
     launcher = destination_path / "ns3"
-    if launcher.exists() or launcher.is_symlink():
-        raise ValueError(
-            f"ns-3 has already been initialized: {launcher}; "
-            "the initial command cannot be run again"
+    if archive_value is None:
+        if not launcher.is_file() or not os.access(launcher, os.X_OK):
+            raise ValueError(
+                f"No executable ns-3 launcher found: {launcher}; "
+                f"extract the ns-3 sources into {destination_path} first, "
+                "or run: python main.py init -p <ns-3 archive path>"
+            )
+        _configure_and_build_ns3(destination_path)
+        return Ns3InitializationResult(
+            archive=None,
+            source_prefix=None,
+            destination=destination_path,
+            extracted_entries=0,
+            skipped_entries=0,
         )
 
-    raw_archive = str(archive_value).strip() if archive_value is not None else ""
-    if not raw_archive:
-        try:
-            raw_archive = input("请输入 ns-3 压缩包路径: ").strip()
-        except EOFError as exc:
-            raise ValueError("No ns-3 archive path was provided") from exc
+    if launcher.exists() or launcher.is_symlink():
+        raise ValueError(
+            f"ns-3 sources have already been extracted: {launcher}; "
+            "run 'python main.py init' without -p to configure and build them"
+        )
+
+    raw_archive = str(archive_value).strip()
     if not raw_archive:
         raise ValueError("ns-3 archive path cannot be empty")
 
@@ -586,7 +600,8 @@ def _require_ns3_initialized(destination: str | Path | None = None) -> None:
     if not launcher.is_file() or not os.access(launcher, os.X_OK):
         raise ValueError(
             "ns-3 尚未初始化，请先运行: "
-            "python main.py initial <ns-3压缩包路径>"
+            "python main.py init；如尚未解压源码，请运行: "
+            "python main.py init -p <ns-3压缩包路径>"
         )
 
 
@@ -1491,15 +1506,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        if args.command == "initial":
+        if args.command == "init":
             result = initialize_ns3(args.archive)
             print(f"Initialized and built ns-3 in {result.destination}")
-            print(f"Archive: {result.archive}")
-            print(f"Source root: {result.source_prefix}")
-            print(
-                f"Extracted {result.extracted_entries} archive entry/entries; "
-                f"skipped {result.skipped_entries} existing entry/entries"
-            )
+            if result.archive is not None:
+                print(f"Archive: {result.archive}")
+                print(f"Source root: {result.source_prefix}")
+                print(
+                    f"Extracted {result.extracted_entries} archive entry/entries; "
+                    f"skipped {result.skipped_entries} existing entry/entries"
+                )
             return 0
 
         if args.command == "scenes":

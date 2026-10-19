@@ -1,6 +1,11 @@
 cd /home/SceneBuilder
 python -m pip install -r requirements.txt
-python main.py initial ./ns-allinone-3.48.tar.bz2
+
+# 初始化：根据源码状态选择以下一种方式
+# 尚未解压：解压 ns-3 后配置并编译
+python main.py init -p ./ns-allinone-3.48.tar.bz2
+# 已解压到 ns-3/：直接配置并编译
+python main.py init
 
 python main.py scenes -c configs/example.yaml
 python main.py twin -t origin --threads 4 --scale 5

@@ -230,10 +230,9 @@ def infer_channel_state(scene: SceneData, channel: EntityRecord) -> str | None:
     ):
         return "degraded"
 
-    # Throughput below the original capacity cannot establish normality:
-    # a reduced capacity above the current load yields the same observations.
-    # Scene-generation degradation ranges are not observable evidence.
-    return None
+    # Normal describes service under the current load, not unchanged physical
+    # capacity. A capacity reduction that still serves this load is normal.
+    return "normal"
 
 
 def _complete_path_channels(

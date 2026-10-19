@@ -11,8 +11,8 @@ SceneBuilder 用于批量构建网络实验数据。它将拓扑与随机配置�
 ```bash
 cd /home/lb/STN/SceneBuilder
 
-# 0. 首次克隆后初始化 ns-3（只运行一次）
-python main.py initial ./ns-allinone-3.48.tar.bz2
+# 0. 首次克隆后解压并初始化 ns-3（已解压到 ns-3/ 时直接运行 python main.py init）
+python main.py init -p ./ns-allinone-3.48.tar.bz2
 
 # 1. 生成原始场景输入
 python main.py scenes -c configs/example.yaml
@@ -47,7 +47,7 @@ python main.py <模式> [选项]
 
 可用模式：
 
-- `initial`：首次克隆后解压、配置并编译 ns-3。
+- `init`：配置并编译已有的 ns-3 源码；加 `-p` 可先从压缩包解压。
 - `scenes`：生成网络场景的原始输入。
 - `twin`：生成 `origin`、`evolution` 或 `optimization` Twin。
 - `questions`：从已有 Twin 和标签生成问题。
@@ -56,30 +56,32 @@ python main.py <模式> [选项]
 
 ### 0. 初始化 ns-3
 
-首次从 Git 克隆项目后，传入 ns-3 压缩包路径：
+首次从 Git 克隆项目、尚未解压 ns-3 时，用 `-p` 传入压缩包路径：
 
 ```bash
-python main.py initial ./ns-allinone-3.48.tar.bz2
+python main.py init -p ./ns-allinone-3.48.tar.bz2
 ```
 
-如果省略路径，命令会提示输入：
+如果 ns-3 已经解压到项目的 `ns-3/` 目录，但还没有初始化，直接运行：
 
 ```bash
-python main.py initial
-请输入 ns-3 压缩包路径: ./ns-allinone-3.48.tar.bz2
+python main.py init
 ```
 
-命令会自动识别压缩包内的 ns-3 源码根目录，将内容解压到项目的 `ns-3/`，并跳过
-Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。解压完成后会自动依次执行：
+带 `-p` 时，命令会自动识别压缩包内的 ns-3 源码根目录，将内容解压到项目的
+`ns-3/`，并跳过 Git 仓库中已有的自定义 `scratch/` 和 `contrib/` 文件。不带 `-p`
+时，直接使用 `ns-3/` 中已有的源码，不再询问压缩包路径。两种方式都会依次执行：
 
 ```bash
 ./ns3 configure --enable-python-bindings --build-profile=debug
 ./ns3 build
 ```
 
-任一命令执行失败都会使 `initial` 返回失败。如果 `ns-3/ns3` 已经存在，命令会拒绝
-再次初始化，避免混合不同版本的源码。尚未初始化时运行 `scenes` 或 `twin`，程序会
-停止并提示先执行 `initial`。
+任一命令执行失败都会使 `init` 返回失败。如果 `ns-3/ns3` 已经存在，带 `-p`
+的命令会拒绝再次解压，避免混合不同版本的源码；此时直接运行 `python main.py init`
+即可配置并编译，也可用于重试之前失败的初始化。未解压源码时直接运行 `init`，
+命令会提示使用 `-p` 提供压缩包。`scenes` 和 `twin` 在缺少可执行的 ns-3 启动器时，
+会停止并提示先执行 `init`。
 
 ### 1. 生成场景
 
@@ -384,7 +386,7 @@ python main.py clean -o questions -t optimization
 
 ```bash
 python main.py --help
-python main.py initial --help
+python main.py init --help
 python main.py twin --help
 python main.py questions --help
 python main.py split --help
@@ -402,8 +404,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-然后按“初始化 ns-3”一节运行 `initial`；该命令会自动解压、配置并完整编译 ns-3，
-无需再手动执行 `./ns3 configure` 或 `./ns3 build`。
+然后按“初始化 ns-3”一节运行 `init`，已有源码时直接配置并编译，尚未解压时加
+`-p <压缩包路径>` 先解压。无需再手动执行 `./ns3 configure` 或 `./ns3 build`。
 
 之后返回项目根目录运行 SceneBuilder：
 
@@ -474,6 +476,9 @@ generated/
 `label` 都是由 `{entity_id, label}` 构成的列表。节点状态只包含 `normal` 或
 `disabled`，表示网络运行可用性：有相邻链路且全部不可用时为 `disabled`，
 不区分节点自身还是周围链路导致不可用。单条路由不可用不等于整个节点不可用。
+信道状态描述当前负载下的运行表现：即使物理容量下降，只要下降后的容量仍能承载
+当前负载，就标为 `normal`。容量下降且不足以承载当前负载时才标为 `degraded`；
+负载取两个方向本地发送速率的较大值，不将全双工两个方向相加。
 没有对应问题模板的全网状态不写入
 `labels.jsonl`。
 
@@ -562,9 +567,10 @@ generated/
 
 信道退化沿用 60% 的局部交付差额规则：有效发送样本下，对端接收速率大于零且低于
 `min(原始容量, 本地发送速率) × 0.60` 才构成退化候选证据。低吞吐量本身不够；这仍是
-聚合观测的筛选规则，不是有效容量或持续达到容量上限的直接测量。不再使用生成器的
-退化倍数范围，将原始容量 70%–90% 的吞吐量直接认定为信道正常；目前仅靠这些聚合
-观测不能排除容量已下降但仍高于当前负载的情况，因此跳过无法确认正常的候选。
+聚合观测的筛选规则，不是有效容量或持续达到容量上限的直接测量。`normal` 表示当前
+负载下服务正常，不要求证明物理容量未下降：观测完整、有有效发送样本和正交付，且
+不满足不可用、饱和或退化条件时，判为 `normal`。容量下降但仍够用属于正常情况；
+缺少观测、无有效发送样本或存在单向零交付矛盾时仍跳过。
 饱和证据使用 95% 阈值。拥塞模式和瓶颈定位还要求完整路径上的信道状态可判定，瓶颈
 位置必须唯一。所有检查只筛选候选，不修改仿真真值标签。
 必须通过比较两个 Twin 才能得到的演化问题标签，例如吞吐量、丢包数、时延或状态变化，

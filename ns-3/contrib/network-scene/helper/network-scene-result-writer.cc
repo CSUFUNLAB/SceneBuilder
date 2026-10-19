@@ -534,10 +534,20 @@ NetworkSceneHelper::WriteResults() const
     {
         double sourceToDestinationThroughputMbps = 0.0;
         double destinationToSourceThroughputMbps = 0.0;
+        double maximumDirectionalOfferedMbps = 0.0;
         std::vector<std::string> outputInterfaceIds;
         std::vector<std::string> carriedFlowRelations;
         for (const auto& ifaceId : channel.interfaceIds)
         {
+            auto countersIt = m_interfaceCounters.find(ifaceId);
+            if (countersIt != m_interfaceCounters.end())
+            {
+                const double offeredMbps =
+                    countersIt->second.txBytes * 8.0 / duration / 1000000.0 *
+                    m_valueScaleFactor;
+                maximumDirectionalOfferedMbps =
+                    std::max(maximumDirectionalOfferedMbps, offeredMbps);
+            }
             auto outputIfaceIt = outputInterfaceIdById.find(ifaceId);
             outputInterfaceIds.push_back(outputIfaceIt == outputInterfaceIdById.end()
                                              ? ifaceId
@@ -603,7 +613,13 @@ NetworkSceneHelper::WriteResults() const
         }
         else if (channel.state == "degraded")
         {
-            state = "degraded";
+            // A physical capacity reduction is an operating degradation only
+            // when the remaining capacity cannot serve the current load.
+            // Point-to-point directions have independent capacity budgets.
+            if (maximumDirectionalOfferedMbps > channel.effectiveCapacityMbps + 1e-9)
+            {
+                state = "degraded";
+            }
         }
         else if (utilization >= SATURATION_THRESHOLD)
         {
