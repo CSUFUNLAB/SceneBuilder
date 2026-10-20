@@ -139,7 +139,7 @@ class NetworkSceneHelper
     void LoadSceneRecords(const NetworkSceneData& scene);
     void InstallInternetStackAndTracing();
     void InstallSceneChannels(const std::vector<NetworkSceneChannelRow>& channels,
-                           const std::vector<NetworkSceneNicRow>& nics,
+                           const std::vector<NetworkSceneInterfaceRow>& interfaces,
                            std::unordered_map<std::string, std::string>& primaryAddressByNode);
     void InstallSceneRoutes(const std::vector<NetworkSceneNodeRow>& nodes,
                             const std::unordered_map<std::string, std::string>& primaryAddressByNode);

@@ -38,7 +38,7 @@ SCENE_NAME_PATTERN = re.compile(
 SCENE_INPUT_FILES = (
     "nodes.csv",
     "channels.csv",
-    "nics.csv",
+    "interfaces.csv",
     "routing_matrix.csv",
     "traffic.jsonl",
     "metadata.json",
@@ -54,8 +54,8 @@ class OptimizationSourceScene:
     node_fields: tuple[str, ...]
     channels: tuple[dict[str, str], ...]
     channel_fields: tuple[str, ...]
-    nics: tuple[dict[str, str], ...]
-    nic_fields: tuple[str, ...]
+    interfaces: tuple[dict[str, str], ...]
+    interface_fields: tuple[str, ...]
     traffic: tuple[dict[str, Any], ...]
     routing_matrix: tuple[tuple[int, ...], ...]
     twin: SceneData
@@ -599,7 +599,7 @@ def _load_source_scene(
 ) -> OptimizationSourceScene:
     nodes, node_fields = _read_csv(scene_dir / "nodes.csv")
     channels, channel_fields = _read_csv(scene_dir / "channels.csv")
-    nics, nic_fields = _read_csv(scene_dir / "nics.csv")
+    interfaces, interface_fields = _read_csv(scene_dir / "interfaces.csv")
     traffic = _read_jsonl(scene_dir / "traffic.jsonl")
     routing_matrix = _read_routing_matrix(
         scene_dir / "routing_matrix.csv",
@@ -615,8 +615,8 @@ def _load_source_scene(
         node_fields=tuple(node_fields),
         channels=tuple(channels),
         channel_fields=tuple(channel_fields),
-        nics=tuple(nics),
-        nic_fields=tuple(nic_fields),
+        interfaces=tuple(interfaces),
+        interface_fields=tuple(interface_fields),
         traffic=tuple(traffic),
         routing_matrix=routing_matrix,
         twin=SceneData.from_jsonl(twin_file),
@@ -639,23 +639,23 @@ def _operational_topology(
         for row in source.nodes
         if str(row.get("state", "normal")) == "normal"
     }
-    nics_by_channel: dict[str, list[dict[str, str]]] = {}
-    for row in source.nics:
-        nics_by_channel.setdefault(str(row["channel_id"]), []).append(row)
+    interfaces_by_channel: dict[str, list[dict[str, str]]] = {}
+    for row in source.interfaces:
+        interfaces_by_channel.setdefault(str(row["channel_id"]), []).append(row)
 
     operational_channels: set[str] = set()
     for row in source.channels:
         channel_id = str(row["channel_id"])
         endpoint_nodes = {str(row["src"]), str(row["dst"])}
-        attached_nics = nics_by_channel.get(channel_id, [])
+        attached_interfaces = interfaces_by_channel.get(channel_id, [])
         if (
             str(row.get("state", "normal")) not in {"normal", "degraded"}
             or not endpoint_nodes.issubset(operational_nodes)
-            or {str(nic["node"]) for nic in attached_nics}
+            or {str(interface["node"]) for interface in attached_interfaces}
             != endpoint_nodes
             or any(
-                str(nic.get("state", "normal")) != "normal"
-                for nic in attached_nics
+                str(interface.get("state", "normal")) != "normal"
+                for interface in attached_interfaces
             )
         ):
             continue
@@ -896,7 +896,7 @@ def _source_is_fault_free(source: OptimizationSourceScene) -> bool:
         )
         and all(
             str(row.get("state", "normal")) == "normal"
-            for row in source.nics
+            for row in source.interfaces
         )
     )
 
@@ -950,7 +950,7 @@ def _repair_fault_entities(
                     channel_id=channel_id,
                 )
             )
-    for row in source.nics:
+    for row in source.interfaces:
         node_id = str(row["node"])
         channel_id = str(row["channel_id"])
         interface_index = int(float(row["interface_index"]))
@@ -962,9 +962,9 @@ def _repair_fault_entities(
             continue
         result.append(
             RepairFaultEntity(
-                entity_type="nic",
+                entity_type="interface",
                 entity_id=public_id,
-                input_entity_id=str(row["nic_id"]),
+                input_entity_id=str(row["interface_id"]),
                 related_node_ids=channel_endpoints.get(
                     channel_id,
                     (node_id,),
@@ -1338,7 +1338,7 @@ def _routing_entries(
     }
     entries_by_node: dict[str, list[NextHopEntry]] = {}
     entry_by_interface: dict[tuple[str, int], NextHopEntry] = {}
-    for row in source.nics:
+    for row in source.interfaces:
         node_id = str(row["node"])
         channel_id = str(row["channel_id"])
         endpoints = channel_endpoints.get(channel_id)
@@ -1610,13 +1610,13 @@ def _apply_fault_repair_candidate(
             float(remaining_fault.get("capacity_multiplier", 1.0))
         )
         _write_csv(scene_dir / "channels.csv", fields, rows)
-    elif entity_type == "nic":
+    elif entity_type == "interface":
         if state != "disabled":
-            raise ValueError("NIC repair candidates require a disabled fault")
-        rows, fields = _read_csv(scene_dir / "nics.csv")
-        row = _find_row(rows, "nic_id", input_entity_id)
+            raise ValueError("Interface repair candidates require a disabled fault")
+        rows, fields = _read_csv(scene_dir / "interfaces.csv")
+        row = _find_row(rows, "interface_id", input_entity_id)
         row["state"] = state
-        _write_csv(scene_dir / "nics.csv", fields, rows)
+        _write_csv(scene_dir / "interfaces.csv", fields, rows)
     else:
         raise ValueError(
             f"Unsupported fault-repair entity type: {entity_type}"

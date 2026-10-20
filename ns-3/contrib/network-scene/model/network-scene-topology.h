@@ -10,11 +10,11 @@
 namespace ns3
 {
 
-using NetworkSceneNicsByChannel = std::unordered_map<std::string, std::vector<NetworkSceneNicRow>>;
+using NetworkSceneInterfacesByChannel = std::unordered_map<std::string, std::vector<NetworkSceneInterfaceRow>>;
 
 uint32_t NetworkSceneNodeNumber(const std::string& id);
-NetworkSceneNicsByChannel GroupNetworkSceneNicsByChannel(const std::vector<NetworkSceneNicRow>& nics);
-std::vector<NetworkSceneNicRow> SortedNetworkSceneChannelNics(const NetworkSceneNicsByChannel& nicsByChannel,
+NetworkSceneInterfacesByChannel GroupNetworkSceneInterfacesByChannel(const std::vector<NetworkSceneInterfaceRow>& interfaces);
+std::vector<NetworkSceneInterfaceRow> SortedNetworkSceneChannelInterfaces(const NetworkSceneInterfacesByChannel& interfacesByChannel,
                                                               const std::string& channelId);
 
 } // namespace ns3

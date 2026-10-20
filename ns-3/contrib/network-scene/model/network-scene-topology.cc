@@ -16,35 +16,35 @@ NetworkSceneNodeNumber(const std::string& id)
     return static_cast<uint32_t>(std::stoul(id.substr(1)));
 }
 
-NetworkSceneNicsByChannel
-GroupNetworkSceneNicsByChannel(const std::vector<NetworkSceneNicRow>& nics)
+NetworkSceneInterfacesByChannel
+GroupNetworkSceneInterfacesByChannel(const std::vector<NetworkSceneInterfaceRow>& interfaces)
 {
-    NetworkSceneNicsByChannel nicsByChannel;
-    for (const auto& nic : nics)
+    NetworkSceneInterfacesByChannel interfacesByChannel;
+    for (const auto& interface : interfaces)
     {
-        nicsByChannel[nic.channelId].push_back(nic);
+        interfacesByChannel[interface.channelId].push_back(interface);
     }
-    return nicsByChannel;
+    return interfacesByChannel;
 }
 
-std::vector<NetworkSceneNicRow>
-SortedNetworkSceneChannelNics(const NetworkSceneNicsByChannel& nicsByChannel, const std::string& channelId)
+std::vector<NetworkSceneInterfaceRow>
+SortedNetworkSceneChannelInterfaces(const NetworkSceneInterfacesByChannel& interfacesByChannel, const std::string& channelId)
 {
-    auto nicsIt = nicsByChannel.find(channelId);
-    if (nicsIt == nicsByChannel.end() || nicsIt->second.size() != 2)
+    auto interfacesIt = interfacesByChannel.find(channelId);
+    if (interfacesIt == interfacesByChannel.end() || interfacesIt->second.size() != 2)
     {
-        throw std::runtime_error("Channel " + channelId + " must have exactly two NIC rows");
+        throw std::runtime_error("Channel " + channelId + " must have exactly two interface rows");
     }
 
-    auto channelNics = nicsIt->second;
-    std::sort(channelNics.begin(), channelNics.end(), [](const NetworkSceneNicRow& a, const NetworkSceneNicRow& b) {
+    auto channelInterfaces = interfacesIt->second;
+    std::sort(channelInterfaces.begin(), channelInterfaces.end(), [](const NetworkSceneInterfaceRow& a, const NetworkSceneInterfaceRow& b) {
         if (a.node == b.node)
         {
             return a.interfaceIndex < b.interfaceIndex;
         }
         return NetworkSceneNodeNumber(a.node) < NetworkSceneNodeNumber(b.node);
     });
-    return channelNics;
+    return channelInterfaces;
 }
 
 } // namespace ns3

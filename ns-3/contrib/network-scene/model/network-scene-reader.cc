@@ -191,12 +191,12 @@ RequiredNodeState(const std::map<std::string, std::string>& row)
 }
 
 std::string
-RequiredNicState(const std::map<std::string, std::string>& row)
+RequiredInterfaceState(const std::map<std::string, std::string>& row)
 {
     const std::string state = Required(row, "state");
     if (state != "normal" && state != "disabled")
     {
-        throw std::runtime_error("Unsupported NIC state: " + state +
+        throw std::runtime_error("Unsupported interface state: " + state +
                                  ". Expected normal or disabled");
     }
     return state;
@@ -380,9 +380,9 @@ ReadNetworkSceneData(const std::string& sceneDirectory, const std::string& event
                                  state});
     }
 
-    for (const auto& row : ReadCsv(JoinPath(sceneDirectory, "nics.csv")))
+    for (const auto& row : ReadCsv(JoinPath(sceneDirectory, "interfaces.csv")))
     {
-        data.nics.push_back({Required(row, "nic_id"),
+        data.interfaces.push_back({Required(row, "interface_id"),
                              Required(row, "node"),
                              static_cast<uint32_t>(std::stoul(Required(row, "interface_index"))),
                              NormalizeChannelId(RequiredAny(row, "channel_id", "link_id")),
@@ -390,7 +390,7 @@ ReadNetworkSceneData(const std::string& sceneDirectory, const std::string& event
                              Required(row, "mac"),
                              Required(row, "queue_policy"),
                              static_cast<uint32_t>(std::stoul(Required(row, "queue_size_packets"))),
-                             RequiredNicState(row)});
+                             RequiredInterfaceState(row)});
     }
 
     std::ifstream routes(JoinPath(sceneDirectory, "routing_matrix.csv"));

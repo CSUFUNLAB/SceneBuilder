@@ -15,7 +15,7 @@ templates:
       values: [normal, disabled, degraded, saturated]
 
   - id: TA0003
-    question: "What is the current state of interface $nic_id$: normal, disabled, or saturated?"
+    question: "What is the current state of interface $interface_id$: normal, disabled, or saturated?"
     answer:
       type: enum
       values: [normal, disabled, saturated]

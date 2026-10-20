@@ -25,7 +25,7 @@ fault_generation:
     disabled: 0.5
     degraded: 0.5
   channel_degradation_multipliers: [0.5, 0.2, 0.1]
-  nic_state_probabilities:
+  interface_state_probabilities:
     disabled: 1.0
 
 link_generation:
@@ -61,7 +61,7 @@ link_generation:
       - edge_type
       - type
 
-nics:
+interfaces:
   queue_policy_mode_probabilities:
     mixed: 0
     single: 1.0
@@ -157,7 +157,7 @@ events:
     channel:
       fault: 0.5
       recovery: 0.5
-    nic:
+    interface:
       fault: 0.5
       recovery: 0.5
     data_flow:

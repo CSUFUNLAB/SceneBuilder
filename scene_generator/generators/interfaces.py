@@ -6,25 +6,25 @@ from ..rng import RandomManager
 from ..utils.ip_mac import generate_channel_interface_ips, generate_unique_macs
 from ..utils.selection import weighted_pick
 
-NIC_FIELDS = ["nic_id", "node", "interface_index", "channel_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
+INTERFACE_FIELDS = ["interface_id", "node", "interface_index", "channel_id", "ip", "mac", "queue_policy", "queue_size_packets", "state"]
 
 
-def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager) -> dict[str, Any]:
-    mode_probabilities = dict(nics_cfg.get("queue_policy_mode_probabilities", {}))
+def resolve_queue_policy_selection(interfaces_cfg: dict[str, Any], rng: RandomManager) -> dict[str, Any]:
+    mode_probabilities = dict(interfaces_cfg.get("queue_policy_mode_probabilities", {}))
     if mode_probabilities:
         selected_mode = weighted_pick(mode_probabilities, "mixed", rng)
     else:
-        selected_mode = str(nics_cfg.get("queue_policy_mode", "mixed"))
+        selected_mode = str(interfaces_cfg.get("queue_policy_mode", "mixed"))
 
-    single_queue_policy_probabilities = dict(nics_cfg.get("single_queue_policy_probabilities", {}))
+    single_queue_policy_probabilities = dict(interfaces_cfg.get("single_queue_policy_probabilities", {}))
     if single_queue_policy_probabilities:
         selected_single_queue_policy = weighted_pick(
             single_queue_policy_probabilities,
-            str(nics_cfg.get("single_queue_policy", "FIFO")),
+            str(interfaces_cfg.get("single_queue_policy", "FIFO")),
             rng,
         )
     else:
-        selected_single_queue_policy = str(nics_cfg.get("single_queue_policy", "FIFO"))
+        selected_single_queue_policy = str(interfaces_cfg.get("single_queue_policy", "FIFO"))
 
     if selected_mode == "single":
         return {
@@ -34,7 +34,7 @@ def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager)
             },
         }
 
-    queue_policy_probabilities = dict(nics_cfg.get("queue_policy_probabilities", {}))
+    queue_policy_probabilities = dict(interfaces_cfg.get("queue_policy_probabilities", {}))
     if queue_policy_probabilities:
         return {
             "selected_mode": selected_mode,
@@ -46,13 +46,13 @@ def resolve_queue_policy_selection(nics_cfg: dict[str, Any], rng: RandomManager)
     return {
         "selected_mode": selected_mode,
         "active_rule": {
-            "queue_policy_candidates": [str(item) for item in nics_cfg.get("queue_policy_candidates", [])],
+            "queue_policy_candidates": [str(item) for item in interfaces_cfg.get("queue_policy_candidates", [])],
         },
     }
 
 
 def _choose_queue_policy(
-    nics_cfg: dict[str, Any],
+    interfaces_cfg: dict[str, Any],
     rng: RandomManager,
     selection: dict[str, Any],
 ) -> str:
@@ -71,12 +71,12 @@ def _choose_queue_policy(
 
 
 def _resolve_queue_size_by_role(
-    nics_cfg: dict[str, Any],
+    interfaces_cfg: dict[str, Any],
     node_roles: dict[str, str],
     rng: RandomManager,
     selection: dict[str, Any],
 ) -> dict[str, int]:
-    queue_size_range = nics_cfg.get("queue_size_range_packets", [128, 2048])
+    queue_size_range = interfaces_cfg.get("queue_size_range_packets", [128, 2048])
     q_low, q_high = int(queue_size_range[0]), int(queue_size_range[1])
 
     role_queue_sizes: dict[str, int] = {}
@@ -88,32 +88,32 @@ def _resolve_queue_size_by_role(
     return role_queue_sizes
 
 
-def generate_nics(
+def generate_interfaces(
     channel_rows: list[dict[str, Any]],
     config: Any,
     rng: RandomManager,
     selection: dict[str, Any] | None = None,
     node_roles: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    nics_cfg = config.nics
-    queue_selection = selection or resolve_queue_policy_selection(nics_cfg, rng)
+    interfaces_cfg = config.interfaces
+    queue_selection = selection or resolve_queue_policy_selection(interfaces_cfg, rng)
 
-    ip_cidr = str(nics_cfg.get("ip_cidr", "10.0.0.0/8"))
-    ip_cidr_candidates = [str(item) for item in nics_cfg.get("ip_cidr_candidates", [])]
-    ip_cidr_probabilities = {str(key): float(value) for key, value in dict(nics_cfg.get("ip_cidr_probabilities", {})).items()}
-    link_subnet_prefix = int(nics_cfg.get("link_subnet_prefix", 30))
+    ip_cidr = str(interfaces_cfg.get("ip_cidr", "10.0.0.0/8"))
+    ip_cidr_candidates = [str(item) for item in interfaces_cfg.get("ip_cidr_candidates", [])]
+    ip_cidr_probabilities = {str(key): float(value) for key, value in dict(interfaces_cfg.get("ip_cidr_probabilities", {})).items()}
+    link_subnet_prefix = int(interfaces_cfg.get("link_subnet_prefix", 30))
     link_subnet_prefix_probabilities = {
         int(key): float(value)
-        for key, value in dict(nics_cfg.get("link_subnet_prefix_probabilities", {})).items()
+        for key, value in dict(interfaces_cfg.get("link_subnet_prefix_probabilities", {})).items()
     }
-    mac_cfg = dict(nics_cfg.get("mac", {}))
+    mac_cfg = dict(interfaces_cfg.get("mac", {}))
     locally_administered = bool(mac_cfg.get("locally_administered", True))
 
-    queue_size_range = nics_cfg.get("queue_size_range_packets", [128, 2048])
+    queue_size_range = interfaces_cfg.get("queue_size_range_packets", [128, 2048])
     q_low, q_high = int(queue_size_range[0]), int(queue_size_range[1])
-    role_queue_sizes = _resolve_queue_size_by_role(nics_cfg, node_roles or {}, rng, queue_selection) if node_roles else {}
+    role_queue_sizes = _resolve_queue_size_by_role(interfaces_cfg, node_roles or {}, rng, queue_selection) if node_roles else {}
 
-    nic_count = len(channel_rows) * 2
+    interface_count = len(channel_rows) * 2
     channel_interface_ips, ip_cidr_counts, channel_subnet_prefix_counts = generate_channel_interface_ips(
         ip_cidr,
         len(channel_rows),
@@ -123,14 +123,14 @@ def generate_nics(
         ip_cidr_probabilities=ip_cidr_probabilities,
         channel_subnet_prefix_probabilities=link_subnet_prefix_probabilities,
     )
-    macs = generate_unique_macs(nic_count, rng, locally_administered=locally_administered)
+    macs = generate_unique_macs(interface_count, rng, locally_administered=locally_administered)
     queue_selection.setdefault("active_rule", {})
     queue_selection["active_rule"]["ip_assignment"] = "per_channel_random_subnet"
     queue_selection["active_rule"]["ip_cidr_counts"] = dict(ip_cidr_counts)
     queue_selection["active_rule"]["channel_subnet_prefix_counts"] = dict(channel_subnet_prefix_counts)
 
     rows: list[dict[str, Any]] = []
-    nic_idx = 1
+    interface_idx = 1
     interface_counts_by_node: dict[str, int] = {}
 
     for channel_index, channel in enumerate(channel_rows):
@@ -145,17 +145,17 @@ def generate_nics(
                 queue_size_packets = rng.randint(q_low, q_high)
             rows.append(
                 {
-                    "nic_id": f"IF{nic_idx:04d}",
+                    "interface_id": f"IF{interface_idx:04d}",
                     "node": node,
                     "interface_index": interface_counts_by_node[node],
                     "channel_id": channel_id,
                     "ip": ip,
-                    "mac": macs[nic_idx - 1],
-                    "queue_policy": _choose_queue_policy(nics_cfg, rng, queue_selection),
+                    "mac": macs[interface_idx - 1],
+                    "queue_policy": _choose_queue_policy(interfaces_cfg, rng, queue_selection),
                     "queue_size_packets": queue_size_packets,
                     "state": "normal",
                 }
             )
-            nic_idx += 1
+            interface_idx += 1
 
     return rows

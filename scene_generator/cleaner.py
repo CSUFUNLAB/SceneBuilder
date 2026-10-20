@@ -11,7 +11,7 @@ _SCENE_MARKER_FILES = {
     "links.csv",
     "nodes.csv",
     "routing_matrix.csv",
-    "nics.csv",
+    "interfaces.csv",
     "traffic.jsonl",
 }
 _SCENE_GROUP_DIR_NAMES = {"origin", "evo", "opt"}

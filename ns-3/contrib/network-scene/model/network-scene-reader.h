@@ -26,7 +26,7 @@ struct NetworkSceneChannelRow
     std::string state;
 };
 
-struct NetworkSceneNicRow
+struct NetworkSceneInterfaceRow
 {
     std::string id;
     std::string node;
@@ -53,7 +53,7 @@ struct NetworkSceneData
 {
     std::vector<NetworkSceneNodeRow> nodes;
     std::vector<NetworkSceneChannelRow> channels;
-    std::vector<NetworkSceneNicRow> nics;
+    std::vector<NetworkSceneInterfaceRow> interfaces;
     std::vector<std::vector<int>> routingMatrix;
     std::vector<NetworkSceneTrafficPattern> traffic;
     std::vector<NetworkSceneEventRow> events;

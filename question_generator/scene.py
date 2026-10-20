@@ -27,7 +27,7 @@ class SceneData:
         bandwidth_constraints: list[tuple[str, str]] | None = None,
         flow_failure_causes: list[tuple[str, str]] | None = None,
         channel_unavailability_causes: list[tuple[str, str]] | None = None,
-        nic_unavailability_causes: list[tuple[str, str]] | None = None,
+        interface_unavailability_causes: list[tuple[str, str]] | None = None,
     ) -> None:
         self.scene_name = scene_name
         self.source_file = source_file
@@ -39,13 +39,25 @@ class SceneData:
         self.channel_unavailability_causes = tuple(
             channel_unavailability_causes or []
         )
-        self.nic_unavailability_causes = tuple(
-            nic_unavailability_causes or []
+        self.interface_unavailability_causes = tuple(
+            interface_unavailability_causes or []
         )
         self._evidence_cache: dict[str, object] = {}
         self._entities_by_type: dict[str, list[EntityRecord]] = {}
         self._entities_by_key: dict[tuple[str, str], EntityRecord] = {}
         for entity in entities:
+            if entity.entity_type == "interface":
+                for name in ("node", "channel"):
+                    values = entity.relations.get(name)
+                    if (
+                        not isinstance(values, list)
+                        or any(not isinstance(value, str) or not value.strip() for value in values)
+                        or len(values) != len(set(values))
+                    ):
+                        raise ValueError(
+                            f"Interface {entity.entity_id} relations.{name} must be "
+                            f"a list of unique entity IDs in {source_file}."
+                        )
             key = (entity.entity_type, entity.entity_id)
             if key in self._entities_by_key:
                 raise ValueError(f"Duplicate entity {entity.entity_type}:{entity.entity_id} in {source_file}")
@@ -59,13 +71,13 @@ class SceneData:
         self._channels_by_node_pair: dict[tuple[str, str], list[EntityRecord]] = {}
         for channel in self.entities("channel"):
             endpoint_nodes: list[str] = []
-            for nic_id in channel.relations.get("connects", []):
-                nic = self.entity("nic", str(nic_id))
-                if nic is None:
+            for interface_id in channel.relations.get("connects", []):
+                interface = self.entity("interface", str(interface_id))
+                if interface is None:
                     continue
-                node_id = str(nic.relations.get("node", ""))
-                if node_id and node_id not in endpoint_nodes:
-                    endpoint_nodes.append(node_id)
+                for node_id in interface.relations["node"]:
+                    if node_id not in endpoint_nodes:
+                        endpoint_nodes.append(node_id)
             self._channel_nodes[channel.entity_id] = tuple(endpoint_nodes)
             if len(endpoint_nodes) == 2:
                 pair = tuple(sorted(endpoint_nodes))
@@ -76,7 +88,7 @@ class SceneData:
 
         self._flow_scope_ids: dict[str, set[str]] = {
             "node": set(),
-            "nic": set(),
+            "interface": set(),
             "channel": set(),
             "data_flow": set(),
         }
@@ -91,8 +103,8 @@ class SceneData:
             for channel in self.channels_on_flow_path(flow):
                 self._flow_scope_ids["channel"].add(channel.entity_id)
                 self._flow_scope_ids["node"].update(self.channel_endpoint_nodes(channel))
-                for nic_id in channel.relations.get("connects", []):
-                    self._flow_scope_ids["nic"].add(str(nic_id))
+                for interface_id in channel.relations.get("connects", []):
+                    self._flow_scope_ids["interface"].add(str(interface_id))
 
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "SceneData":
@@ -122,7 +134,7 @@ class SceneData:
         bandwidth_constraints: list[tuple[str, str]] = []
         flow_failure_causes: list[tuple[str, str]] = []
         channel_unavailability_causes: list[tuple[str, str]] = []
-        nic_unavailability_causes: list[tuple[str, str]] = []
+        interface_unavailability_causes: list[tuple[str, str]] = []
         if label_file.is_file():
             with label_file.open("r", encoding="utf-8-sig") as handle:
                 for line_number, raw_line in enumerate(handle, start=1):
@@ -136,7 +148,7 @@ class SceneData:
                     label_type = str(label_row.get("label_type", ""))
                     if label_type == "state" or label_type in {
                         "node_state",
-                        "nic_state",
+                        "interface_state",
                         "channel_state",
                         "data_flow_state",
                     }:
@@ -235,7 +247,7 @@ class SceneData:
                             )
                     elif label_type in {
                         "channel_unavailability_cause",
-                        "nic_unavailability_cause",
+                        "interface_unavailability_cause",
                     }:
                         values = label_row.get("label", [])
                         if not isinstance(values, list):
@@ -246,7 +258,7 @@ class SceneData:
                         target = (
                             channel_unavailability_causes
                             if label_type == "channel_unavailability_cause"
-                            else nic_unavailability_causes
+                            else interface_unavailability_causes
                         )
                         for value in values:
                             if (
@@ -303,7 +315,7 @@ class SceneData:
             bandwidth_constraints=bandwidth_constraints,
             flow_failure_causes=flow_failure_causes,
             channel_unavailability_causes=channel_unavailability_causes,
-            nic_unavailability_causes=nic_unavailability_causes,
+            interface_unavailability_causes=interface_unavailability_causes,
         )
 
     def entities(self, entity_type: str) -> list[EntityRecord]:

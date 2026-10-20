@@ -26,7 +26,7 @@ _ANSWER_TYPES = {
     "route_entries",
     "channel_capacity",
 }
-_EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
+_EVENT_ENTITY_TYPES = {"node", "channel", "interface", "data_flow"}
 _TEMPLATE_ID_PREFIXES = {
     "analysis": "TA",
     "evolution": "TE",

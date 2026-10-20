@@ -163,12 +163,12 @@ NetworkSceneHelper::WriteResults() const
     {
         throw std::runtime_error("Cannot open label output file: " + labelPath.string());
     }
-    std::vector<std::string> nicStateLabels;
+    std::vector<std::string> interfaceStateLabels;
     std::vector<std::string> nodeStateLabels;
     std::vector<std::string> channelStateLabels;
     std::vector<std::string> dataFlowStateLabels;
     std::vector<std::string> channelUnavailabilityCauseLabels;
-    std::vector<std::string> nicUnavailabilityCauseLabels;
+    std::vector<std::string> interfaceUnavailabilityCauseLabels;
     std::map<std::string, std::string> nodeStateById;
     std::map<std::string, std::string> channelStateById;
     std::map<std::string, std::string> flowStateById;
@@ -237,7 +237,7 @@ NetworkSceneHelper::WriteResults() const
         {
             actionsByChannel[event.entityId].push_back(eventActionJson(event));
         }
-        else if (event.entityType == "nic" || event.entityType == "interface")
+        else if (event.entityType == "interface")
         {
             actionsByInterface[event.entityId].push_back(eventActionJson(event));
         }
@@ -461,7 +461,7 @@ NetworkSceneHelper::WriteResults() const
         {
             state = "saturated";
         }
-        output << "{\"entity_type\":\"nic\",\"entity_id\":"
+        output << "{\"entity_type\":\"interface\",\"entity_id\":"
                << JsonString(outputInterfaceIdById[iface.id])
                << ",\"properties\":{\"interface_index\":" << iface.interfaceIndex
                << ",\"rx_rate_mbps\":" << rxRateMbps
@@ -472,15 +472,15 @@ NetworkSceneHelper::WriteResults() const
                << ",\"rx_packets\":" << counters.rxPackets
                << ",\"tx_packets\":" << counters.txPackets
                << ",\"tx_drop_packets\":" << counters.txDropPackets << "}"
-               << ",\"relations\":{\"node\":" << JsonString(iface.node)
-               << ",\"channel\":" << JsonString(iface.channelId) << "}";
+               << ",\"relations\":{\"node\":" << JsonStringArray({iface.node})
+               << ",\"channel\":" << JsonStringArray({iface.channelId}) << "}";
         auto actionIt = actionsByInterface.find(iface.id);
         if (actionIt != actionsByInterface.end())
         {
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
-        nicStateLabels.push_back(
+        interfaceStateLabels.push_back(
             "{\"entity_id\":" + JsonString(outputInterfaceIdById[iface.id]) +
             ",\"label\":" + JsonString(state) + "}");
         if (state == "disabled")
@@ -492,7 +492,7 @@ NetworkSceneHelper::WriteResults() const
                     channelUnavailabilityCause(channelIt->second);
                 if (!cause.empty())
                 {
-                    nicUnavailabilityCauseLabels.push_back(
+                    interfaceUnavailabilityCauseLabels.push_back(
                         "{\"entity_id\":" +
                         JsonString(outputInterfaceIdById[iface.id]) +
                         ",\"label\":" + JsonString(cause) + "}");
@@ -860,8 +860,8 @@ NetworkSceneHelper::WriteResults() const
 
     labelOutput << "{\"label_type\":\"node_state\",\"label\":"
                 << JsonRawArray(nodeStateLabels) << "}\n";
-    labelOutput << "{\"label_type\":\"nic_state\",\"label\":"
-                << JsonRawArray(nicStateLabels) << "}\n";
+    labelOutput << "{\"label_type\":\"interface_state\",\"label\":"
+                << JsonRawArray(interfaceStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"channel_state\",\"label\":"
                 << JsonRawArray(channelStateLabels) << "}\n";
     labelOutput << "{\"label_type\":\"data_flow_state\",\"label\":"
@@ -871,10 +871,10 @@ NetworkSceneHelper::WriteResults() const
         labelOutput << "{\"label_type\":\"channel_unavailability_cause\",\"label\":"
                     << JsonRawArray(channelUnavailabilityCauseLabels) << "}\n";
     }
-    if (!nicUnavailabilityCauseLabels.empty())
+    if (!interfaceUnavailabilityCauseLabels.empty())
     {
-        labelOutput << "{\"label_type\":\"nic_unavailability_cause\",\"label\":"
-                    << JsonRawArray(nicUnavailabilityCauseLabels) << "}\n";
+        labelOutput << "{\"label_type\":\"interface_unavailability_cause\",\"label\":"
+                    << JsonRawArray(interfaceUnavailabilityCauseLabels) << "}\n";
     }
     if (!bottleneckLabels.empty())
     {

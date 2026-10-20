@@ -45,7 +45,7 @@ SCENE_NAME_PATTERN = re.compile(
 SCENE_INPUT_FILES = (
     "nodes.csv",
     "channels.csv",
-    "nics.csv",
+    "interfaces.csv",
     "routing_matrix.csv",
     "traffic.jsonl",
     "metadata.json",
@@ -86,16 +86,16 @@ _QUESTION_RULES = {
         "channel_recovery", "data_flow", "numeric", "average_delay_ms"
     ),
     "TE0009": EvolutionQuestionRule(
-        "nic_failure", "data_flow", "numeric", "throughput_mbps"
+        "interface_failure", "data_flow", "numeric", "throughput_mbps"
     ),
     "TE0010": EvolutionQuestionRule(
-        "nic_failure", "data_flow", "numeric", "packet_loss_rate"
+        "interface_failure", "data_flow", "numeric", "packet_loss_rate"
     ),
     "TE0011": EvolutionQuestionRule(
-        "nic_recovery", "data_flow", "numeric", "throughput_mbps"
+        "interface_recovery", "data_flow", "numeric", "throughput_mbps"
     ),
     "TE0012": EvolutionQuestionRule(
-        "nic_recovery", "data_flow", "numeric", "average_delay_ms"
+        "interface_recovery", "data_flow", "numeric", "average_delay_ms"
     ),
     "TE0013": EvolutionQuestionRule(
         "flow_load_change",
@@ -118,10 +118,10 @@ _QUESTION_RULES = {
         "flow_load_change", "channel", "saturation_recovery"
     ),
     "TE0020": EvolutionQuestionRule(
-        "flow_load_change", "nic", "saturation_outcome"
+        "flow_load_change", "interface", "saturation_outcome"
     ),
     "TE0021": EvolutionQuestionRule(
-        "flow_load_change", "nic", "saturation_recovery"
+        "flow_load_change", "interface", "saturation_recovery"
     ),
     "TE0022": EvolutionQuestionRule(
         "flow_addition", "data_flow", "after_status"
@@ -136,7 +136,7 @@ _QUESTION_RULES = {
         "flow_addition", "channel", "saturation_outcome"
     ),
     "TE0025": EvolutionQuestionRule(
-        "flow_addition", "nic", "saturation_outcome"
+        "flow_addition", "interface", "saturation_outcome"
     ),
     "TE0026": EvolutionQuestionRule(
         "node_failure", "node", "state_prediction"
@@ -145,7 +145,7 @@ _QUESTION_RULES = {
         "node_failure", "channel", "state_prediction"
     ),
     "TE0028": EvolutionQuestionRule(
-        "node_failure", "nic", "state_prediction"
+        "node_failure", "interface", "state_prediction"
     ),
     "TE0029": EvolutionQuestionRule(
         "node_failure", "data_flow", "state_prediction"
@@ -157,7 +157,7 @@ _QUESTION_RULES = {
         "node_recovery", "channel", "state_prediction"
     ),
     "TE0032": EvolutionQuestionRule(
-        "node_recovery", "nic", "state_prediction"
+        "node_recovery", "interface", "state_prediction"
     ),
     "TE0033": EvolutionQuestionRule(
         "node_recovery", "data_flow", "state_prediction"
@@ -169,7 +169,7 @@ _QUESTION_RULES = {
         "channel_failure", "channel", "state_prediction"
     ),
     "TE0036": EvolutionQuestionRule(
-        "channel_failure", "nic", "state_prediction"
+        "channel_failure", "interface", "state_prediction"
     ),
     "TE0037": EvolutionQuestionRule(
         "channel_failure", "data_flow", "state_prediction"
@@ -181,34 +181,34 @@ _QUESTION_RULES = {
         "channel_recovery", "channel", "state_prediction"
     ),
     "TE0040": EvolutionQuestionRule(
-        "channel_recovery", "nic", "state_prediction"
+        "channel_recovery", "interface", "state_prediction"
     ),
     "TE0041": EvolutionQuestionRule(
         "channel_recovery", "data_flow", "state_prediction"
     ),
     "TE0042": EvolutionQuestionRule(
-        "nic_failure", "node", "state_prediction"
+        "interface_failure", "node", "state_prediction"
     ),
     "TE0043": EvolutionQuestionRule(
-        "nic_failure", "channel", "state_prediction"
+        "interface_failure", "channel", "state_prediction"
     ),
     "TE0044": EvolutionQuestionRule(
-        "nic_failure", "nic", "state_prediction"
+        "interface_failure", "interface", "state_prediction"
     ),
     "TE0045": EvolutionQuestionRule(
-        "nic_failure", "data_flow", "state_prediction"
+        "interface_failure", "data_flow", "state_prediction"
     ),
     "TE0046": EvolutionQuestionRule(
-        "nic_recovery", "node", "state_prediction"
+        "interface_recovery", "node", "state_prediction"
     ),
     "TE0047": EvolutionQuestionRule(
-        "nic_recovery", "channel", "state_prediction"
+        "interface_recovery", "channel", "state_prediction"
     ),
     "TE0048": EvolutionQuestionRule(
-        "nic_recovery", "nic", "state_prediction"
+        "interface_recovery", "interface", "state_prediction"
     ),
     "TE0049": EvolutionQuestionRule(
-        "nic_recovery", "data_flow", "state_prediction"
+        "interface_recovery", "data_flow", "state_prediction"
     ),
     "TE0050": EvolutionQuestionRule(
         "flow_load_change", "node", "state_prediction"
@@ -217,7 +217,7 @@ _QUESTION_RULES = {
         "flow_load_change", "channel", "state_prediction"
     ),
     "TE0052": EvolutionQuestionRule(
-        "flow_load_change", "nic", "state_prediction"
+        "flow_load_change", "interface", "state_prediction"
     ),
     "TE0053": EvolutionQuestionRule(
         "flow_load_change", "data_flow", "state_prediction"
@@ -229,7 +229,7 @@ _QUESTION_RULES = {
         "flow_addition", "channel", "state_prediction"
     ),
     "TE0056": EvolutionQuestionRule(
-        "flow_addition", "nic", "state_prediction"
+        "flow_addition", "interface", "state_prediction"
     ),
     "TE0057": EvolutionQuestionRule(
         "flow_addition", "data_flow", "state_prediction"
@@ -258,7 +258,7 @@ _EXPECTED_ANSWER_VALUES = {
 _ENTITY_STATE_VALUES = {
     "node": ("normal", "disabled"),
     "channel": ("normal", "disabled", "degraded", "saturated"),
-    "nic": ("normal", "disabled", "saturated"),
+    "interface": ("normal", "disabled", "saturated"),
     "data_flow": ("normal", "unstable", "degraded", "failed"),
 }
 _EVIDENCE_BACKED_STATE_TARGET = "evidence_backed_state"
@@ -269,11 +269,11 @@ class EvolutionSourceScene:
     scene_dir: Path
     nodes: tuple[dict[str, str], ...]
     channels: tuple[dict[str, str], ...]
-    nics: tuple[dict[str, str], ...]
+    interfaces: tuple[dict[str, str], ...]
     traffic: tuple[dict[str, Any], ...]
     routing_matrix: tuple[tuple[int, ...], ...]
     physical_faults: tuple[dict[str, str], ...]
-    public_nic_id_by_raw_id: dict[str, str]
+    public_interface_id_by_raw_id: dict[str, str]
     saturated_flow_ids: tuple[str, ...]
     normal_flow_ids: tuple[str, ...]
 
@@ -1012,16 +1012,16 @@ def _choose_event_entity(
             for row in source.channels
             if str(row.get("state", "normal")) == "normal"
         ]
-    elif spec.entity_type == "nic":
+    elif spec.entity_type == "interface":
         candidates = [
             (
-                source.public_nic_id_by_raw_id[str(row["nic_id"])],
-                str(row["nic_id"]),
+                source.public_interface_id_by_raw_id[str(row["interface_id"])],
+                str(row["interface_id"]),
                 str(row.get("state", "normal")),
             )
-            for row in source.nics
+            for row in source.interfaces
             if str(row.get("state", "normal")) == "normal"
-            and str(row["nic_id"]) in source.public_nic_id_by_raw_id
+            and str(row["interface_id"]) in source.public_interface_id_by_raw_id
         ]
     else:
         allowed_flow_ids = (
@@ -1061,12 +1061,10 @@ def _flow_touches_entity(
             str(channel_id)
             for channel_id in flow.relations.get("path_channels", [])
         }
-    nic = scene.entity("nic", entity_id)
-    return nic is not None and _flow_touches_entity(
-        scene,
-        flow,
-        "channel",
-        str(nic.relations.get("channel", "")),
+    interface = scene.entity("interface", entity_id)
+    return interface is not None and any(
+        _flow_touches_entity(scene, flow, "channel", channel_id)
+        for channel_id in interface.relations["channel"]
     )
 
 
@@ -1074,7 +1072,7 @@ def _event_placeholder(entity_type: str) -> str:
     return {
         "node": "event_node_id",
         "channel": "event_channel_id",
-        "nic": "event_nic_id",
+        "interface": "event_interface_id",
         "data_flow": "event_data_flow_id",
     }[entity_type]
 
@@ -1083,7 +1081,7 @@ def _target_placeholder(entity_type: str) -> str:
     return {
         "node": "target_node_id",
         "channel": "target_channel_id",
-        "nic": "target_nic_id",
+        "interface": "target_interface_id",
         "data_flow": "target_data_flow_id",
     }[entity_type]
 
@@ -1094,7 +1092,7 @@ def _load_source_scene(
 ) -> EvolutionSourceScene:
     nodes, _ = _read_csv(scene_dir / "nodes.csv")
     channels, _ = _read_csv(scene_dir / "channels.csv")
-    nics, _ = _read_csv(scene_dir / "nics.csv")
+    interfaces, _ = _read_csv(scene_dir / "interfaces.csv")
     traffic = _read_jsonl(scene_dir / "traffic.jsonl")
     routing_matrix = _read_routing_matrix(
         scene_dir / "routing_matrix.csv",
@@ -1108,15 +1106,15 @@ def _load_source_scene(
             twin.entity("channel", str(channel_id))
             for channel_id in flow.relations.get("path_channels", [])
         ]
-        path_nics = [
-            twin.entity("nic", str(nic_id))
+        path_interfaces = [
+            twin.entity("interface", str(interface_id))
             for channel in path_channels
             if channel is not None
-            for nic_id in channel.relations.get("connects", [])
+            for interface_id in channel.relations.get("connects", [])
         ]
         is_saturated = any(
             entity is not None and entity.label == "saturated"
-            for entity in (*path_channels, *path_nics)
+            for entity in (*path_channels, *path_interfaces)
         )
         if is_saturated:
             saturated_flow_ids.append(flow.entity_id)
@@ -1124,8 +1122,8 @@ def _load_source_scene(
             normal_flow_ids.append(flow.entity_id)
 
     public_by_raw: dict[str, str] = {}
-    for row in nics:
-        raw_id = str(row["nic_id"])
+    for row in interfaces:
+        raw_id = str(row["interface_id"])
         node_id = str(row["node"])
         interface_index = int(float(row["interface_index"]))
         public_id = f"{node_id}:IF{interface_index:06d}"
@@ -1154,24 +1152,24 @@ def _load_source_scene(
     )
     faults.extend(
         {
-            "entity_type": "nic",
-            "entity_id": public_by_raw.get(str(row["nic_id"]), ""),
-            "input_entity_id": str(row["nic_id"]),
+            "entity_type": "interface",
+            "entity_id": public_by_raw.get(str(row["interface_id"]), ""),
+            "input_entity_id": str(row["interface_id"]),
             "state": str(row.get("state", "normal")),
         }
-        for row in nics
+        for row in interfaces
         if str(row.get("state", "normal")) == "disabled"
-        and public_by_raw.get(str(row["nic_id"]), "")
+        and public_by_raw.get(str(row["interface_id"]), "")
     )
     return EvolutionSourceScene(
         scene_dir=scene_dir,
         nodes=tuple(nodes),
         channels=tuple(channels),
-        nics=tuple(nics),
+        interfaces=tuple(interfaces),
         traffic=tuple(traffic),
         routing_matrix=routing_matrix,
         physical_faults=tuple(faults),
-        public_nic_id_by_raw_id=public_by_raw,
+        public_interface_id_by_raw_id=public_by_raw,
         saturated_flow_ids=tuple(saturated_flow_ids),
         normal_flow_ids=tuple(normal_flow_ids),
     )
@@ -1195,7 +1193,7 @@ def _create_evolved_scene(
 
     nodes, node_fields = _read_csv(destination / "nodes.csv")
     channels, channel_fields = _read_csv(destination / "channels.csv")
-    nics, nic_fields = _read_csv(destination / "nics.csv")
+    interfaces, interface_fields = _read_csv(destination / "interfaces.csv")
     traffic = _read_jsonl(destination / "traffic.jsonl")
     entity_type = str(event["entity_type"])
     raw_id = str(event["input_entity_id"])
@@ -1210,8 +1208,8 @@ def _create_evolved_scene(
         row["state"] = "disabled" if change == "failure" else "normal"
         row["capacity_multiplier"] = "1.0"
         event["after_state"] = row["state"]
-    elif entity_type == "nic":
-        row = _find_row(nics, "nic_id", raw_id)
+    elif entity_type == "interface":
+        row = _find_row(interfaces, "interface_id", raw_id)
         row["state"] = "disabled" if change == "failure" else "normal"
         event["after_state"] = row["state"]
     else:
@@ -1241,7 +1239,7 @@ def _create_evolved_scene(
 
     _write_csv(destination / "nodes.csv", node_fields, nodes)
     _write_csv(destination / "channels.csv", channel_fields, channels)
-    _write_csv(destination / "nics.csv", nic_fields, nics)
+    _write_csv(destination / "interfaces.csv", interface_fields, interfaces)
     _write_jsonl(destination / "traffic.jsonl", traffic)
     _update_evolution_metadata(
         destination / "metadata.json",
@@ -1253,7 +1251,7 @@ def _create_evolved_scene(
         event,
         nodes,
         channels,
-        nics,
+        interfaces,
         traffic,
     )
 
@@ -1268,7 +1266,7 @@ def _update_evolution_metadata(
     event: dict[str, Any],
     nodes: list[dict[str, str]],
     channels: list[dict[str, str]],
-    nics: list[dict[str, str]],
+    interfaces: list[dict[str, str]],
     traffic: list[dict[str, Any]],
 ) -> None:
     with path.open("r", encoding="utf-8-sig") as handle:
@@ -1309,11 +1307,11 @@ def _update_evolution_metadata(
     )
     physical_faults.extend(
         {
-            "entity_type": "nic",
-            "entity_id": str(row["nic_id"]),
+            "entity_type": "interface",
+            "entity_id": str(row["interface_id"]),
             "state": "disabled",
         }
-        for row in nics
+        for row in interfaces
         if str(row.get("state", "normal")) == "disabled"
     )
     fault_generation = metadata.setdefault("generation", {}).setdefault(
@@ -1508,7 +1506,7 @@ def _event_has_state_evidence(
             )
             is not None
             and before.entity(
-                "nic",
+                "interface",
                 str(route.get("egress_interface", "")),
             )
             is not None

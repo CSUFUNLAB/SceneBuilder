@@ -10,7 +10,7 @@ from .config import load_config
 from .generators.channels import CHANNEL_FIELDS, generate_channels
 from .generators.events import generate_events
 from .generators.faults import apply_scene_faults
-from .generators.nics import NIC_FIELDS, generate_nics, resolve_queue_policy_selection
+from .generators.interfaces import INTERFACE_FIELDS, generate_interfaces, resolve_queue_policy_selection
 from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
 from .generators.routing import generate_routing_matrix
 from .generators.traffic import apply_hard_traffic_constraints, generate_traffic
@@ -90,16 +90,16 @@ def _build_interface_routing_rows(
     graph: nx.Graph,
     route_map: dict[tuple[str, str], str],
     channel_rows: list[dict[str, object]],
-    nics_rows: list[dict[str, object]],
+    interfaces_rows: list[dict[str, object]],
 ) -> list[list[int]]:
     channels_by_id = {str(row["channel_id"]): row for row in channel_rows}
     interface_by_hop: dict[tuple[str, str], int] = {}
 
-    for nic in nics_rows:
-        channel = channels_by_id.get(str(nic["channel_id"]))
+    for interface in interfaces_rows:
+        channel = channels_by_id.get(str(interface["channel_id"]))
         if channel is None:
             continue
-        node = str(nic["node"])
+        node = str(interface["node"])
         src = str(channel["src"])
         dst = str(channel["dst"])
         if node == src:
@@ -108,7 +108,7 @@ def _build_interface_routing_rows(
             neighbor = src
         else:
             continue
-        interface_by_hop[(node, neighbor)] = int(nic["interface_index"])
+        interface_by_hop[(node, neighbor)] = int(interface["interface_index"])
 
     rows: list[list[int]] = []
     nodes = ordered_nodes(graph)
@@ -144,8 +144,8 @@ def _build_metadata(
     graph: nx.Graph,
     channel_rows: list[dict[str, object]],
     nodes_rows: list[dict[str, object]],
-    nics_rows: list[dict[str, object]],
-    nics_metadata: dict[str, object],
+    interfaces_rows: list[dict[str, object]],
+    interfaces_metadata: dict[str, object],
     fault_metadata: dict[str, object],
     traffic_rows: list[dict[str, object]],
     traffic_metadata: dict[str, object],
@@ -157,7 +157,7 @@ def _build_metadata(
         "channels.csv",
         "nodes.csv",
         "routing_matrix.csv",
-        "nics.csv",
+        "interfaces.csv",
         "traffic.jsonl",
     ]
     if event_rows:
@@ -182,9 +182,9 @@ def _build_metadata(
             "treat_as_undirected": bool(config.link_generation.get("treat_as_undirected", True)),
             "derived_channel_role": dict(config.link_generation.get("role_based_random", {}).get("derived_link_role", {})),
         },
-        "nics": {
-            "queue_policy_mode": str(nics_metadata.get("selected_mode", "mixed")),
-            "active_rule": dict(nics_metadata.get("active_rule", {})),
+        "interfaces": {
+            "queue_policy_mode": str(interfaces_metadata.get("selected_mode", "mixed")),
+            "active_rule": dict(interfaces_metadata.get("active_rule", {})),
         },
         "fault_generation": {
             "scenario_probabilities": dict(config.fault_generation.get("scenario_probabilities", {})),
@@ -194,8 +194,8 @@ def _build_metadata(
             "channel_degradation_multipliers": list(
                 config.fault_generation.get("channel_degradation_multipliers", [])
             ),
-            "nic_state_probabilities": dict(
-                config.fault_generation.get("nic_state_probabilities", {})
+            "interface_state_probabilities": dict(
+                config.fault_generation.get("interface_state_probabilities", {})
             ),
             "selected_scenario": str(fault_metadata.get("selected_scenario", "normal")),
             "fault_count": int(fault_metadata.get("fault_count", 0)),
@@ -208,11 +208,11 @@ def _build_metadata(
     summary = {
         "node_count": int(len(nodes_rows)),
         "channel_count": int(len(channel_rows)),
-        "nic_count": int(len(nics_rows)),
+        "interface_count": int(len(interfaces_rows)),
         "flow_count": int(len(traffic_rows)),
         "connected_components": int(nx.number_connected_components(undirected)),
         "channel_type_counts": _sorted_count_map(channel_rows, "channel_type"),
-        "queue_policy_counts": _sorted_count_map(nics_rows, "queue_policy"),
+        "queue_policy_counts": _sorted_count_map(interfaces_rows, "queue_policy"),
         "flow_feature_counts": _sorted_count_map(traffic_rows, "feature_model"),
         "fault_scenario": str(fault_metadata.get("selected_scenario", "normal")),
         "fault_count": int(fault_metadata.get("fault_count", 0)),
@@ -264,10 +264,10 @@ def _generate_single_scene(
     graph = _build_internal_id_graph(working_graph)
 
     node_roles = infer_node_roles(graph, getattr(config, "nodes", {}), rng)
-    nics_metadata = resolve_queue_policy_selection(config.nics, rng)
+    interfaces_metadata = resolve_queue_policy_selection(config.interfaces, rng)
     channel_rows = generate_channels(graph, config, rng, node_roles=node_roles)
     nodes_rows, node_id_map = generate_nodes(graph, config, rng, node_roles=node_roles)
-    nics_rows = generate_nics(channel_rows, config, rng, selection=nics_metadata, node_roles=node_roles)
+    interfaces_rows = generate_interfaces(channel_rows, config, rng, selection=interfaces_metadata, node_roles=node_roles)
     routing_rng = rng.fork("initial_routing")
     _, routing_map = generate_routing_matrix(
         graph,
@@ -279,13 +279,13 @@ def _generate_single_scene(
         graph,
         routing_map,
         channel_rows,
-        nics_rows,
+        interfaces_rows,
     )
     fault_rng = rng.fork("fault_generation")
     fault_metadata = apply_scene_faults(
         nodes_rows,
         channel_rows,
-        nics_rows,
+        interfaces_rows,
         config.fault_generation,
         fault_rng,
     )
@@ -301,14 +301,14 @@ def _generate_single_scene(
         event_rows = generate_events(
             nodes_rows,
             channel_rows,
-            nics_rows,
+            interfaces_rows,
             traffic_rows,
             config,
             rng,
         )
 
     channel_rows = _convert_rows_node_fields_to_public_ids(channel_rows, ["src", "dst"])
-    nics_rows = _convert_rows_node_fields_to_public_ids(nics_rows, ["node"])
+    interfaces_rows = _convert_rows_node_fields_to_public_ids(interfaces_rows, ["node"])
     traffic_rows = _convert_rows_node_fields_to_public_ids(traffic_rows, ["src", "dst"])
     scene_dir = _build_scene_dir(
         config,
@@ -327,7 +327,7 @@ def _generate_single_scene(
     write_csv(scene_dir / "channels.csv", CHANNEL_FIELDS, channel_rows)
     write_csv(scene_dir / "nodes.csv", NODE_FIELDS, nodes_rows)
     write_matrix_csv(scene_dir / "routing_matrix.csv", routing_rows)
-    write_csv(scene_dir / "nics.csv", NIC_FIELDS, nics_rows)
+    write_csv(scene_dir / "interfaces.csv", INTERFACE_FIELDS, interfaces_rows)
     write_jsonl(scene_dir / "traffic.jsonl", traffic_rows)
     if event_rows:
         write_jsonl(scene_dir / "events.jsonl", event_rows)
@@ -342,8 +342,8 @@ def _generate_single_scene(
             graph=graph,
             channel_rows=channel_rows,
             nodes_rows=nodes_rows,
-            nics_rows=nics_rows,
-            nics_metadata=nics_metadata,
+            interfaces_rows=interfaces_rows,
+            interfaces_metadata=interfaces_metadata,
             fault_metadata=fault_metadata,
             traffic_rows=traffic_rows,
             traffic_metadata=traffic_metadata,

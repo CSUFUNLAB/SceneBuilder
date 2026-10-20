@@ -13,8 +13,8 @@ EVOLUTION_EVENT_SEMANTICS = {
     "node_recovery": ("node", "recovery"),
     "channel_failure": ("channel", "failure"),
     "channel_recovery": ("channel", "recovery"),
-    "nic_failure": ("nic", "failure"),
-    "nic_recovery": ("nic", "recovery"),
+    "interface_failure": ("interface", "failure"),
+    "interface_recovery": ("interface", "recovery"),
     "flow_load_change": ("data_flow", "load_change"),
     "flow_addition": ("data_flow", "addition"),
 }

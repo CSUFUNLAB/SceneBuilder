@@ -11,7 +11,7 @@ EVENT_FIELDS = ["event_id", "time", "entity_type", "entity_id", "event_type", "r
 def _event_candidates(
     nodes_rows: list[dict[str, Any]],
     channel_rows: list[dict[str, Any]],
-    nics_rows: list[dict[str, Any]],
+    interfaces_rows: list[dict[str, Any]],
     traffic_rows: list[dict[str, Any]],
 ) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
@@ -19,8 +19,8 @@ def _event_candidates(
         candidates.append({"entity_type": "node", "entity_id": str(row["node_id"])})
     for row in channel_rows:
         candidates.append({"entity_type": "channel", "entity_id": str(row["channel_id"])})
-    for row in nics_rows:
-        candidates.append({"entity_type": "nic", "entity_id": str(row["nic_id"])})
+    for row in interfaces_rows:
+        candidates.append({"entity_type": "interface", "entity_id": str(row["interface_id"])})
     for row in traffic_rows:
         candidates.append({"entity_type": "data_flow", "entity_id": str(row["flow_id"])})
     return candidates
@@ -43,7 +43,7 @@ def _flow_rate_multiplier(events_cfg: dict[str, Any], event_type: str, rng: Rand
 def generate_events(
     nodes_rows: list[dict[str, Any]],
     channel_rows: list[dict[str, Any]],
-    nics_rows: list[dict[str, Any]],
+    interfaces_rows: list[dict[str, Any]],
     traffic_rows: list[dict[str, Any]],
     config: Any,
     rng: RandomManager,
@@ -56,7 +56,7 @@ def generate_events(
     if count <= 0:
         return []
 
-    candidates = _event_candidates(nodes_rows, channel_rows, nics_rows, traffic_rows)
+    candidates = _event_candidates(nodes_rows, channel_rows, interfaces_rows, traffic_rows)
     if not candidates:
         return []
 

@@ -16,7 +16,7 @@ _DEFAULT_CHANNEL_STATE_PROBABILITIES = {
     "degraded": 0.5,
 }
 _DEFAULT_CHANNEL_DEGRADATION_MULTIPLIERS = [0.5, 0.2, 0.1]
-_DEFAULT_NIC_STATE_PROBABILITIES = {
+_DEFAULT_INTERFACE_STATE_PROBABILITIES = {
     "disabled": 1.0,
 }
 
@@ -24,14 +24,14 @@ _DEFAULT_NIC_STATE_PROBABILITIES = {
 def apply_scene_faults(
     node_rows: list[dict[str, Any]],
     channel_rows: list[dict[str, Any]],
-    nic_rows: list[dict[str, Any]],
+    interface_rows: list[dict[str, Any]],
     fault_config: dict[str, Any],
     rng: RandomManager,
 ) -> dict[str, Any]:
     entity_groups = (
         ("node", "node_id", node_rows),
         ("channel", "channel_id", channel_rows),
-        ("nic", "nic_id", nic_rows),
+        ("interface", "interface_id", interface_rows),
     )
     candidates: list[tuple[str, str, dict[str, Any]]] = []
     for entity_type, id_field, rows in entity_groups:
@@ -61,8 +61,8 @@ def apply_scene_faults(
             _DEFAULT_CHANNEL_DEGRADATION_MULTIPLIERS,
         )
     ]
-    nic_state_probabilities = dict(
-        fault_config.get("nic_state_probabilities", _DEFAULT_NIC_STATE_PROBABILITIES)
+    interface_state_probabilities = dict(
+        fault_config.get("interface_state_probabilities", _DEFAULT_INTERFACE_STATE_PROBABILITIES)
     )
 
     faulted_entities: list[dict[str, Any]] = []
@@ -71,8 +71,8 @@ def apply_scene_faults(
             row["state"] = weighted_pick(channel_state_probabilities, "disabled", rng)
             if row["state"] == "degraded":
                 row["capacity_multiplier"] = float(rng.choice(channel_degradation_multipliers))
-        elif entity_type == "nic":
-            row["state"] = weighted_pick(nic_state_probabilities, "disabled", rng)
+        elif entity_type == "interface":
+            row["state"] = weighted_pick(interface_state_probabilities, "disabled", rng)
         else:
             row["state"] = "disabled"
 

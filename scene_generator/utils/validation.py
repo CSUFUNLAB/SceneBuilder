@@ -17,12 +17,12 @@ ALLOWED_FLOW_SELECTION_MODES = {"mixed", "single"}
 ALLOWED_FAULT_SCENARIOS = {"normal", "single", "double"}
 ALLOWED_CHANNEL_FAULT_STATES = {"disabled", "degraded"}
 ALLOWED_CHANNEL_DEGRADATION_MULTIPLIERS = {0.5, 0.2, 0.1}
-ALLOWED_NIC_FAULT_STATES = {"disabled"}
-ALLOWED_EVENT_ENTITY_TYPES = {"node", "channel", "nic", "data_flow"}
+ALLOWED_INTERFACE_FAULT_STATES = {"disabled"}
+ALLOWED_EVENT_ENTITY_TYPES = {"node", "channel", "interface", "data_flow"}
 ALLOWED_EVENT_TYPES = {
     "node": {"fault", "recovery"},
     "channel": {"fault", "recovery"},
-    "nic": {"fault", "recovery"},
+    "interface": {"fault", "recovery"},
     "data_flow": {"increase", "decrease"},
 }
 
@@ -87,13 +87,13 @@ def _ensure_channel_fault_config(config: dict[str, object]) -> None:
         )
 
 
-def _ensure_nic_fault_config(config: dict[str, object]) -> None:
-    probabilities_name = "fault_generation.nic_state_probabilities"
-    probabilities = config.get("nic_state_probabilities")
+def _ensure_interface_fault_config(config: dict[str, object]) -> None:
+    probabilities_name = "fault_generation.interface_state_probabilities"
+    probabilities = config.get("interface_state_probabilities")
     if not isinstance(probabilities, dict) or not probabilities:
         raise ValueError(f"{probabilities_name} must be a non-empty mapping")
 
-    unknown_states = set(str(state) for state in probabilities.keys()) - ALLOWED_NIC_FAULT_STATES
+    unknown_states = set(str(state) for state in probabilities.keys()) - ALLOWED_INTERFACE_FAULT_STATES
     if unknown_states:
         raise ValueError(f"Unsupported {probabilities_name} states: {sorted(unknown_states)}")
 
@@ -143,7 +143,7 @@ def validate_scene_config(config: "SceneConfig") -> None:
 
     for section_name, section in (
         ("link_generation", config.link_generation),
-        ("nics", config.nics),
+        ("interfaces", config.interfaces),
         ("nodes", config.nodes),
     ):
         if "state_probabilities" in section:
@@ -159,7 +159,7 @@ def validate_scene_config(config: "SceneConfig") -> None:
             "sampled node faults are always disabled"
         )
     _ensure_channel_fault_config(config.fault_generation)
-    _ensure_nic_fault_config(config.fault_generation)
+    _ensure_interface_fault_config(config.fault_generation)
 
     link_mode = str(config.link_generation.get("mode", ""))
     if link_mode not in ALLOWED_LINK_MODES:
@@ -175,86 +175,86 @@ def validate_scene_config(config: "SceneConfig") -> None:
             "link_generation.role_based_random.derived_link_role.core_edge_uplink_probability",
         )
 
-    queue_policy_mode = str(config.nics.get("queue_policy_mode", "mixed"))
+    queue_policy_mode = str(config.interfaces.get("queue_policy_mode", "mixed"))
     if queue_policy_mode not in ALLOWED_QUEUE_POLICY_MODES:
-        raise ValueError(f"Unsupported nics.queue_policy_mode: {queue_policy_mode}")
-    queue_policy_mode_probabilities = config.nics.get("queue_policy_mode_probabilities", {})
+        raise ValueError(f"Unsupported interfaces.queue_policy_mode: {queue_policy_mode}")
+    queue_policy_mode_probabilities = config.interfaces.get("queue_policy_mode_probabilities", {})
     unknown_queue_modes = set(queue_policy_mode_probabilities.keys()) - ALLOWED_QUEUE_POLICY_MODES
     if unknown_queue_modes:
-        raise ValueError(f"Unsupported nics.queue_policy_mode_probabilities keys: {sorted(unknown_queue_modes)}")
+        raise ValueError(f"Unsupported interfaces.queue_policy_mode_probabilities keys: {sorted(unknown_queue_modes)}")
     if queue_policy_mode_probabilities and sum(float(v) for v in queue_policy_mode_probabilities.values()) <= 0:
-        raise ValueError("nics.queue_policy_mode_probabilities must include positive weights")
-    queue_candidates = list(config.nics.get("queue_policy_candidates", []))
+        raise ValueError("interfaces.queue_policy_mode_probabilities must include positive weights")
+    queue_candidates = list(config.interfaces.get("queue_policy_candidates", []))
     unknown_queues = set(queue_candidates) - ALLOWED_QUEUE_POLICIES
     if unknown_queues:
         raise ValueError(f"Unsupported queue policy candidates: {sorted(unknown_queues)}")
-    single_queue_policy = str(config.nics.get("single_queue_policy", "FIFO"))
+    single_queue_policy = str(config.interfaces.get("single_queue_policy", "FIFO"))
     if single_queue_policy not in ALLOWED_QUEUE_POLICIES:
-        raise ValueError(f"Unsupported nics.single_queue_policy: {single_queue_policy}")
-    queue_probabilities = config.nics.get("queue_policy_probabilities", {})
+        raise ValueError(f"Unsupported interfaces.single_queue_policy: {single_queue_policy}")
+    queue_probabilities = config.interfaces.get("queue_policy_probabilities", {})
     unknown_prob_queues = set(queue_probabilities.keys()) - ALLOWED_QUEUE_POLICIES
     if unknown_prob_queues:
-        raise ValueError(f"Unsupported nics.queue_policy_probabilities keys: {sorted(unknown_prob_queues)}")
-    single_queue_probabilities = config.nics.get("single_queue_policy_probabilities", {})
+        raise ValueError(f"Unsupported interfaces.queue_policy_probabilities keys: {sorted(unknown_prob_queues)}")
+    single_queue_probabilities = config.interfaces.get("single_queue_policy_probabilities", {})
     unknown_single_queues = set(single_queue_probabilities.keys()) - ALLOWED_QUEUE_POLICIES
     if unknown_single_queues:
-        raise ValueError(f"Unsupported nics.single_queue_policy_probabilities keys: {sorted(unknown_single_queues)}")
+        raise ValueError(f"Unsupported interfaces.single_queue_policy_probabilities keys: {sorted(unknown_single_queues)}")
     if single_queue_probabilities and sum(float(v) for v in single_queue_probabilities.values()) <= 0:
-        raise ValueError("nics.single_queue_policy_probabilities must include positive weights")
+        raise ValueError("interfaces.single_queue_policy_probabilities must include positive weights")
     if queue_policy_mode == "mixed":
         if not queue_candidates and not queue_probabilities:
-            raise ValueError("nics mixed mode requires queue_policy_candidates or queue_policy_probabilities")
+            raise ValueError("interfaces mixed mode requires queue_policy_candidates or queue_policy_probabilities")
         if queue_probabilities and sum(float(v) for v in queue_probabilities.values()) <= 0:
-            raise ValueError("nics.queue_policy_probabilities must include positive weights")
-    _ensure_range(config.nics.get("queue_size_range_packets", [0, 0]), "nics.queue_size_range_packets")
+            raise ValueError("interfaces.queue_policy_probabilities must include positive weights")
+    _ensure_range(config.interfaces.get("queue_size_range_packets", [0, 0]), "interfaces.queue_size_range_packets")
     try:
-        nic_network = ipaddress.ip_network(str(config.nics.get("ip_cidr", "10.0.0.0/8")), strict=False)
+        interface_network = ipaddress.ip_network(str(config.interfaces.get("ip_cidr", "10.0.0.0/8")), strict=False)
     except ValueError as exc:
-        raise ValueError(f"Unsupported nics.ip_cidr: {config.nics.get('ip_cidr')}") from exc
-    cidr_candidates_raw = [str(item) for item in config.nics.get("ip_cidr_candidates", [])]
-    nic_networks = [nic_network]
+        raise ValueError(f"Unsupported interfaces.ip_cidr: {config.interfaces.get('ip_cidr')}") from exc
+    cidr_candidates_raw = [str(item) for item in config.interfaces.get("ip_cidr_candidates", [])]
+    interface_networks = [interface_network]
     if cidr_candidates_raw:
-        nic_networks = []
+        interface_networks = []
         for raw_cidr in cidr_candidates_raw:
             try:
-                nic_networks.append(ipaddress.ip_network(raw_cidr, strict=False))
+                interface_networks.append(ipaddress.ip_network(raw_cidr, strict=False))
             except ValueError as exc:
-                raise ValueError(f"Unsupported nics.ip_cidr_candidates value: {raw_cidr}") from exc
-    if len({network.version for network in nic_networks}) > 1:
-        raise ValueError("nics.ip_cidr and nics.ip_cidr_candidates must use the same IP version")
-    for index, left in enumerate(nic_networks):
-        for right in nic_networks[index + 1 :]:
+                raise ValueError(f"Unsupported interfaces.ip_cidr_candidates value: {raw_cidr}") from exc
+    if len({network.version for network in interface_networks}) > 1:
+        raise ValueError("interfaces.ip_cidr and interfaces.ip_cidr_candidates must use the same IP version")
+    for index, left in enumerate(interface_networks):
+        for right in interface_networks[index + 1 :]:
             if left.overlaps(right):
-                raise ValueError(f"nics.ip_cidr_candidates cannot overlap: {left} vs {right}")
-    ip_cidr_probabilities = config.nics.get("ip_cidr_probabilities", {})
-    unknown_ip_cidrs = set(ip_cidr_probabilities.keys()) - {str(network) for network in nic_networks}
+                raise ValueError(f"interfaces.ip_cidr_candidates cannot overlap: {left} vs {right}")
+    ip_cidr_probabilities = config.interfaces.get("ip_cidr_probabilities", {})
+    unknown_ip_cidrs = set(ip_cidr_probabilities.keys()) - {str(network) for network in interface_networks}
     if unknown_ip_cidrs:
-        raise ValueError(f"Unsupported nics.ip_cidr_probabilities keys: {sorted(unknown_ip_cidrs)}")
+        raise ValueError(f"Unsupported interfaces.ip_cidr_probabilities keys: {sorted(unknown_ip_cidrs)}")
     if ip_cidr_probabilities and sum(float(v) for v in ip_cidr_probabilities.values()) <= 0:
-        raise ValueError("nics.ip_cidr_probabilities must include positive weights")
+        raise ValueError("interfaces.ip_cidr_probabilities must include positive weights")
 
-    link_subnet_prefix_probabilities = config.nics.get("link_subnet_prefix_probabilities", {})
-    prefix_candidates = [int(config.nics.get("link_subnet_prefix", 30))]
+    link_subnet_prefix_probabilities = config.interfaces.get("link_subnet_prefix_probabilities", {})
+    prefix_candidates = [int(config.interfaces.get("link_subnet_prefix", 30))]
     if link_subnet_prefix_probabilities:
         prefix_candidates = [int(prefix) for prefix in link_subnet_prefix_probabilities.keys()]
         if sum(float(v) for v in link_subnet_prefix_probabilities.values()) <= 0:
-            raise ValueError("nics.link_subnet_prefix_probabilities must include positive weights")
+            raise ValueError("interfaces.link_subnet_prefix_probabilities must include positive weights")
 
     for prefix in prefix_candidates:
-        if prefix > int(nic_network.max_prefixlen):
-            raise ValueError("nics link subnet prefix exceeds address width")
-        if not any(int(prefix) > int(network.prefixlen) for network in nic_networks):
-            raise ValueError("Each nics link subnet prefix must be larger than at least one base IP CIDR prefix")
+        if prefix > int(interface_network.max_prefixlen):
+            raise ValueError("interfaces link subnet prefix exceeds address width")
+        if not any(int(prefix) > int(network.prefixlen) for network in interface_networks):
+            raise ValueError("Each interfaces link subnet prefix must be larger than at least one base IP CIDR prefix")
 
         sample_network = next(
-            (network for network in nic_networks if int(prefix) > int(network.prefixlen)),
+            (network for network in interface_networks if int(prefix) > int(network.prefixlen)),
             None,
         )
         if sample_network is None:
-            raise ValueError("Unable to validate nics link subnet prefix against base IP CIDRs")
+            raise ValueError("Unable to validate interfaces link subnet prefix against base IP CIDRs")
         sample_subnet = next(sample_network.subnets(new_prefix=int(prefix)))
         if len(list(sample_subnet.hosts())) < 2:
-            raise ValueError("nics link subnet prefix must leave at least two usable host addresses per link")
+            raise ValueError("interfaces link subnet prefix must leave at least two usable host addresses per link")
 
     node_types = list(config.nodes.get("type_candidates", []))
     if not node_types:

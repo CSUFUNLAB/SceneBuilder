@@ -136,9 +136,9 @@ python main.py twin -t optimization --threads 4
 `origin/scenes/<scene_id>.jsonl`，标签保存到对应的
 `origin/input/<scene_id>/labels.jsonl`。`origin/scenes` 中只保存 Twin 文件。
 
-Twin 不导出 NIC 的 `rx_drop_packets`：旧字段混合了故障注入错误模型与 IPv4
+Twin 不导出接口的 `rx_drop_packets`：旧字段混合了故障注入错误模型与 IPv4
 丢弃事件，包含真实失效设备无法上报的接收丢弃，不能作为可采集证据。
-所有 NIC 统一省略该字段；保留发送侧的 `tx_drop_packets`、收发包数和速率等字段。
+所有接口统一省略该字段；保留发送侧的 `tx_drop_packets`、收发包数和速率等字段。
 
 Twin 命令不会删除或覆盖已有 Twin、标签、演化派生场景或问题。只要目标输出已经存在，
 命令就会停止并提示先清理对应分组，例如 `python main.py clean -o twin -t origin`。旧版
@@ -154,12 +154,12 @@ python main.py twin -t evolution
 该命令从具有完整原始 Twin 和标签的 origin 场景中随机抽样，读取
 `question_generator/templates/evolution.yaml` 中独立定义的 `events`，将事件施加到
 复制的静态输入并写入 `evo/input/<scene_id>/`，然后将演化 Twin 写入
-`evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和网卡的故障/恢复、数据流负载的
+`evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和接口的故障/恢复、数据流负载的
 变化以及新增数据流，共八类事件。
 
 负载变化事件按原始 Twin 状态分层抽样。默认
-`load_change_saturated_flow_ratio: 0.5`：一半事件随机选择路径经过饱和信道或 NIC
-的流，另一半随机选择状态为 normal 且路径没有饱和信道/NIC 的流。每个 origin 场景在
+`load_change_saturated_flow_ratio: 0.5`：一半事件随机选择路径经过饱和信道或接口
+的流，另一半随机选择状态为 normal 且路径没有饱和信道/接口的流。每个 origin 场景在
 同一事件类型中最多使用一次，所选分类会写入事件元数据的 `source_flow_class`。新的需求
 值等于原需求乘以 `load_change_multiplier_range` 中随机采样的倍率，默认范围为 `[0.0, 3.0]`；
 问题直接显示计算后的 Mbps，不再显示倍率。
@@ -173,7 +173,7 @@ python main.py twin -t optimization
 该命令从具有完整 Twin 和标签的 origin 场景中构造优化候选组，不因存在物理故障而跳过
 整个场景。每组包含一个不施加动作的上下文场景和至少两个候选动作场景；上下文 Twin 直接
 复用对应 origin Twin，候选场景保留相同的背景故障并分别运行 ns-3，互不叠加动作。扩容
-候选必须是当前仍可运行的信道，路由候选的完整结果路径必须避开已禁用的节点、信道和网卡。
+候选必须是当前仍可运行的信道，路由候选的完整结果路径必须避开已禁用的节点、信道和接口。
 故障修复使用正常 origin 作为共同背景，不生成双故障 Twin，而是生成两个只包含一个剩余
 故障的候选 Twin。
 目前实现：
@@ -424,7 +424,7 @@ generated/
 │   │       ├── metadata.json
 │   │       ├── nodes.csv
 │   │       ├── channels.csv
-│   │       ├── nics.csv
+│   │       ├── interfaces.csv
 │   │       ├── routing_matrix.csv
 │   │       ├── traffic.jsonl
 │   │       └── labels.jsonl
@@ -460,19 +460,38 @@ generated/
 - `metadata.json`：场景来源、随机种子、生成规则和数量统计。
 - `nodes.csv`：节点及其基础状态。
 - `channels.csv`：节点之间的信道、原始容量和基础状态。
-- `nics.csv`：独立网卡实体、所属节点、信道、队列配置和基础状态。
+- `interfaces.csv`：独立接口实体、所属节点、信道、队列配置和基础状态。
 - `routing_matrix.csv`：物理故障发生前，按初始完整拓扑计算出的静态出口接口索引；初始拓扑不可达时为 `-1`。后续物理故障不会重算或改写该文件。
 - `traffic.jsonl`：场景中的数据流及其需求和流量模型。
 
 `scenes/<scene_id>.jsonl` 是 ns-3 输出的数字孪生体。每行表示一个实体，例如节点、
-网卡、信道或数据流，包含实体 ID、属性和关系，不包含标签。
+接口、信道或数据流，包含实体 ID、属性和关系，不包含标签。
+
+接口统一使用 `entity_type: "interface"`。接口的 `relations.node` 和
+`relations.channel` 始终是实体 ID 列表，例如：
+
+```json
+{"entity_type":"interface","entity_id":"N0001:IF1","relations":{"node":["N0001"],"channel":["C0001"]}}
+```
+
+上例省略了 `properties`。当前有线点对点场景输出单元素列表；读取端保留全部关系，
+不会只取第一个节点或信道。节点关系表示接口归属，通常只有一个节点；无线场景中
+多个通信对端不等于多个归属节点。列表形式为后续扩展连接关系提供统一格式，
+本次格式调整不改变当前点对点仿真。现有状态判定仍要求点对点证据，不会将
+多信道接口的汇总计数误当作某一条信道的独立计数。
+
+输入配置使用 `interfaces`，接口文件为 `interfaces.csv`，标识列为
+`interface_id`；故障配置使用 `interface_state_probabilities`，演化事件使用
+`interface_failure` / `interface_recovery`，问题参数使用 `interface_id`、
+`event_interface_id`、`target_interface_id`。旧配置和旧场景文件不自动转换，
+已有数据需要按新格式重新生成，下游 Twin 读取端也需要使用新实体类型和列表关系。
 
 数据流的 `demand_mbps` 和 `throughput_mbps` 都采用应用层有效载荷口径；
-`throughput_mbps` 不包含 IPv4 和 UDP 头部。信道和网卡的带宽统计仍表示网络实际承载的
+`throughput_mbps` 不包含 IPv4 和 UDP 头部。信道和接口的带宽统计仍表示网络实际承载的
 数据量，因此保留相应协议开销。
 
-`input/<scene_id>/labels.jsonl` 独立保存能够由分析问题生成器直接使用的答案。节点、网卡、信道和数据流
-状态分别写在 `node_state`、`nic_state`、`channel_state`、`data_flow_state` 行中，每行的
+`input/<scene_id>/labels.jsonl` 独立保存能够由分析问题生成器直接使用的答案。节点、接口、信道和数据流
+状态分别写在 `node_state`、`interface_state`、`channel_state`、`data_flow_state` 行中，每行的
 `label` 都是由 `{entity_id, label}` 构成的列表。节点状态只包含 `normal` 或
 `disabled`，表示网络运行可用性：有相邻链路且全部不可用时为 `disabled`，
 不区分节点自身还是周围链路导致不可用。单条路由不可用不等于整个节点不可用。
@@ -494,15 +513,15 @@ generated/
 
 信道的 `relations.carries` 保存经过该信道的数据流及其实际带宽占用，不再只是流 ID
 列表。每个元素只包含 `data_flow_id` 和 `bandwidth_mbps`。带宽从该流在当前信道发送端
-网卡的 `PhyTxBegin` 统计，只有真正开始在物理信道上传输的数据包才计入；队列中提前丢弃
+接口的 `PhyTxBegin` 统计，只有真正开始在物理信道上传输的数据包才计入；队列中提前丢弃
 的数据包不占用信道带宽。同一方向所有 `carries.bandwidth_mbps` 之和就是该方向的当前
 吞吐量；每条流在该信道上的方向由流的 `path_nodes` 和 `path_channels` 确定。
 
 `channel_saturation_cause` 行保存饱和信道的流量构成原因，格式为 `{channel_id, label}`。对经过该信道的全部数据流按 `demand_mbps` 求和；若最大流的需求严格大于其余流需求之和，标记为 `single_large_flow`，否则标记为 `multiple_flow_aggregation`。非饱和信道或没有可确认经过流的信道不生成该标签。
 
-`channel_unavailability_cause` 和 `nic_unavailability_cause` 分别保存不可用信道与网卡的
+`channel_unavailability_cause` 和 `interface_unavailability_cause` 分别保存不可用信道与接口的
 故障来源，元素格式均为 `{entity_id, label}`。连接节点故障使用
-`connected_node_fault`；信道自身或任一端网卡故障统一使用
+`connected_node_fault`；信道自身或任一端接口故障统一使用
 `channel_or_interface_fault`。节点侧与信道侧故障同时存在、实体并非 `disabled`，或来源
 不能唯一确定时不写入该标签。这两类原因元数据不再对应当前分析模板；
 `TA0010`、`TA0011` 已从模板和知识库移除。
@@ -517,9 +536,9 @@ generated/
 链路实体只公开 `properties.original_capacity_mbps` 和 `properties.delay_ms`。信道的两个
 方向不再保存单独的吞吐量属性，而是根据 `carries` 中各流的实际带宽及其完整路径进行
 分组求和；信道状态判断取两个方向中的较大总和。Twin 不公开当前吞吐量汇总、有效容量、
-可用带宽或利用率。网卡的
-`tx_rate_mbps`、`tx_packets` 是该网卡在本地 IPv4 层实际尝试发往链路的流量，
-`rx_rate_mbps`、`rx_packets` 是该网卡从链路实际收到的流量；因此可逐跳比较发送端与对端
+可用带宽或利用率。接口的
+`tx_rate_mbps`、`tx_packets` 是该接口在本地 IPv4 层实际尝试发往链路的流量，
+`rx_rate_mbps`、`rx_packets` 是该接口从链路实际收到的流量；因此可逐跳比较发送端与对端
 接收端，判断路径中任意一条链路是否造成传输损失。
 
 `data_flow_failure_cause` 行保存失败流路径上的不可用位置，格式为
@@ -528,7 +547,7 @@ generated/
 信道用链路 ID 表示，不区分硬件原因。标签使用运行状态真值：目标流为 `failed`、完整
 路径至少包含两条信道且归并后恰好一个位置时才写入。多个位置不生成当前单答案标签。
 
-分析问题的实体状态候选仅限数据流覆盖范围：节点必须出现在至少一条流的路径中，链路必须属于至少一条流的 `path_channels`，网卡必须属于这些路径链路。未被任何流经过的实体不会被抽取。数据流实体通过 `path_nodes` 和 `path_channels` 显式保存故障前静态路由确定的完整路径；物理故障不会使这两个字段缩短、清空或改为备用路径。
+分析问题的实体状态候选仅限数据流覆盖范围：节点必须出现在至少一条流的路径中，链路必须属于至少一条流的 `path_channels`，接口必须属于这些路径链路。未被任何流经过的实体不会被抽取。数据流实体通过 `path_nodes` 和 `path_channels` 显式保存故障前静态路由确定的完整路径；物理故障不会使这两个字段缩短、清空或改为备用路径。
 
 分析问题从 `labels.jsonl` 读取真值，并对 `TA0001`–`TA0009` 全部执行证据过滤：只有
 `question_generator/evidence.py` 根据 Twin 的公开属性和关系推导出的答案与真值一致时
@@ -538,7 +557,7 @@ generated/
 | --- | --- |
 | `node_state` | `TA0001` |
 | `channel_state` | `TA0002` |
-| `nic_state` | `TA0003` |
+| `interface_state` | `TA0003` |
 | `data_flow_state` | `TA0004` |
 | `data_flow_bandwidth_constraint` | `TA0005` |
 | `data_flow_congestion_pattern` | `TA0006` |
@@ -612,18 +631,18 @@ generated/
 - `scene_duration`：业务应用的运行时长。应用默认在第 1 秒启动，因此绝对仿真停止时刻为
   `1s + scene_duration`。
 - `topology_sources`：Topology Zoo 或 BRITE 拓扑来源。
-- `fault_generation`：全网正常、单故障和双故障的抽样概率，以及链路、网卡物理故障的状态分布。被抽中的节点物理故障固定为崩溃 `disabled`。
-- `link_generation`、`nics`、`routing`：信道、网卡、队列和路由生成规则。
+- `fault_generation`：全网正常、单故障和双故障的抽样概率，以及链路、接口物理故障的状态分布。被抽中的节点物理故障固定为崩溃 `disabled`。
+- `link_generation`、`interfaces`、`routing`：信道、接口、队列和路由生成规则。
 - `traffic_matrix`、`flow_feature`：流数量、需求大小和流量模型。
 
 配置中的相对路径均相对于该 YAML 文件所在目录解析。
 
-路由表先在无故障的初始完整拓扑上按加权最短路径生成，随后才抽取和施加节点、链路或网卡物理故障。故障发生后不重算路由，也不自动切换备用路径；因此静态路径可能继续指向已经停用的节点、链路或网卡。
+路由表先在无故障的初始完整拓扑上按加权最短路径生成，随后才抽取和施加节点、链路或接口物理故障。故障发生后不重算路由，也不自动切换备用路径；因此静态路径可能继续指向已经停用的节点、链路或接口。
 
 节点状态按相邻链路的运行可用性标注：所有相邻链路均不可用时，节点为 `disabled`；
 仍有可用相邻链路时为 `normal`。仿真中设置故障的位置只用于产生网络行为，不作为
 节点状态题的推理依据。不可用的静态路由仍可用于分析流量失败或提出路由表修改。
-网卡故障在根因标签中归并为所属链路故障。
+接口故障在根因标签中归并为所属链路故障。
 
 ### 问题配置
 
@@ -655,7 +674,7 @@ generated/
 和 Twin，`templates` 供 `questions -t evolution` 根据前后 Twin 的证据生成具体问题。
 每个事件条目包含 `id`、`entity_type` 和非空的 `description`；事件 ID 是生成行为的唯一
 标识，具体变更方式由代码中的事件语义映射确定，描述用于说明该事件对场景的修改语义。
-`TE0026` 至 `TE0057` 组成 8 类事件与 node/channel/nic/data_flow 四类目标实体的
+`TE0026` 至 `TE0057` 组成 8 类事件与 node/channel/interface/data_flow 四类目标实体的
 完整状态预测矩阵，答案标签从分析状态标签中按事件语义取理论可达子集。例如，信道故障不会
 使节点变为 `disabled`，恢复、负载变化和新增流也不会产生新的物理 `disabled` 状态；当前事件
 规则不会在演化后保留或创建 `degraded` 信道。此类模板不为物理上不可能出现的状态强行凑平衡

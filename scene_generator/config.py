@@ -28,7 +28,7 @@ class SceneConfig:
     scene_duration: float
     topology_sources: list[TopologySourceConfig]
     link_generation: dict[str, Any]
-    nics: dict[str, Any]
+    interfaces: dict[str, Any]
     nodes: dict[str, Any]
     fault_generation: dict[str, Any]
     routing: dict[str, Any]
@@ -78,7 +78,7 @@ _DEFAULT_LINK_CONFIG = {
     },
 }
 
-_DEFAULT_NIC_CONFIG = {
+_DEFAULT_INTERFACE_CONFIG = {
     "queue_policy_mode": "mixed",
     "queue_policy_mode_probabilities": {},
     "queue_policy_candidates": ["FIFO", "RED", "CoDel", "FqCoDel"],
@@ -125,7 +125,7 @@ _DEFAULT_FAULT_GENERATION_CONFIG = {
         "degraded": 0.5,
     },
     "channel_degradation_multipliers": [0.5, 0.2, 0.1],
-    "nic_state_probabilities": {
+    "interface_state_probabilities": {
         "disabled": 1.0,
     },
 }
@@ -175,7 +175,7 @@ _DEFAULT_EVENTS_CONFIG = {
     "event_type_probabilities": {
         "node": {"fault": 0.5, "recovery": 0.5},
         "channel": {"fault": 0.5, "recovery": 0.5},
-        "nic": {"fault": 0.5, "recovery": 0.5},
+        "interface": {"fault": 0.5, "recovery": 0.5},
         "data_flow": {"increase": 0.5, "decrease": 0.5},
     },
     "data_flow": {
@@ -313,6 +313,14 @@ def load_config(config_path: str | Path) -> SceneConfig:
         raise ValueError("Config root must be a YAML mapping")
     if "num_scenes" in raw:
         raise ValueError("num_scenes has been removed; use scenes_per_topology")
+    if "nics" in raw:
+        raise ValueError("nics has been renamed to interfaces; update the scene config")
+    fault_options = raw.get("fault_generation")
+    if isinstance(fault_options, dict) and "nic_state_probabilities" in fault_options:
+        raise ValueError(
+            "fault_generation.nic_state_probabilities has been renamed to "
+            "fault_generation.interface_state_probabilities"
+        )
 
     base_dir = path.parent
 
@@ -328,16 +336,16 @@ def load_config(config_path: str | Path) -> SceneConfig:
     topology_sources = _parse_topology_sources(raw.get("topology_sources"), base_dir)
 
     raw_link_generation = raw.get("link_generation")
-    raw_nics = raw.get("nics")
+    raw_interfaces = raw.get("interfaces")
     raw_fault_generation = raw.get("fault_generation")
     raw_flow_feature = _normalize_flow_feature_config(raw.get("flow_feature"))
     raw_routing = _normalize_routing_config(raw.get("routing"))
 
     link_generation = _deep_merge(_DEFAULT_LINK_CONFIG, raw_link_generation)
-    nics = _deep_merge(_DEFAULT_NIC_CONFIG, raw_nics)
-    nics = _replace_explicit_mapping_overrides(
-        nics,
-        raw_nics,
+    interfaces = _deep_merge(_DEFAULT_INTERFACE_CONFIG, raw_interfaces)
+    interfaces = _replace_explicit_mapping_overrides(
+        interfaces,
+        raw_interfaces,
         (
             "queue_policy_mode_probabilities",
             "queue_policy_probabilities",
@@ -354,7 +362,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         (
             "scenario_probabilities",
             "channel_state_probabilities",
-            "nic_state_probabilities",
+            "interface_state_probabilities",
         ),
     )
     routing = _deep_merge(_DEFAULT_ROUTING_CONFIG, raw_routing)
@@ -380,7 +388,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         scene_duration=scene_duration,
         topology_sources=topology_sources,
         link_generation=link_generation,
-        nics=nics,
+        interfaces=interfaces,
         nodes=nodes,
         fault_generation=fault_generation,
         routing=routing,

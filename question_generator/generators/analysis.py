@@ -27,7 +27,7 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
         ] = {
             "TA0001": self._node_state,
             "TA0002": self._channel_state,
-            "TA0003": self._nic_state,
+            "TA0003": self._interface_state,
             "TA0004": self._flow_state,
             "TA0005": self._flow_bandwidth_constraint,
             "TA0006": self._flow_congestion_pattern,
@@ -76,8 +76,8 @@ class AnalysisQuestionGenerator(QuestionCategoryGenerator):
     def _channel_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
         return self._choose_entity_by_label(scene, "channel", "channel_id", target_label, rng)
 
-    def _nic_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
-        return self._choose_entity_by_label(scene, "nic", "nic_id", target_label, rng)
+    def _interface_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
+        return self._choose_entity_by_label(scene, "interface", "interface_id", target_label, rng)
 
     def _flow_state(self, scene: SceneData, target_label: str, rng: random.Random) -> QuestionCandidate | None:
         return self._choose_entity_by_label(scene, "data_flow", "data_flow_id", target_label, rng)

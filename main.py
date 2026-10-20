@@ -42,7 +42,7 @@ TWIN_FILE_NAME = "twin.jsonl"
 LABEL_FILE_NAME = "labels.jsonl"
 REQUIRED_BASE_SCENE_FILES = {
     "nodes.csv",
-    "nics.csv",
+    "interfaces.csv",
     "routing_matrix.csv",
     "traffic.jsonl",
 }

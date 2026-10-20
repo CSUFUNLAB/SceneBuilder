@@ -119,31 +119,31 @@ def _channel_directional_measurements(
 ) -> tuple[tuple[float, float], ...] | None:
     """Return sampled (offered, delivered) rates for both channel directions.
 
-    A point-to-point channel exposes exactly two NICs.  For each direction, the
-    sender NIC's local IPv4 transmit counters measure traffic offered to this
-    channel, while the peer NIC's receive counters measure traffic delivered by
+    A point-to-point channel exposes exactly two interfaces. For each direction, the
+    sender interface's local IPv4 transmit counters measure traffic offered to this
+    channel, while the peer interface's receive counters measure traffic delivered by
     it.  This remains direct evidence when the channel is an intermediate hop.
     """
 
     connected = channel.relations.get("connects")
     if not isinstance(connected, list) or len(connected) != 2:
         return None
-    nic_ids = [str(nic_id) for nic_id in connected]
-    if not all(nic_ids) or nic_ids[0] == nic_ids[1]:
+    interface_ids = [str(interface_id) for interface_id in connected]
+    if not all(interface_ids) or interface_ids[0] == interface_ids[1]:
         return None
 
-    nics = [scene.entity("nic", nic_id) for nic_id in nic_ids]
-    if any(nic is None for nic in nics):
+    interfaces = [scene.entity("interface", interface_id) for interface_id in interface_ids]
+    if any(interface is None for interface in interfaces):
         return None
     if any(
-        str(nic.relations.get("channel", "")) != channel.entity_id
-        for nic in nics
-        if nic is not None
+        interface.relations.get("channel") != [channel.entity_id]
+        for interface in interfaces
+        if interface is not None
     ):
         return None
 
     measurements: list[tuple[float, float]] = []
-    for sender, receiver in ((nics[0], nics[1]), (nics[1], nics[0])):
+    for sender, receiver in ((interfaces[0], interfaces[1]), (interfaces[1], interfaces[0])):
         if sender is None or receiver is None:
             continue
         offered = _number(sender.properties, "tx_rate_mbps")
@@ -174,11 +174,11 @@ def _channel_receive_rates(
     if str(connected[0]) == str(connected[1]):
         return None
     rates: list[float] = []
-    for nic_id in connected:
-        nic = scene.entity("nic", str(nic_id))
-        if nic is None or nic.relations.get("channel") != channel.entity_id:
+    for interface_id in connected:
+        interface = scene.entity("interface", str(interface_id))
+        if interface is None or interface.relations.get("channel") != [channel.entity_id]:
             return None
-        rate = _number(nic.properties, "rx_rate_mbps")
+        rate = _number(interface.properties, "rx_rate_mbps")
         if rate is None or rate < 0:
             return None
         rates.append(rate)
@@ -316,28 +316,32 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
     raw_interfaces = node.relations.get("interfaces")
     if not isinstance(raw_interfaces, list) or not raw_interfaces:
         return None
-    interface_ids = {str(nic_id) for nic_id in raw_interfaces}
+    interface_ids = {str(interface_id) for interface_id in raw_interfaces}
     if len(interface_ids) != len(raw_interfaces) or interface_ids != {
-        nic.entity_id
-        for nic in scene.entities("nic")
-        if nic.relations.get("node") == node.entity_id
+        interface.entity_id
+        for interface in scene.entities("interface")
+        if node.entity_id in interface.relations["node"]
     }:
         return None
 
     channels: dict[str, EntityRecord] = {}
-    for nic_id in interface_ids:
-        nic = scene.entity("nic", nic_id)
-        if nic is None:
+    for interface_id in interface_ids:
+        interface = scene.entity("interface", interface_id)
+        if interface is None:
             return None
-        channel = scene.entity("channel", str(nic.relations.get("channel", "")))
-        if (
-            channel is None
-            or not isinstance(channel.relations.get("connects"), list)
-            or nic_id not in channel.relations["connects"]
-            or len(scene.channel_endpoint_nodes(channel)) != 2
-        ):
+        channel_ids = interface.relations["channel"]
+        if not channel_ids:
             return None
-        channels[channel.entity_id] = channel
+        for channel_id in channel_ids:
+            channel = scene.entity("channel", channel_id)
+            if (
+                channel is None
+                or not isinstance(channel.relations.get("connects"), list)
+                or interface_id not in channel.relations["connects"]
+                or len(scene.channel_endpoint_nodes(channel)) != 2
+            ):
+                return None
+            channels[channel.entity_id] = channel
 
     rates = [_channel_receive_rates(scene, channel) for channel in channels.values()]
     if any(pair is not None and max(pair) > FLOAT_TOLERANCE for pair in rates):
@@ -347,17 +351,21 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
     return None
 
 
-def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
-    channel_id = str(nic.relations.get("channel", ""))
-    channel = scene.entity("channel", channel_id)
+def infer_interface_state(scene: SceneData, interface: EntityRecord) -> str | None:
+    channel_ids = interface.relations["channel"]
+    # Aggregate interface counters cannot establish delivery on each of several
+    # channels. The current evidence rules require one point-to-point channel.
+    if len(channel_ids) != 1:
+        return None
+    channel = scene.entity("channel", channel_ids[0])
     if channel is None:
         return None
 
     channel_state = infer_channel_state(scene, channel)
     if channel_state == "disabled":
-        # NIC state is operational, not a physical-root label. An interface
+        # Interface state is operational, not a physical-root label. An interface
         # attached to a disabled channel is itself unavailable regardless of
-        # whether the channel, an endpoint node, or one NIC caused the fault.
+        # whether the channel, an endpoint node, or one interface caused the fault.
         # infer_channel_state already requires a sampled local send attempt.
         return "disabled"
 
@@ -368,8 +376,8 @@ def infer_nic_state(scene: SceneData, nic: EntityRecord) -> str | None:
     if receive_rates is None or max(receive_rates) <= FLOAT_TOLERANCE:
         return None
 
-    queue_size = _number(nic.properties, "queue_size_packets")
-    queue_current = _number(nic.properties, "queue_current_packets")
+    queue_size = _number(interface.properties, "queue_size_packets")
+    queue_current = _number(interface.properties, "queue_current_packets")
     if (
         None in (queue_size, queue_current)
         or queue_size <= 0
@@ -386,8 +394,8 @@ def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
         return infer_node_state(scene, entity)
     if entity.entity_type == "channel":
         return infer_channel_state(scene, entity)
-    if entity.entity_type == "nic":
-        return infer_nic_state(scene, entity)
+    if entity.entity_type == "interface":
+        return infer_interface_state(scene, entity)
     if entity.entity_type == "data_flow":
         return infer_flow_state(entity)
     return None

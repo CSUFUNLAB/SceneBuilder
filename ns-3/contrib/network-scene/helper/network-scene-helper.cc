@@ -158,9 +158,9 @@ ApplyEventInitialStates(NetworkSceneData& scene)
         {
             setState(scene.channels);
         }
-        else if (key.first == "nic")
+        else if (key.first == "interface")
         {
-            setState(scene.nics);
+            setState(scene.interfaces);
         }
     }
 }
@@ -255,7 +255,7 @@ NetworkSceneHelper::Install()
     InstallInternetStackAndTracing();
 
     std::unordered_map<std::string, std::string> primaryAddressByNode;
-    InstallSceneChannels(scene.channels, scene.nics, primaryAddressByNode);
+    InstallSceneChannels(scene.channels, scene.interfaces, primaryAddressByNode);
     InstallSceneRoutes(scene.nodes, primaryAddressByNode);
     ReconcileInterfaceStates();
     if (LEGACY_RUNTIME_EVENTS_ENABLED)
@@ -339,26 +339,26 @@ NetworkSceneHelper::LoadSceneRecords(const NetworkSceneData& scene)
         channelRecordIndex[m_channelRecords[i].id] = i;
         m_channelIndexById[m_channelRecords[i].id] = i;
     }
-    for (const auto& nic : scene.nics)
+    for (const auto& interface : scene.interfaces)
     {
-        m_interfaceRecords.push_back({nic.id,
-                                      nic.node,
-                                      nic.interfaceIndex,
-                                      nic.channelId,
-                                      nic.ipCidr,
-                                      nic.mac,
-                                      nic.queuePolicy,
-                                      nic.queueSizePackets,
+        m_interfaceRecords.push_back({interface.id,
+                                      interface.node,
+                                      interface.interfaceIndex,
+                                      interface.channelId,
+                                      interface.ipCidr,
+                                      interface.mac,
+                                      interface.queuePolicy,
+                                      interface.queueSizePackets,
                                       ScaledQueueSizePackets(
-                                          nic.queueSizePackets,
+                                          interface.queueSizePackets,
                                           m_valueScaleFactor),
-                                      nic.state});
-        m_interfaceIndexById[nic.id] = static_cast<uint32_t>(m_interfaceRecords.size() - 1);
-        m_interfaceIdByNodeInterface[{nic.node, nic.interfaceIndex}] = nic.id;
-        auto channelIt = channelRecordIndex.find(nic.channelId);
+                                      interface.state});
+        m_interfaceIndexById[interface.id] = static_cast<uint32_t>(m_interfaceRecords.size() - 1);
+        m_interfaceIdByNodeInterface[{interface.node, interface.interfaceIndex}] = interface.id;
+        auto channelIt = channelRecordIndex.find(interface.channelId);
         if (channelIt != channelRecordIndex.end())
         {
-            m_channelRecords[channelIt->second].interfaceIds.push_back(nic.id);
+            m_channelRecords[channelIt->second].interfaceIds.push_back(interface.id);
         }
     }
     for (const auto& channel : m_channelRecords)
@@ -399,13 +399,13 @@ NetworkSceneHelper::InstallInternetStackAndTracing()
 
 void
 NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRow>& channels,
-                                      const std::vector<NetworkSceneNicRow>& nics,
+                                      const std::vector<NetworkSceneInterfaceRow>& interfaces,
                                       std::unordered_map<std::string, std::string>& primaryAddressByNode)
 {
-    const auto nicsByChannel = GroupNetworkSceneNicsByChannel(nics);
+    const auto interfacesByChannel = GroupNetworkSceneInterfacesByChannel(interfaces);
     for (const auto& channel : channels)
     {
-        auto channelNics = SortedNetworkSceneChannelNics(nicsByChannel, channel.id);
+        auto channelInterfaces = SortedNetworkSceneChannelInterfaces(interfacesByChannel, channel.id);
 
         PointToPointHelper p2p;
         const double simulationCapacityMbps =
@@ -415,68 +415,68 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
         p2p.SetChannelAttribute("Delay", TimeValue(m_defaultChannelDelay));
         p2p.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1p"));
 
-        NodeContainer endpoints(m_nodes.Get(m_nodeIndexById.at(channelNics[0].node)),
-                                m_nodes.Get(m_nodeIndexById.at(channelNics[1].node)));
+        NodeContainer endpoints(m_nodes.Get(m_nodeIndexById.at(channelInterfaces[0].node)),
+                                m_nodes.Get(m_nodeIndexById.at(channelInterfaces[1].node)));
         NetDeviceContainer devices = p2p.Install(endpoints);
         m_devices.Add(devices);
 
         for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
         {
-            const auto& nic = channelNics[endpoint];
+            const auto& interface = channelInterfaces[endpoint];
             const uint32_t simulationQueueSizePackets =
-                ScaledQueueSizePackets(nic.queueSizePackets, m_valueScaleFactor);
+                ScaledQueueSizePackets(interface.queueSizePackets, m_valueScaleFactor);
             Ptr<PointToPointNetDevice> device =
                 DynamicCast<PointToPointNetDevice>(devices.Get(endpoint));
             if (device == nullptr)
             {
-                throw std::runtime_error("Expected point-to-point device for " + nic.id);
+                throw std::runtime_error("Expected point-to-point device for " + interface.id);
             }
             device->TraceConnectWithoutContext(
                 "PhyTxBegin",
-                MakeCallback(&NetworkSceneHelper::TracePhyTxBegin, this).Bind(nic.id));
+                MakeCallback(&NetworkSceneHelper::TracePhyTxBegin, this).Bind(interface.id));
             device->TraceConnectWithoutContext(
                 "MacTxDrop",
-                MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(nic.id));
+                MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(interface.id));
             device->TraceConnectWithoutContext(
                 "PhyTxDrop",
-                MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(nic.id));
+                MakeCallback(&NetworkSceneHelper::TraceDeviceTxDrop, this).Bind(interface.id));
             // Fault-injected receive errors are simulator observations, not
             // telemetry available from the failed device. Do not export them.
 
             TrafficControlHelper trafficControl;
-            trafficControl.SetRootQueueDisc(QueueDiscTypeForPolicy(nic.queuePolicy),
+            trafficControl.SetRootQueueDisc(QueueDiscTypeForPolicy(interface.queuePolicy),
                                             "MaxSize",
                                             StringValue(
                                                 std::to_string(simulationQueueSizePackets) + "p"));
             QueueDiscContainer queueDiscs = trafficControl.Install(devices.Get(endpoint));
             if (queueDiscs.GetN() != 1)
             {
-                throw std::runtime_error("Expected one root queue disc for " + nic.id);
+                throw std::runtime_error("Expected one root queue disc for " + interface.id);
             }
-            m_queueDiscs[nic.id] = queueDiscs.Get(0);
-            m_queueDiscs[nic.id]->TraceConnectWithoutContext(
+            m_queueDiscs[interface.id] = queueDiscs.Get(0);
+            m_queueDiscs[interface.id]->TraceConnectWithoutContext(
                 "Drop",
-                MakeCallback(&NetworkSceneHelper::TraceQueueDiscDrop, this).Bind(nic.id));
+                MakeCallback(&NetworkSceneHelper::TraceQueueDiscDrop, this).Bind(interface.id));
 
-            Ptr<Node> node = m_nodes.Get(m_nodeIndexById.at(nic.node));
+            Ptr<Node> node = m_nodes.Get(m_nodeIndexById.at(interface.node));
             Ptr<Ipv4> ipv4 = node->GetObject<Ipv4>();
-            devices.Get(endpoint)->SetAddress(Mac48Address(nic.mac.c_str()));
+            devices.Get(endpoint)->SetAddress(Mac48Address(interface.mac.c_str()));
             uint32_t ifIndex = ipv4->AddInterface(devices.Get(endpoint));
-            if (ifIndex != nic.interfaceIndex)
+            if (ifIndex != interface.interfaceIndex)
             {
-                throw std::runtime_error("IPv4 interface index mismatch for " + nic.id);
+                throw std::runtime_error("IPv4 interface index mismatch for " + interface.id);
             }
 
-            const auto [address, prefix] = SplitCidr(nic.ipCidr);
+            const auto [address, prefix] = SplitCidr(interface.ipCidr);
             ipv4->AddAddress(ifIndex,
                              Ipv4InterfaceAddress(Ipv4Address(address.c_str()),
                                                   Ipv4Mask(MaskFromPrefix(prefix).c_str())));
             ipv4->SetMetric(ifIndex, 1);
             ipv4->SetUp(ifIndex);
-            m_ipv4InterfaceById[nic.id] = ifIndex;
-            if (primaryAddressByNode.find(nic.node) == primaryAddressByNode.end())
+            m_ipv4InterfaceById[interface.id] = ifIndex;
+            if (primaryAddressByNode.find(interface.node) == primaryAddressByNode.end())
             {
-                primaryAddressByNode[nic.node] = address;
+                primaryAddressByNode[interface.node] = address;
             }
         }
     }
@@ -675,7 +675,7 @@ NetworkSceneHelper::ReconcileInterfaceStates()
 
         Ptr<Ipv4> ipv4 = m_nodes.Get(nodeIt->second)->GetObject<Ipv4>();
         // Keep a healthy node's static egress route and actual send attempts
-        // observable. A physical link/NIC outage prevents peer delivery; it
+        // observable. A physical link/interface outage prevents peer delivery; it
         // must not administratively disable both endpoints before any packet
         // can reach the IPv4 Tx trace. A failed node itself remains silent.
         if (m_nodeRecords[nodeIt->second].state != "disabled")
@@ -730,7 +730,7 @@ NetworkSceneHelper::ApplySceneEvent(std::string entityType,
             m_channelRecords[it->second].state = nextState;
         }
     }
-    else if (entityType == "nic")
+    else if (entityType == "interface")
     {
         auto it = m_interfaceIndexById.find(entityId);
         if (it != m_interfaceIndexById.end())
