@@ -307,7 +307,7 @@ def _load_templates(
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
-    base_fields = {"id", "question"}
+    base_fields = {"id", "question", "hints"}
     if category == "optimization":
         base_fields.add("strategy")
     else:
@@ -378,6 +378,7 @@ def _load_templates(
                 strategy=strategy,
                 answer_fields=answer_fields,
                 answer_item_fields=answer_item_fields,
+                hints=tuple(item.get("hints", [])),
             )
         )
     return tuple(templates)

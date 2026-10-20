@@ -670,6 +670,12 @@ generated/
 `question`，答案格式由对应的优化问题生成规则确定。三类模板 ID 分别使用 `TA`、`TE`、
 `TO` 前缀，后接四位数字；演化模板当前按文件顺序从 `TE0001` 连续编号。问题生成器根据
 模板 ID 选择对应生成规则。
+三类模板均可附加 `hints` 字符串列表，只保存基本概念和标签含义，不包含具体数值阈值、
+标签生成公式、判定优先级或样本筛选前提。分析模板的节点可用性、信道 `saturated/degraded`
+区分、接口饱和和节点级故障等定义在这里维护。
+提示不拼入具体问题文本，也不改变仿真标签或候选筛选；`split` 随模板一同导出。
+STN-Runtime 的 `construct -m kb` 将提示原样复制到知识库，不由模型生成或训练修改；
+运行时只从知识库加载匹配题型的提示，`--no-kb` 也保留它们。
 演化模板文件的 `events` 与 `templates` 相互独立：`events` 供 `twin -t evolution` 构造演化场景
 和 Twin，`templates` 供 `questions -t evolution` 根据前后 Twin 的证据生成具体问题。
 每个事件条目包含 `id`、`entity_type` 和非空的 `description`；事件 ID 是生成行为的唯一

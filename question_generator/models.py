@@ -40,6 +40,7 @@ class QuestionTemplate:
     strategy: str | None = None
     answer_fields: tuple[str, ...] = ()
     answer_item_fields: tuple[str, ...] = ()
+    hints: tuple[str, ...] = ()
 
     @property
     def has_id_answer(self) -> bool:

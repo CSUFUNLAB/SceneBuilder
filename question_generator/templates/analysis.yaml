@@ -4,52 +4,80 @@ question_type: analysis
 templates:
   - id: TA0001
     question: "What is the current state of node $node_id$: normal or disabled?"
+    hints:
+      - "Node state describes network availability: normal means connectivity remains available; disabled means all adjacent links are unavailable."
+      - "An idle node is not necessarily disabled; availability concerns communication through its interfaces."
     answer:
       type: enum
       values: [normal, disabled]
 
   - id: TA0002
     question: "What is the current state of channel $channel_id$: normal, disabled, degraded, or saturated?"
+    hints:
+      - "Saturated means traffic approaches the channel's original capacity. Interface queue saturation alone does not imply channel saturation."
+      - "Degraded means reduced forwarding capability cannot serve the current load, even though traffic remains below the original capacity."
+      - "Normal means the channel serves the current load without saturation or impaired delivery. Reduced capacity that still serves the current load is normal."
+      - "Disabled means communication is unavailable despite transmission attempts. Silence alone does not establish an outage."
     answer:
       type: enum
       values: [normal, disabled, degraded, saturated]
 
   - id: TA0003
     question: "What is the current state of interface $interface_id$: normal, disabled, or saturated?"
+    hints:
+      - "Normal means the interface can communicate without queue saturation; disabled means its connection is unavailable. An idle interface is not necessarily disabled."
+      - "Saturated means the interface's transmit queue is full or nearly full during active communication. Interface queue saturation and channel capacity saturation are distinct."
     answer:
       type: enum
       values: [normal, disabled, saturated]
 
   - id: TA0004
     question: "What is the current state of data flow $data_flow_id$: normal, unstable, degraded, or failed?"
+    hints:
+      - "Normal means reliable delivery that meets the flow's demand; unstable means delivery suffers packet loss."
+      - "Degraded means delivery continues without packet loss but throughput falls short of demand; failed means end-to-end delivery is unavailable."
     answer:
       type: enum
       values: [normal, unstable, degraded, failed]
 
   - id: TA0005
     question: "What is limiting data flow $data_flow_id$: insufficient channel capacity or traffic congestion?"
+    hints:
+      - "Insufficient_channel_capacity means a channel on the flow's path cannot meet its demand even without competing traffic."
+      - "Traffic_congestion means competing traffic strains shared channel capacity and limits the flow."
     answer:
       type: enum
       values: [insufficient_channel_capacity, traffic_congestion]
 
   - id: TA0006
     question: "Which congestion pattern applies to data flow $data_flow_id$: a single bottleneck channel or multiple saturated channels?"
+    hints:
+      - "Single_channel_bottleneck means congestion is concentrated at a single channel on the flow's path; multi_channel_saturation means several path channels are saturated."
+      - "Channel saturation means traffic approaches the channel's original capacity; interface queue saturation is a separate concept."
     answer:
       type: enum
       values: [single_channel_bottleneck, multi_channel_saturation]
 
   - id: TA0007
     question: "What traffic pattern is saturating channel $channel_id$: one large data flow or an aggregation of multiple data flows?"
+    hints:
+      - "Single_large_flow means a dominant flow drives channel saturation; multiple_flow_aggregation means the combined traffic of several flows drives saturation."
     answer:
       type: enum
       values: [single_large_flow, multiple_flow_aggregation]
 
   - id: TA0008
     question: "Which channel is the bottleneck for data flow $data_flow_id$?"
+    hints:
+      - "A bottleneck channel constrains the flow's achievable throughput along its path. Low capacity or a full interface queue alone does not establish a bottleneck."
     answer:
       type: channel_id
 
   - id: TA0009
     question: "Which failed node or channel is responsible for data flow $data_flow_id$'s failure?"
+    hints:
+      - "A fault location is a node or channel on the flow's path where communication is interrupted despite transmission attempts. Silence alone does not establish an outage."
+      - "A node-level outage means all adjacent links are unavailable; those links and the node describe the same outage and should not be counted separately."
+      - "Fault locations require independent delivery evidence; an observed interruption does not identify its hidden physical cause."
     answer:
       type: entity_id
