@@ -15,7 +15,7 @@ templates:
     question: "What is the current state of channel $channel_id$: normal, disabled, degraded, or saturated?"
     hints:
       - "Saturated means traffic approaches the channel's original capacity. Interface queue saturation alone does not imply channel saturation."
-      - "Degraded means reduced forwarding capability cannot serve the current load, even though traffic remains below the original capacity."
+      - "Degraded means reduced forwarding capability cannot serve the current load, even though traffic remains below the original capacity. Saturation at a reduced capacity is classified as degraded."
       - "Normal means the channel serves the current load without saturation or impaired delivery. Reduced capacity that still serves the current load is normal."
       - "Disabled means communication is unavailable despite transmission attempts. Silence alone does not establish an outage."
     answer:
@@ -35,7 +35,7 @@ templates:
     question: "What is the current state of data flow $data_flow_id$: normal, unstable, degraded, or failed?"
     hints:
       - "Normal means reliable delivery that meets the flow's demand; unstable means delivery suffers packet loss."
-      - "Degraded means delivery continues without packet loss but throughput falls short of demand; failed means end-to-end delivery is unavailable."
+      - "Degraded means delivery continues without packet loss but throughput is substantially below demand; failed means end-to-end delivery is unavailable."
     answer:
       type: enum
       values: [normal, unstable, degraded, failed]
@@ -61,7 +61,7 @@ templates:
   - id: TA0007
     question: "What traffic pattern is saturating channel $channel_id$: one large data flow or an aggregation of multiple data flows?"
     hints:
-      - "Single_large_flow means a dominant flow drives channel saturation; multiple_flow_aggregation means the combined traffic of several flows drives saturation."
+      - "This question concerns the traffic currently carried by the channel. Single_large_flow means a dominant flow drives channel saturation; multiple_flow_aggregation means the combined traffic of several flows drives saturation."
     answer:
       type: enum
       values: [single_large_flow, multiple_flow_aggregation]
@@ -77,6 +77,7 @@ templates:
     question: "Which failed node or channel is responsible for data flow $data_flow_id$'s failure?"
     hints:
       - "A fault location is a node or channel on the flow's path where communication is interrupted despite transmission attempts. Silence alone does not establish an outage."
+      - "If an interface failure makes a link unavailable, count it as a link failure and return the corresponding channel ID."
       - "A node-level outage means all adjacent links are unavailable; those links and the node describe the same outage and should not be counted separately."
       - "Fault locations require independent delivery evidence; an observed interruption does not identify its hidden physical cause."
     answer:
