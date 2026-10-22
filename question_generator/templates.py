@@ -7,11 +7,11 @@ from typing import Any
 import yaml
 
 from .models import (
+    EVOLUTION_EVENT_SEMANTICS,
     EvolutionEventType,
     OptimizationStrategy,
     QuestionTemplate,
     QuestionTemplateBundle,
-    evolution_event_semantics,
 )
 
 
@@ -26,7 +26,6 @@ _ANSWER_TYPES = {
     "route_entries",
     "channel_capacity",
 }
-_EVENT_ENTITY_TYPES = {"node", "channel", "interface", "data_flow"}
 _TEMPLATE_ID_PREFIXES = {
     "analysis": "TA",
     "evolution": "TE",
@@ -76,64 +75,6 @@ def _reject_unknown(
     unknown = sorted(set(value) - allowed)
     if unknown:
         raise ValueError(f"{location} has unsupported fields: {unknown}")
-
-
-def _load_event_types(
-    raw_events: object,
-    template_path: Path,
-    category: str,
-) -> tuple[EvolutionEventType, ...]:
-    if category != "evolution":
-        if raw_events not in (None, []):
-            raise ValueError(f"{template_path}: only evolution templates may define events")
-        return ()
-
-    events: list[EvolutionEventType] = []
-    seen_ids: set[str] = set()
-    for index, raw_event in enumerate(
-        _list(raw_events, f"{template_path}:events"),
-        start=1,
-    ):
-        location = f"{template_path}:events[{index}]"
-        event = _mapping(raw_event, location)
-        _reject_unknown(
-            event,
-            {"id", "entity_type", "description"},
-            location,
-        )
-        event_type_id = _identifier(event.get("id"), f"{location}.id")
-        if event_type_id in seen_ids:
-            raise ValueError(f"{location}.id duplicates {event_type_id}")
-        seen_ids.add(event_type_id)
-        entity_type = _identifier(
-            event.get("entity_type"),
-            f"{location}.entity_type",
-        )
-        if entity_type not in _EVENT_ENTITY_TYPES:
-            raise ValueError(
-                f"{location}.entity_type must be one of "
-                f"{sorted(_EVENT_ENTITY_TYPES)}"
-            )
-        description = _text(
-            event.get("description"),
-            f"{location}.description",
-        )
-        expected_entity_type, _ = evolution_event_semantics(event_type_id)
-        if entity_type != expected_entity_type:
-            raise ValueError(
-                f"{location}.entity_type must be {expected_entity_type} for "
-                f"{event_type_id}"
-            )
-        events.append(
-            EvolutionEventType(
-                event_type_id,
-                entity_type,
-                description,
-            )
-        )
-    if not events:
-        raise ValueError(f"{template_path}: evolution templates require events")
-    return tuple(events)
 
 
 def _load_optimization_strategies(
@@ -400,7 +341,6 @@ def load_template_bundle(
         {
             "schema_version",
             "question_type",
-            "events",
             "strategies",
             "templates",
         },
@@ -419,10 +359,14 @@ def load_template_bundle(
         raise ValueError(
             f"{template_path}: question_type is {question_type}, expected {category}"
         )
-    event_types = _load_event_types(
-        root.get("events"),
-        template_path,
-        category,
+    # Simulation interventions are built in; question templates only define questions.
+    event_types = (
+        tuple(
+            EvolutionEventType(event_id, entity_type, event_id.replace("_", " "))
+            for event_id, (entity_type, _) in EVOLUTION_EVENT_SEMANTICS.items()
+        )
+        if category == "evolution"
+        else ()
     )
     optimization_strategies = _load_optimization_strategies(
         root.get("strategies"),

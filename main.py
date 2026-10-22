@@ -1702,12 +1702,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 preparation = prepare_evolution_scenes(
                     args.question_config,
                     scenes_root=scenes_root,
+                    progress=lambda message: print(message, flush=True),
                 )
                 if not preparation.plans:
                     raise ValueError(
                         "No evolution scenes could be generated from the "
                         "available origin scenes"
                     )
+                print(
+                    f"Prepared {len(preparation.plans)} evolution scene(s); "
+                    f"starting Twin generation with up to {args.threads} worker(s).",
+                    flush=True,
+                )
                 result = _run_twin_stage(
                     args,
                     _group_input_root(scenes_root, "evo"),
@@ -1716,9 +1722,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         scenes_root,
                         "evo",
                     ),
-                )
-                print(
-                    f"Prepared {len(preparation.plans)} evolution scene(s)"
                 )
                 return 0 if result.complete else 1
             if args.dry_run:
@@ -1791,10 +1794,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _print_question_result(result)
                 return 0
             if args.question_type == "evolution":
-                _require_completed_twins(configured_root, "evo")
                 result = generate_evolution_questions(
                     args.question_config,
                     scenes_root=configured_root,
+                    progress=lambda message: print(message, flush=True),
                 )
                 _print_question_result(result)
                 return 0

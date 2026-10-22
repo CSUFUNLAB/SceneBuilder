@@ -9,7 +9,8 @@ from pathlib import Path
 import random
 import re
 import shutil
-from typing import Any
+import time
+from typing import Any, Callable
 
 from .config import CategoryConfig, QuestionGeneratorConfig, load_config
 from .evidence import (
@@ -307,7 +308,23 @@ def prepare_evolution_scenes(
     config_path: str | Path,
     *,
     scenes_root: str | Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> EvolutionPreparation:
+    started_at = time.monotonic()
+    last_report_at = started_at
+
+    def report(message: str, *, force: bool = True) -> None:
+        nonlocal last_report_at
+        if progress is None:
+            return
+        now = time.monotonic()
+        if force or now - last_report_at >= 5.0:
+            progress(
+                f"[evolution prepare] {message} | elapsed={now - started_at:.1f}s"
+            )
+            last_report_at = now
+
+    report("Loading configuration and question templates")
     config = load_config(config_path)
     category = config.categories["evolution"]
     template_bundle = load_template_bundle(
@@ -339,22 +356,40 @@ def prepare_evolution_scenes(
     evolution_scenes_root = (
         root / EVOLUTION_SCENES_DIR_NAME / SCENES_DIR_NAME
     )
-    source_directories = [
-        path.parent
-        for path in sorted(original_input_root.glob("*/metadata.json"))
-        if not _is_evolution_scene(path.parent)
-        and (
-            original_scenes_root / f"{path.parent.name}.jsonl"
-        ).is_file()
-        and (path.parent / "labels.jsonl").is_file()
-    ]
-    sources = [
-        _load_source_scene(
+    report(f"Scanning origin scenes: {original_input_root}")
+    metadata_files = sorted(original_input_root.glob("*/metadata.json"))
+    source_directories: list[Path] = []
+    for index, metadata_file in enumerate(metadata_files, start=1):
+        path = metadata_file.parent
+        report(
+            f"Scanning origin scenes: {index}/{len(metadata_files)} | {path.name}",
+            force=False,
+        )
+        if (
+            not _is_evolution_scene(path)
+            and (original_scenes_root / f"{path.name}.jsonl").is_file()
+            and (path / "labels.jsonl").is_file()
+        ):
+            source_directories.append(path)
+    report(
+        f"Origin scenes scanned: {len(metadata_files)} | "
+        f"complete={len(source_directories)} | "
+        f"skipped={len(metadata_files) - len(source_directories)}"
+    )
+    sources: list[EvolutionSourceScene] = []
+    report(f"Loading source scenes: 0/{len(source_directories)}")
+    for index, path in enumerate(source_directories, start=1):
+        report(
+            f"Loading source scenes: {index - 1}/{len(source_directories)} complete | "
+            f"reading {path.name}",
+            force=index == 1,
+        )
+        source = _load_source_scene(
             path,
             original_scenes_root / f"{path.name}.jsonl",
         )
-        for path in source_directories
-    ]
+        sources.append(source)
+    report(f"Loaded source scenes: {len(sources)}/{len(source_directories)}")
     if not sources:
         raise ValueError(
             "Evolution generation requires at least one origin scene with "
@@ -368,10 +403,16 @@ def prepare_evolution_scenes(
     options = _evolution_options(category)
     scenes_per_event = int(options["scenes_per_event"])
     plans: list[EvolutionPlan] = []
+    report(
+        f"Preparing derived inputs: {len(template_bundle.event_types)} change types "
+        f"x up to {scenes_per_event} scenes | allocating scene IDs"
+    )
     next_scene_numeric_id, scene_id_width = _next_scene_id(root)
     serial = 0
     for spec in template_bundle.event_types:
         event_type = spec.event_type_id
+        event_plan_start = len(plans)
+        report(f"Preparing {event_type}: 0/{scenes_per_event}")
         used_source_scene_ids: set[str] = set()
         flow_classes: list[str | None] = [None] * scenes_per_event
         if (
@@ -391,6 +432,12 @@ def prepare_evolution_scenes(
             ]
             rng.shuffle(flow_classes)
         for flow_class in flow_classes:
+            report(
+                f"Preparing {event_type}: {len(plans) - event_plan_start}/{scenes_per_event} "
+                f"| selecting source"
+                + (f" ({flow_class})" if flow_class is not None else ""),
+                force=False,
+            )
             candidates = [
                 source
                 for source in sources
@@ -399,6 +446,11 @@ def prepare_evolution_scenes(
             rng.shuffle(candidates)
             selected: tuple[EvolutionSourceScene, dict[str, Any]] | None = None
             for source in candidates:
+                report(
+                    f"Preparing {event_type}: {len(plans) - event_plan_start}/{scenes_per_event} "
+                    f"| checking {source.scene_dir.name}",
+                    force=False,
+                )
                 event = _select_event(
                     source,
                     spec,
@@ -410,6 +462,11 @@ def prepare_evolution_scenes(
                     selected = source, event
                     break
             if selected is None:
+                report(
+                    f"No eligible source remains for {event_type}"
+                    + (f" ({flow_class})" if flow_class is not None else "")
+                    + f" | prepared={len(plans) - event_plan_start}/{scenes_per_event}"
+                )
                 if flow_class is not None:
                     raise ValueError(
                         "Unable to generate the requested number of "
@@ -433,6 +490,11 @@ def prepare_evolution_scenes(
                 raise ValueError(
                     f"Refusing to overwrite unrecognized scene directory: {evolved_scene_dir}"
                 )
+            report(
+                f"Preparing {event_type}: {len(plans) - event_plan_start}/{scenes_per_event} complete "
+                f"| writing {evolved_scene_id}",
+                force=False,
+            )
             try:
                 _create_evolved_scene(
                     source,
@@ -465,7 +527,12 @@ def prepare_evolution_scenes(
                     event=event,
                 )
             )
+        report(
+            f"Prepared {event_type}: {len(plans) - event_plan_start}/{scenes_per_event} "
+            f"| total={len(plans)}"
+        )
 
+    report(f"Preparation complete: {len(plans)} scene(s)")
     return EvolutionPreparation(
         config=config,
         category=category,
@@ -479,6 +546,7 @@ def generate_evolution_questions(
     config_path: str | Path,
     *,
     scenes_root: str | Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> QuestionGenerationResult:
     config = load_config(config_path)
     category = config.categories["evolution"]
@@ -494,7 +562,9 @@ def generate_evolution_questions(
     )
     templates = list(template_bundle.templates)
     _validate_templates(templates, template_bundle.event_types)
-    plans = _load_evolution_plans(root, template_bundle.event_types)
+    plans = _load_evolution_plans(
+        root, template_bundle.event_types, progress=progress
+    )
     if not plans:
         raise ValueError(
             "No completed evolution scene pairs are available; run "
@@ -1965,6 +2035,8 @@ def _is_evolution_scene(scene_dir: Path) -> bool:
 def _load_evolution_plans(
     root: Path,
     event_types: tuple[EvolutionEventType, ...],
+    *,
+    progress: Callable[[str], None] | None = None,
 ) -> list[EvolutionPlan]:
     evolution_input_root = (
         root / EVOLUTION_SCENES_DIR_NAME / INPUT_DIR_NAME
@@ -1977,6 +2049,7 @@ def _load_evolution_plans(
         for event_type in event_types
     }
     plans: list[EvolutionPlan] = []
+    incomplete_count = 0
     for metadata_file in sorted(
         evolution_input_root.glob("*/metadata.json")
     ):
@@ -2013,6 +2086,23 @@ def _load_evolution_plans(
             or evolved_scene_id != metadata_file.parent.name
         ):
             continue
+        original_scene_file = (
+            root / ORIGINAL_SCENES_DIR_NAME / SCENES_DIR_NAME
+            / f"{original_scene_id}.jsonl"
+        )
+        evolved_scene_file = evolution_scenes_root / f"{evolved_scene_id}.jsonl"
+        # Input-side labels are published only after successful Twin generation.
+        # A Twin file alone may still be in progress or left by an interrupted run.
+        required_outputs = (
+            original_scene_file,
+            root / ORIGINAL_SCENES_DIR_NAME / INPUT_DIR_NAME
+            / original_scene_id / "labels.jsonl",
+            evolved_scene_file,
+            metadata_file.parent / "labels.jsonl",
+        )
+        if not all(path.is_file() for path in required_outputs):
+            incomplete_count += 1
+            continue
         if event_spec.change == "load_change":
             multiplier = _finite_number(event.get("multiplier"))
             before_demand = _finite_number(event.get("before_demand_mbps"))
@@ -2048,18 +2138,16 @@ def _load_evolution_plans(
                 event_type=event_type,
                 original_scene_id=original_scene_id,
                 evolved_scene_id=evolved_scene_id,
-                original_scene_file=(
-                    root
-                    / ORIGINAL_SCENES_DIR_NAME
-                    / SCENES_DIR_NAME
-                    / f"{original_scene_id}.jsonl"
-                ),
-                evolved_scene_file=(
-                    evolution_scenes_root / f"{evolved_scene_id}.jsonl"
-                ),
+                original_scene_file=original_scene_file,
+                evolved_scene_file=evolved_scene_file,
                 evolved_input_dir=metadata_file.parent,
                 event=dict(event),
             )
+        )
+    if progress is not None:
+        progress(
+            f"Evolution scene pairs: using {len(plans)} complete pair(s); "
+            f"skipping {incomplete_count} incomplete pair(s)."
         )
     return plans
 

@@ -1,262 +1,42 @@
 schema_version: 1
 question_type: evolution
 
-# Event types are independent of question templates. The evolution scene and
-# Twin generation stages use this catalog directly.
-# Node operating state is disabled when all adjacent links are unavailable;
-# at least one available adjacent link makes it normal.
-events:
-  - id: node_failure
-    entity_type: node
-    description: Disable one normal node and its attached interfaces and channels. A neighbor with no remaining available link also becomes disabled. Static routes remain unchanged.
-  - id: node_recovery
-    entity_type: node
-    description: Recover one node without changing the topology, traffic configuration, or static routes. It becomes operationally normal only when at least one adjacent link is available.
-  - id: channel_failure
-    entity_type: channel
-    description: Disable one normal channel. An endpoint whose adjacent links are all unavailable becomes disabled; an endpoint with a remaining available link stays normal. Static routes are not recomputed.
-  - id: channel_recovery
-    entity_type: channel
-    description: Restore one disabled or degraded channel to its normal state and original capacity without changing static routes. An isolated endpoint becomes normal when at least one adjacent link becomes available.
-  - id: interface_failure
-    entity_type: interface
-    description: Disable one normal network interface and its attached channel. An endpoint whose adjacent links are all unavailable becomes disabled; an endpoint with a remaining available link stays normal.
-  - id: interface_recovery
-    entity_type: interface
-    description: Restore one disabled network interface to normal, allowing its attached channel to operate again when no other endpoint fault exists.
-  - id: flow_load_change
-    entity_type: data_flow
-    description: Change one data flow's demand to its current value multiplied by a random factor from the configured range while keeping its endpoints, static path, and traffic model unchanged.
-  - id: flow_addition
-    entity_type: data_flow
-    description: Add one CBR data flow with a new flow ID, a randomly selected routable source-destination node pair that has no existing flow, and a demand sampled from the configured range.
-
 templates:
-  - id: TE0001
-    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0002
-    question: "How will data flow $target_data_flow_id$'s packet loss rate change if node $event_node_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0003
-    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ recovers: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0004
-    question: "How will data flow $target_data_flow_id$'s delay change if node $event_node_id$ recovers: increase or remain unchanged?"
-    answer: [increase, unchanged]
-
-  - id: TE0005
-    question: "How will data flow $target_data_flow_id$'s throughput change if channel $event_channel_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0006
-    question: "How will data flow $target_data_flow_id$'s packet loss rate change if channel $event_channel_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0007
-    question: "How will data flow $target_data_flow_id$'s throughput change if channel $event_channel_id$ recovers: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0008
-    question: "How will data flow $target_data_flow_id$'s delay change if channel $event_channel_id$ recovers: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0009
-    question: "How will data flow $target_data_flow_id$'s throughput change if interface $event_interface_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0010
-    question: "How will data flow $target_data_flow_id$'s packet loss rate change if interface $event_interface_id$ fails: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0011
-    question: "How will data flow $target_data_flow_id$'s throughput change if interface $event_interface_id$ recovers: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0012
-    question: "How will data flow $target_data_flow_id$'s delay change if interface $event_interface_id$ recovers: increase or remain unchanged?"
-    answer: [increase, unchanged]
-
-  - id: TE0013
-    question: "How will channel $target_channel_id$'s maximum directional bandwidth change when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0014
-    question: "How will data flow $event_data_flow_id$'s delay change when its demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0015
-    question: "How will node $target_node_id$'s operating state change if node $event_node_id$ fails: become disabled or remain unchanged?"
-    answer: [unchanged, disabled]
-
-  - id: TE0016
-    question: "How will node $target_node_id$'s operating state change if node $event_node_id$ recovers: recover or remain unchanged?"
-    answer: [recovered, unchanged]
-
-  - id: TE0017
-    question: "How will data flow $event_data_flow_id$'s packet loss rate change when its demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0018
-    question: "What saturation state will channel $target_channel_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: saturated or not saturated?"
-    answer: [saturated, not_saturated]
-
-  - id: TE0019
-    question: "What will be the saturation-recovery outcome for channel $target_channel_id$ when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: recovered or not recovered?"
-    answer: [recovered, not_recovered]
-
-  - id: TE0020
-    question: "What saturation state will interface $target_interface_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: saturated or not saturated?"
-    answer: [saturated, not_saturated]
-
-  - id: TE0021
-    question: "What will be the saturation-recovery outcome for interface $target_interface_id$ when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: recovered or not recovered?"
-    answer: [recovered, not_recovered]
-
-  - id: TE0022
-    question: "What operating state will data flow $event_data_flow_id$ have when added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal or unstable?"
-    answer: [normal, unstable]
-
-  - id: TE0023
-    question: "How will channel $target_channel_id$'s maximum directional bandwidth change when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
-    answer: [increase, unchanged, decrease]
-
-  - id: TE0024
-    question: "What saturation state will channel $target_channel_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: saturated or not saturated?"
-    answer: [saturated, not_saturated]
-
-  - id: TE0025
-    question: "What saturation state will interface $target_interface_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: saturated or not saturated?"
-    answer: [saturated, not_saturated]
-
-
-  # Evidence-backed operating-state predictions for every event/target pair.
-  - id: TE0026
-    question: "What operating state will node $target_node_id$ have after node $event_node_id$ fails: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0027
-    question: "What operating state will channel $target_channel_id$ have after node $event_node_id$ fails: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0028
-    question: "What operating state will interface $target_interface_id$ have after node $event_node_id$ fails: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
-
   - id: TE0029
     question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ fails: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
-
-  - id: TE0030
-    question: "What operating state will node $target_node_id$ have after node $event_node_id$ recovers: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0031
-    question: "What operating state will channel $target_channel_id$ have after node $event_node_id$ recovers: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0032
-    question: "What operating state will interface $target_interface_id$ have after node $event_node_id$ recovers: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
 
   - id: TE0033
     question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ recovers: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
 
-  - id: TE0034
-    question: "What operating state will node $target_node_id$ have after channel $event_channel_id$ fails: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0035
-    question: "What operating state will channel $target_channel_id$ have after channel $event_channel_id$ fails: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0036
-    question: "What operating state will interface $target_interface_id$ have after channel $event_channel_id$ fails: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
-
   - id: TE0037
     question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ fails: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
-
-  - id: TE0038
-    question: "What operating state will node $target_node_id$ have after channel $event_channel_id$ recovers: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0039
-    question: "What operating state will channel $target_channel_id$ have after channel $event_channel_id$ recovers: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0040
-    question: "What operating state will interface $target_interface_id$ have after channel $event_channel_id$ recovers: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
 
   - id: TE0041
     question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ recovers: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
 
-  - id: TE0042
-    question: "What operating state will node $target_node_id$ have after interface $event_interface_id$ fails: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0043
-    question: "What operating state will channel $target_channel_id$ have after interface $event_interface_id$ fails: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0044
-    question: "What operating state will interface $target_interface_id$ have after interface $event_interface_id$ fails: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
-
   - id: TE0045
     question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ fails: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
-
-  - id: TE0046
-    question: "What operating state will node $target_node_id$ have after interface $event_interface_id$ recovers: normal or disabled?"
-    answer: [normal, disabled]
-
-  - id: TE0047
-    question: "What operating state will channel $target_channel_id$ have after interface $event_interface_id$ recovers: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0048
-    question: "What operating state will interface $target_interface_id$ have after interface $event_interface_id$ recovers: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
 
   - id: TE0049
     question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ recovers: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
 
-  - id: TE0050
-    question: "What operating state will node $target_node_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: normal or disabled?"
-    answer: [normal, disabled]
-
   - id: TE0051
     question: "What operating state will channel $target_channel_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: normal, disabled, degraded, or saturated?"
     answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0052
-    question: "What operating state will interface $target_interface_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
 
   - id: TE0053
     question: "What operating state will data flow $event_data_flow_id$ have when its demand becomes $event_demand_mbps$ Mbps: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
 
-  - id: TE0054
-    question: "What operating state will node $target_node_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal or disabled?"
-    answer: [normal, disabled]
-
   - id: TE0055
     question: "What operating state will channel $target_channel_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal, disabled, degraded, or saturated?"
     answer: [normal, disabled, degraded, saturated]
-
-  - id: TE0056
-    question: "What operating state will interface $target_interface_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal, disabled, or saturated?"
-    answer: [normal, disabled, saturated]
 
   - id: TE0057
     question: "What operating state will data flow $event_data_flow_id$ have when added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal, unstable, degraded, or failed?"
