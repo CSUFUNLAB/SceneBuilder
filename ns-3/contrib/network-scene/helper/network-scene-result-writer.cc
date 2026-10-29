@@ -114,7 +114,7 @@ std::string
 ScopedLocalId(const std::string& ownerId, const std::string& prefix, uint32_t index)
 {
     std::ostringstream out;
-    out << ownerId << ":" << prefix << std::setw(6) << std::setfill('0') << index;
+    out << ownerId << prefix << std::setw(6) << std::setfill('0') << index;
     return out.str();
 }
 

@@ -1196,7 +1196,7 @@ def _load_source_scene(
         raw_id = str(row["interface_id"])
         node_id = str(row["node"])
         interface_index = int(float(row["interface_index"]))
-        public_id = f"{node_id}:IF{interface_index:06d}"
+        public_id = f"{node_id}IF{interface_index:06d}"
         public_by_raw[raw_id] = public_id
 
     faults: list[dict[str, str]] = []

@@ -954,7 +954,7 @@ def _repair_fault_entities(
         node_id = str(row["node"])
         channel_id = str(row["channel_id"])
         interface_index = int(float(row["interface_index"]))
-        public_id = f"{node_id}:IF{interface_index:06d}"
+        public_id = f"{node_id}IF{interface_index:06d}"
         affected_flow_ids = tuple(
             sorted(flow_ids_by_channel.get(channel_id, set()))
         )
