@@ -394,7 +394,7 @@ def generate_optimization_questions(
         ]
         for target_label, requested in _optimization_target_counts(
             template,
-            category.questions_per_question,
+            category.questions_per_template,
         ):
             shuffled_plans = list(matching_plans)
             rng.shuffle(shuffled_plans)
@@ -514,10 +514,10 @@ def _optimization_options(category: CategoryConfig) -> dict[str, object]:
         "channel_expansion_max_candidates": 4,
         "routing_next_hop_max_candidates": 4,
         "routing_max_destination_flows": 6,
-        "scenarios_per_template": category.questions_per_question,
+        "scenarios_per_template": category.questions_per_template,
         "fault_repair_scenarios": max(
-            category.questions_per_question,
-            category.questions_per_question * 5,
+            category.questions_per_template,
+            category.questions_per_template * 5,
         ),
         "throughput_improvement_tolerance_mbps": 0.01,
         "winner_margin_mbps": 0.01,

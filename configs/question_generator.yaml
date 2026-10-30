@@ -1,26 +1,14 @@
 seed: 42
 scenes_root: ../generated
+questions_per_template: 20
 
 categories:
   analysis:
     enabled: true
-    questions_per_question: 10
-    # 125 total: 5 per enum label; 15 per localization template.
-    questions_per_template:
-      TA0001: 10
-      TA0002: 20
-      TA0003: 15
-      TA0004: 20
-      TA0005: 10
-      TA0006: 10
-      TA0007: 10
-      TA0008: 15
-      TA0009: 15
     template_file: ../question_generator/templates/analysis.yaml
     output_file: ../generated/origin/analysis_questions.jsonl
   evolution:
     enabled: false
-    questions_per_question: 60
     template_file: ../question_generator/templates/evolution.yaml
     output_file: ../generated/evo/evolution_questions.jsonl
     options:
@@ -32,7 +20,6 @@ categories:
       scenes_per_event: 300
   optimization:
     enabled: false
-    questions_per_question: 60
     template_file: ../question_generator/templates/optimization.yaml
     output_file: ../generated/opt/optimization_questions.jsonl
     options:

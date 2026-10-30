@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import yaml
@@ -18,11 +18,10 @@ QUESTION_DATASET_DIRS = {
 class CategoryConfig:
     name: str
     enabled: bool
-    questions_per_question: int
+    questions_per_template: int
     template_file: Path
     output_file: Path
     options: dict[str, Any]
-    questions_per_template: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -41,7 +40,7 @@ def _resolve_path(value: object, base_dir: Path, name: str) -> Path:
     return path.resolve()
 
 
-def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
+def _load_category(name: str, raw: object, base_dir: Path, count: int) -> CategoryConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"categories.{name} must be a mapping")
 
@@ -49,19 +48,6 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
     if not isinstance(enabled, bool):
         raise ValueError(f"categories.{name}.enabled must be true or false")
 
-    count = raw.get("questions_per_question", 0)
-    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-        raise ValueError(f"categories.{name}.questions_per_question must be a non-negative integer")
-    if enabled and count == 0:
-        raise ValueError(f"categories.{name}.questions_per_question must be positive when enabled")
-    overrides = raw.get("questions_per_template", {})
-    if not isinstance(overrides, dict):
-        raise ValueError(f"categories.{name}.questions_per_template must be a mapping")
-    if overrides and name != "analysis":
-        raise ValueError("questions_per_template is currently supported for analysis only")
-    for template_id, quota in overrides.items():
-        if not isinstance(template_id, str) or isinstance(quota, bool) or not isinstance(quota, int) or quota < 1:
-            raise ValueError("questions_per_template must map template IDs to positive integers")
     options = raw.get("options", {})
     if not isinstance(options, dict):
         raise ValueError(f"categories.{name}.options must be a mapping")
@@ -69,7 +55,7 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
     return CategoryConfig(
         name=name,
         enabled=enabled,
-        questions_per_question=count,
+        questions_per_template=count,
         template_file=_resolve_path(
             raw.get("template_file", f"templates/{name}.yaml"),
             base_dir,
@@ -87,7 +73,6 @@ def _load_category(name: str, raw: object, base_dir: Path) -> CategoryConfig:
             f"categories.{name}.output_file",
         ),
         options=dict(options),
-        questions_per_template=dict(overrides),
     )
 
 
@@ -102,6 +87,10 @@ def load_config(config_path: str | Path) -> QuestionGeneratorConfig:
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be an integer")
 
+    count = raw.get("questions_per_template", 20)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError("questions_per_template must be a positive integer")
+
     categories_raw = raw.get("categories")
     if not isinstance(categories_raw, dict):
         raise ValueError("categories must be a mapping")
@@ -111,7 +100,7 @@ def load_config(config_path: str | Path) -> QuestionGeneratorConfig:
         raise ValueError(f"Unsupported question categories: {sorted(unknown_categories)}")
 
     categories = {
-        name: _load_category(name, categories_raw.get(name, {}), path.parent)
+        name: _load_category(name, categories_raw.get(name, {}), path.parent, count)
         for name in QUESTION_CATEGORIES
     }
     if not any(category.enabled for category in categories.values()):

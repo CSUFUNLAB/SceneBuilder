@@ -5,7 +5,7 @@ templates:
   - id: TA0001
     question: "What is the current state of node $node_id$: normal or disabled?"
     hints:
-      - "Node state describes network availability: normal means connectivity remains available; disabled means all adjacent links are unavailable."
+      - "Normal means successful data delivery between the node and a peer through at least one interface; disabled means no such delivery through any interface despite transmission attempts."
       - "An idle node is not necessarily disabled; availability concerns communication through its interfaces."
     answer:
       type: enum

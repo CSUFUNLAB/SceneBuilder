@@ -598,7 +598,7 @@ def generate_evolution_questions(
         for target_label, requested in _generation_target_counts(
             template,
             rule,
-            category.questions_per_question,
+            category.questions_per_template,
         ):
             shuffled_plans = list(matching_plans)
             rng.shuffle(shuffled_plans)
@@ -706,7 +706,7 @@ def generate_evolution_questions(
         for target_label, requested in _generation_target_counts(
             template,
             _question_rule(template),
-            category.questions_per_question,
+            category.questions_per_template,
         )
     )
     category_result = CategoryRunResult(
@@ -872,17 +872,11 @@ def _target_label_counts(
     total_count: int,
 ) -> tuple[tuple[str, int], ...]:
     labels = list(template.answer_values)
-    label_count = len(labels)
-    if total_count % label_count != 0:
-        raise ValueError(
-            f"{template.template_id} requests {total_count} questions but has "
-            f"{label_count} labels; questions_per_question must be divisible "
-            "by the label count"
-        )
-    count_per_label = total_count // label_count
+    count_per_label, remainder = divmod(total_count, len(labels))
     return tuple(
-        (target_label, count_per_label)
-        for target_label in labels
+        (target_label, count_per_label + (index < remainder))
+        for index, target_label in enumerate(labels)
+        if count_per_label + (index < remainder) > 0
     )
 
 

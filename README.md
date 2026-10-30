@@ -655,10 +655,10 @@ generated/
 
 - `scenes_root`：包含场景及孪生体的目录。
 - `seed`：问题实体选择的随机种子。
-- `questions_per_question`：每条问题模板期望生成的总数量；分析模板在允许的确定答案之间
-  分配目标数量，演化模板按实际状态取样，证据不足时实际数量可能更少。
-- `questions_per_template`：analysis 的逐模板数量覆盖；当前两分类模板各 10 题、三分类
-  15 题、四分类各 20 题、两个定位模板各 15 题，共 125 题。分类模板的数量必须能被标签数整除。
+- 顶层 `questions_per_template: 20`：统一设置每条模板期望生成的题数，三类任务共用，
+  不配置模板编号或逐模板覆盖。分析分类题按模板声明的标签尽量均分，例如三分类为 7、7、6；
+  定位题每模板 20 题。当前 9 个分析模板共目标 180 题。演化状态题仍按实际状态取样，
+  证据不足时实际数量可能更少。
 - `template_file`：该类问题使用的模板文件。
 - `output_file`：生成问题的 JSONL 输出位置。
 - `enabled`：是否启用对应的问题类别。
@@ -713,7 +713,7 @@ STN-Runtime 的 `construct -m kb` 将提示原样复制到知识库，不由模�
 `scenarios_per_template` 设置扩容和路由两类优化动作在仿真前构造的候选组数；同一组信道扩容 Twin
 供 TO0001/TO0003/TO0004 共用，同一组路由调整 Twin 供 TO0002/TO0005/TO0006 共用，
 同一组故障修复 Twin 供 TO0007/TO0008/TO0009 共用，不会为每个指标重复仿真。实际问题数
-仍由 `questions_per_question` 限制。
+仍由顶层 `questions_per_template` 限制。
 
 吞吐量使用 `throughput_improvement_tolerance_mbps` 和 `winner_margin_mbps` 作为相对基准的
 最小提升及第一名领先量。延迟使用 `delay_improvement_tolerance_ms` 和

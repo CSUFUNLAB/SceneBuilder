@@ -178,14 +178,10 @@ def _target_counts(template: QuestionTemplate, total_count: int) -> list[tuple[s
     else:
         targets = list(template.answer_values)
 
-    label_count = len(targets)
-    if total_count % label_count != 0:
-        raise ValueError(
-            f"{template.template_id} requests {total_count} questions but has {label_count} labels; "
-            "questions_per_question must be divisible by the label count"
-        )
-    count_per_label = total_count // label_count
-    return [(label, count_per_label) for label in targets]
+    count_per_label, remainder = divmod(total_count, len(targets))
+    return [(label, count_per_label + (index < remainder))
+            for index, label in enumerate(targets)
+            if count_per_label + (index < remainder) > 0]
 
 
 def _write_questions(path: Path, questions: list[GeneratedQuestion]) -> None:
@@ -210,9 +206,6 @@ def _generate_category(
     if not templates:
         raise ValueError(f"Enabled category {category_config.name} has no question templates")
 
-    unknown = set(category_config.questions_per_template) - {t.template_id for t in templates}
-    if unknown:
-        raise ValueError(f"Unknown template IDs in questions_per_template: {sorted(unknown)}")
     generator = _generator_for(category_config.name)
     questions: list[GeneratedQuestion] = []
     counts: list[GenerationCount] = []
@@ -221,9 +214,7 @@ def _generate_category(
     for template in templates:
         for target_label, requested_count in _target_counts(
             template,
-            category_config.questions_per_template.get(
-                template.template_id, category_config.questions_per_question,
-            ),
+            category_config.questions_per_template,
         ):
             generated_count = 0
             candidate_scene_files = list(scene_files)
