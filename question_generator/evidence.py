@@ -307,11 +307,11 @@ def _complete_flow_path(
 
 
 def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
-    """Infer local port faults independently of external link availability.
+    """Infer node state from faults of its own interfaces.
 
-    Whole-node silence is ambiguous without an independent liveness observation:
-    an idle node or one whose ports have all failed can produce the same counters.
-    Never use the answer label or the injected fault count to resolve that case.
+    Confirmed failure of every interface is node_down, regardless of the physical
+    cause. Partial failure needs both a failed and a working interface; silence
+    or an external link outage alone cannot establish a local interface fault.
     """
     raw_interfaces = node.relations.get("interfaces")
     if not isinstance(raw_interfaces, list) or not raw_interfaces:
@@ -331,9 +331,9 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
             return None
         states.append(infer_interface_state(scene, interface))
 
-    # An offered sample behind a failed port is evidence of a working local
-    # network stack. This remains interface_fault when every local port fails.
-    if "disabled" in states:
+    if all(state == "disabled" for state in states):
+        return "node_down"
+    if "disabled" in states and any(state in {"normal", "saturated"} for state in states):
         return "interface_fault"
     if all(state in {"normal", "saturated"} for state in states):
         return "normal"
@@ -586,9 +586,9 @@ def infer_flow_failure_locations(
 ) -> tuple[str, ...] | None:
     """Locate observed interruptions on this flow's declared path.
 
-    Keep the physical node, interface, or channel identity. A link operating
-    outage alone cannot locate its cause. Independently established whole-node
-    failure covers its own ports; unsampled downstream silence
+    Keep node, interface, and channel locations distinct. A link operating
+    outage alone cannot locate its cause. Confirmed failure of every interface
+    is one node_down location covering those interfaces; unsampled downstream silence
     is not an interruption observation. Multiple locations are allowed,
     independent of injected faults or events on unrelated paths.
     """

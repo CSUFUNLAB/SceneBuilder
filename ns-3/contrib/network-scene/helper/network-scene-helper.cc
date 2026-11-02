@@ -62,8 +62,9 @@ constexpr bool LEGACY_RUNTIME_EVENTS_ENABLED = false;
 /**
  * Block failed interfaces before the base device can enqueue or transmit.
  * PointToPointNetDevice::Send checks the virtual IsLinkUp() and reports a
- * MacTxDrop on failure. Keeping IPv4 up separately preserves a healthy node's
- * send attempts without turning them into physical interface transmissions.
+ * MacTxDrop on failure. Keeping IPv4 up separately preserves offered traffic
+ * for both local port faults and a node fault affecting every local port,
+ * without turning those attempts into physical interface transmissions.
  * Scene faults are fixed before traffic starts; changing this gate does not
  * cancel transmissions that have already started in a runtime event model.
  */
@@ -714,18 +715,11 @@ NetworkSceneHelper::ReconcileInterfaceStates()
         }
 
         Ptr<Ipv4> ipv4 = m_nodes.Get(nodeIt->second)->GetObject<Ipv4>();
-        // Keep a healthy node's static egress route and IPv4 send attempts
-        // observable, including attempts directed at its own failed interface.
-        // The device gate below prevents those attempts from reaching the wire.
-        // A failed node itself remains silent.
-        if (m_nodeRecords[nodeIt->second].state != "disabled")
-        {
-            ipv4->SetUp(ipv4It->second);
-        }
-        else
-        {
-            ipv4->SetDown(ipv4It->second);
-        }
+        // A scene node fault is failure of all its interfaces. Keep the same
+        // static routes and IPv4 offered-traffic observation as individual port
+        // faults; SetDown would remove routes and hide those send attempts.
+        // The device gate and receive error model still prevent actual traffic.
+        ipv4->SetUp(ipv4It->second);
         Ptr<ScenePointToPointNetDevice> device =
             DynamicCast<ScenePointToPointNetDevice>(ipv4->GetNetDevice(ipv4It->second));
         auto channelIt = m_channelIndexById.find(iface.channelId);

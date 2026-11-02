@@ -5,9 +5,9 @@ templates:
   - id: TA0001
     question: "What is the current state of node $node_id$: normal, interface_fault, or node_down?"
     explanation:
-      - "Normal means the node itself and all of its interfaces are free of physical faults. Interface_fault means the node itself remains operational but at least one of its own interfaces has a physical fault."
-      - "Node_down means the entire node has failed and all of its interfaces stop transmitting and receiving. Failure of every interface does not by itself establish a node fault."
-      - "A failed neighboring node or external channel does not establish a fault in this node or its interfaces. Silence or successful delivery through only one interface does not establish the condition of every interface."
+      - "Normal means all of the node's interfaces are operational; interface_fault means some have failed while at least one remains operational."
+      - "Node_down means all of the node's interfaces have failed, from a whole-node fault or separate interface faults; single-interface nodes also qualify."
+      - "Neighboring node or external channel faults do not establish faults in this node or its interfaces. Silence or successful delivery through one interface does not establish every interface's condition."
     answer:
       type: enum
       values: [normal, interface_fault, node_down]
@@ -15,11 +15,11 @@ templates:
   - id: TA0002
     question: "What is the current state of channel $channel_id$: normal, disabled, degraded, or saturated?"
     explanation:
-      - "Saturated means traffic approaches the channel's original capacity. Interface queue saturation alone does not imply channel saturation."
-      - "Degraded means reduced forwarding capability cannot serve the current load, even though traffic remains below the original capacity. Saturation at a reduced capacity is classified as degraded."
-      - "Normal means the channel serves the current load without saturation or impaired delivery. Reduced capacity that still serves the current load is normal."
-      - "Disabled means communication is unavailable despite transmission attempts. Silence alone does not establish an outage."
-      - "A channel fault interrupts delivery while its endpoint interfaces can still physically transmit. Actual transmission at both endpoints with no reception across the channel distinguishes a channel fault from an interface that cannot transmit or receive. Offered traffic alone is not actual transmission."
+      - "Saturated means traffic approaches the channel's original capacity; interface queue saturation alone does not imply channel saturation."
+      - "Degraded means reduced forwarding capability cannot serve the current load despite traffic below original capacity; saturation at reduced capacity is also degraded."
+      - "Normal means current load is served without saturation or impaired delivery, even if capacity has been reduced."
+      - "Disabled means communication is unavailable despite transmission attempts; silence alone does not establish an outage."
+      - "Channel faults block delivery while endpoint interfaces can still physically transmit. Actual transmission at both ends with no reception distinguishes channel failure from an interface unable to transmit or receive. Offered traffic is not actual transmission."
     answer:
       type: enum
       values: [normal, disabled, degraded, saturated]
@@ -27,11 +27,11 @@ templates:
   - id: TA0003
     question: "What is the current state of interface $interface_id$: normal, disabled, or saturated?"
     explanation:
-      - "Normal means the local interface remains operational without queue saturation. Disabled means the interface itself or its host node has failed, so the interface cannot physically transmit or receive."
-      - "An unavailable external channel or failed peer interface does not make this local interface disabled. An idle interface is not necessarily disabled."
-      - "Interface transmission counts describe packets that actually start physical transmission; offered traffic describes local network-layer attempts to send through this interface. A node can offer traffic even when its failed interface transmits nothing."
-      - "A failed interface has zero actual transmission and zero reception. An interface that physically transmits remains operational even when its peer receives nothing; the peer's ability to transmit must also be considered before attributing the interruption to the channel."
-      - "Saturated means the interface's transmit queue is full or nearly full during active communication. Interface queue saturation and channel capacity saturation are distinct."
+      - "Normal means the local interface works without queue saturation. Disabled means interface or host node failure prevents physical transmission and reception."
+      - "External channel or peer interface failure does not disable the local interface; idleness alone does not establish failure."
+      - "Interface transmission counts packets that start physical transmission; offered traffic counts local network-layer attempts through this interface, even when a failed interface transmits nothing."
+      - "A failed interface has zero actual transmission and reception. Physical transmission establishes local operation even without peer reception; the peer's transmission ability also matters when attributing interruption to the channel."
+      - "Saturated means the transmit queue is full or nearly full during active communication; this differs from channel capacity saturation."
     answer:
       type: enum
       values: [normal, disabled, saturated]
@@ -58,7 +58,7 @@ templates:
     question: "Which congestion pattern applies to data flow $data_flow_id$: a single bottleneck channel or multiple saturated channels?"
     explanation:
       - "Single_channel_bottleneck means congestion is concentrated at a single channel on the flow's path; multi_channel_saturation means several path channels are saturated."
-      - "Channel saturation means traffic approaches the channel's original capacity; interface queue saturation is a separate concept."
+      - "Channel saturation means the combined traffic of all flows in at least one direction approaches the channel's original per-direction capacity. Opposite-direction traffic is not added; the target flow alone does not represent channel load. Interface queue saturation is a separate concept."
     answer:
       type: enum
       values: [single_channel_bottleneck, multi_channel_saturation]
@@ -81,10 +81,10 @@ templates:
   - id: TA0009
     question: "Which failed node, channel, or interface is responsible for data flow $data_flow_id$'s failure?"
     explanation:
-      - "A fault location is a node, channel, or interface on the flow's path where communication is interrupted. Offered traffic means a local attempt to send, while actual interface transmission means physical transmission has started. Idle zero traffic alone does not establish a fault."
-      - "An interface fault stops both physical transmission and reception at that interface despite offered traffic. Its fault location is the complete node-qualified interface ID rather than the owning node or channel ID."
-      - "A channel fault prevents delivery while its endpoints can still physically transmit. Actual transmission at both endpoint interfaces with zero reception at their peers identifies a channel fault. One-sided transmission without reception alone cannot rule out a failed receiving interface."
-      - "A node fault means the entire node has failed. Unavailability of all adjacent links or interfaces alone does not distinguish a node fault from separate interface or channel faults."
-      - "Node IDs identify independently established whole-node faults, while channel IDs identify channel faults. Distinct interface and channel faults remain distinct fault locations."
+      - "Fault locations are nodes, channels, or interfaces interrupting communication on the flow's path. Offered traffic means local send attempts; actual transmission means physical sending has started. Idle zero traffic alone does not establish failure."
+      - "An interface fault stops physical transmission and reception despite offered traffic. Partial interface failure uses the complete node-qualified interface ID."
+      - "Channel faults prevent delivery while endpoints can still physically transmit. Actual transmission at both endpoints with zero peer reception identifies channel failure; one-sided transmission without reception cannot rule out receiving-interface failure."
+      - "Failure of all a node's interfaces means node_down, from either a whole-node fault or separate interface faults. The node and failed interfaces form one location using the node ID."
+      - "External channel failures do not make local interfaces faulty. Independent channel faults remain separate locations identified by channel IDs, even when connected to node_down nodes."
     answer:
       type: entity_id

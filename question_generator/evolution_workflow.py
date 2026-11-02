@@ -1048,8 +1048,8 @@ def _choose_event_entity(
         if source.physical_faults:
             return None
     elif spec.change == "recovery":
-        # Recovery repairs the selected injected physical fault. A node's
-        # interface_fault label does not identify a failure of the node itself.
+        # Recovery repairs the selected injected physical fault. Aggregate node
+        # labels do not identify which physical entity was injected as faulty.
         matching = [
             fault
             for fault in source.physical_faults

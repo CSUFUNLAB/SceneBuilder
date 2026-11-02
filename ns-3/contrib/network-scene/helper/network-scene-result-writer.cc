@@ -198,7 +198,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::vector<std::string>> interfacesByNode;
     std::map<std::string, std::string> outputInterfaceIdById;
     std::map<std::string, ChannelRecord> channelById;
-    std::map<std::string, bool> hasInterfaceFaultByNode;
+    std::map<std::string, std::size_t> interfaceFaultCountByNode;
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
     std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
     std::map<std::pair<std::string, std::string>, std::string> interfaceIdByChannelNode;
@@ -256,7 +256,10 @@ NetworkSceneHelper::WriteResults() const
         outputInterfaceIdById[iface.id] =
             ScopedLocalId(iface.node, "IF", iface.interfaceIndex);
         interfacesByNode[iface.node].push_back(outputInterfaceIdById[iface.id]);
-        hasInterfaceFaultByNode[iface.node] |= iface.state == "disabled";
+        if (iface.state == "disabled")
+        {
+            ++interfaceFaultCountByNode[iface.node];
+        }
         channelIdByNodeInterface[{iface.node, iface.interfaceIndex}] = iface.channelId;
         interfaceIdByChannelNode[{iface.channelId, iface.node}] = iface.id;
         auto channelIt = channelById.find(iface.channelId);
@@ -516,12 +519,15 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
-        // Labels describe local physical faults, independently of peer/link
-        // availability. Whole-node failure takes precedence over port faults.
-        const std::string state = node.state == "disabled"
+        // All local interfaces failing is node_down, including a single-port
+        // node. Peer or channel failures do not change this node's label.
+        const auto interfaceCount = interfacesByNode[node.id].size();
+        const auto failedInterfaceCount = interfaceFaultCountByNode[node.id];
+        const bool allInterfacesFailed =
+            interfaceCount > 0 && failedInterfaceCount == interfaceCount;
+        const std::string state = (node.state == "disabled" || allInterfacesFailed)
                                       ? "node_down"
-                                      : (hasInterfaceFaultByNode[node.id] ? "interface_fault"
-                                                                        : "normal");
+                                      : (failedInterfaceCount > 0 ? "interface_fault" : "normal");
         nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
                                   ",\"label\":" + JsonString(state) + "}");
         nodeStateById[node.id] = state;
@@ -824,8 +830,8 @@ NetworkSceneHelper::WriteResults() const
 
         if (flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
         {
-            // Preserve the physical fault's entity type. A whole-node failure
-            // covers its own ports; an interface fault is never a channel ID.
+            // A node_down location covers all of its failed ports. Other
+            // interface faults and independent channel faults stay distinct.
             std::set<std::string> failedNodes;
             for (const auto& nodeId : pathNodesByFlow[flow.id])
             {
