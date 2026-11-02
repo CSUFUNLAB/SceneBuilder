@@ -149,7 +149,7 @@ class NetworkSceneHelper
     void InstallFlowMonitor();
     void ApplySceneEvent(std::string entityType, std::string entityId, std::string eventType, double rateMultiplier);
     void ApplyFlowRateEvent(const std::string& flowId, const std::string& eventType, double rateMultiplier);
-    /** Apply physical packet loss while preserving healthy nodes' send observations. */
+    /** Gate failed devices while preserving healthy nodes' IPv4 send attempts. */
     void ReconcileInterfaceStates();
     bool IsChannelOperational(const ChannelRecord& channel) const;
     bool IsInterfaceOperational(const InterfaceRecord& iface) const;
@@ -188,6 +188,7 @@ class NetworkSceneHelper
     std::map<std::string, std::string> m_peerInterfaceById;
     std::map<std::string, PacketCounters> m_nodeCounters;
     std::map<std::string, PacketCounters> m_interfaceCounters;
+    std::map<std::string, PacketCounters> m_interfaceOfferedCounters;
     std::map<std::pair<std::string, std::string>, PacketCounters> m_interfaceFlowCounters;
     std::map<std::string, Ptr<QueueDisc>> m_queueDiscs;
     std::map<std::string, FlowRuntime> m_flowRuntimeById;

@@ -9,7 +9,7 @@ strategies:
   - id: channel_expansion
     description: Set the configured bandwidth_mbps of exactly one explicitly listed operational channel to the target capacity stated in the question while leaving all other scene inputs unchanged. The target capacity is the same for every candidate and is greater than every candidate's current capacity.
   - id: fault_repair
-    description: Compare exactly two counterfactual repair choices for two explicitly listed failed nodes, channels, or interfaces. Each candidate Twin contains only the disabled failure that would remain after repairing the other entity, while topology, routing, capacity, traffic demand, and all unrelated physical states remain unchanged.
+    description: Compare exactly two counterfactual repair choices for two explicitly listed failed nodes, channels, or interfaces. A node failure disables the entire node and all its interfaces; an interface failure stops only that local interface from physically transmitting and receiving while its host node and peer interface can remain operational. A channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each candidate Twin contains only the physical failure that would remain after repairing the other entity, while topology, routing, capacity, traffic demand, and all unrelated physical states remain unchanged.
 
 # Candidate alternatives are listed in each generated question. Emit a
 # question only when at least two feasible candidates exist. Use the concrete
@@ -43,11 +43,20 @@ templates:
   - id: TO0007
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the highest total network throughput?
+    explanation:
+      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
+      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."
 
   - id: TO0008
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest packet-weighted mean end-to-end delay across all data flows without resulting in a higher network-wide aggregate packet loss rate than the alternative repair?
+    explanation:
+      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
+      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."
 
   - id: TO0009
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest network-wide aggregate packet loss rate?
+    explanation:
+      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
+      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."

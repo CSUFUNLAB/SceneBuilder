@@ -11,12 +11,10 @@ from .utils.validation import validate_scene_config
 
 
 @dataclass(frozen=True)
-class TopologySourceConfig:
+class TopologyConfig:
     name: str
     type: str
-    enabled: bool
-    root_dirs: list[Path]
-    glob_patterns: list[str]
+    file: Path
 
 
 @dataclass(frozen=True)
@@ -26,7 +24,7 @@ class SceneConfig:
     scenes_per_topology: int
     max_topology_nodes: int
     scene_duration: float
-    topology_sources: list[TopologySourceConfig]
+    topology: TopologyConfig
     link_generation: dict[str, Any]
     interfaces: dict[str, Any]
     nodes: dict[str, Any]
@@ -37,11 +35,6 @@ class SceneConfig:
     events: dict[str, Any]
     config_path: Path
 
-
-_DEFAULT_GLOBS: dict[str, list[str]] = {
-    "brite": ["**/*.brite", "**/*.BRITE"],
-    "topologyzoo": ["**/*.gml"],
-}
 
 _DEFAULT_LINK_CONFIG = {
     "mode": "pure_random",
@@ -206,51 +199,23 @@ def _deep_merge(default: dict[str, Any], override: dict[str, Any] | None) -> dic
     return result
 
 
-def _parse_topology_sources(raw_sources: Any, base_dir: Path) -> list[TopologySourceConfig]:
-    if not isinstance(raw_sources, list) or not raw_sources:
-        raise ValueError("topology_sources must be a non-empty list")
+def _parse_topology(raw_topology: Any, base_dir: Path) -> TopologyConfig:
+    if not isinstance(raw_topology, dict) or not raw_topology:
+        raise ValueError("topology must be a mapping with type and file")
 
-    parsed: list[TopologySourceConfig] = []
-    for source in raw_sources:
-        if not isinstance(source, dict):
-            raise ValueError("Each topology source must be a mapping")
-        if "weight" in source:
-            raise ValueError("topology_sources[].weight has been removed; use enabled")
+    topology_type = str(raw_topology.get("type", "")).strip()
+    if not topology_type:
+        raise ValueError("topology.type is required")
 
-        source_type = str(source.get("type", "")).strip()
-        if not source_type:
-            raise ValueError("Topology source type is required")
+    file_path = raw_topology.get("file")
+    if not isinstance(file_path, (str, Path)) or not str(file_path).strip():
+        raise ValueError("topology.file must be a non-empty path to a single topology file")
 
-        root_dirs_raw = source.get("paths")
-        if root_dirs_raw is None:
-            root_dirs_raw = source.get("root_dirs")
-        if root_dirs_raw is None:
-            root_dirs_raw = source.get("root_dir")
-        if root_dirs_raw is None:
-            raise ValueError(f"Topology source {source.get('name', '<unknown>')} missing root_dir/paths")
-
-        if isinstance(root_dirs_raw, (str, Path)):
-            root_dirs = [_resolve_path(base_dir, root_dirs_raw)]
-        elif isinstance(root_dirs_raw, list) and root_dirs_raw:
-            root_dirs = [_resolve_path(base_dir, item) for item in root_dirs_raw]
-        else:
-            raise ValueError("root_dir/paths must be a non-empty string or list")
-
-        glob_patterns = source.get("glob_patterns")
-        if not glob_patterns:
-            glob_patterns = _DEFAULT_GLOBS.get(source_type, ["**/*"])
-
-        parsed.append(
-            TopologySourceConfig(
-                name=str(source.get("name", source_type)),
-                type=source_type,
-                enabled=bool(source.get("enabled", True)),
-                root_dirs=root_dirs,
-                glob_patterns=[str(pattern) for pattern in glob_patterns],
-            )
-        )
-
-    return parsed
+    return TopologyConfig(
+        name=str(raw_topology.get("name", topology_type)),
+        type=topology_type,
+        file=_resolve_path(base_dir, file_path),
+    )
 
 
 def _normalize_flow_feature_config(raw_flow_feature: Any) -> dict[str, Any] | None:
@@ -313,6 +278,8 @@ def load_config(config_path: str | Path) -> SceneConfig:
         raise ValueError("Config root must be a YAML mapping")
     if "num_scenes" in raw:
         raise ValueError("num_scenes has been removed; use scenes_per_topology")
+    if "topology_sources" in raw:
+        raise ValueError("topology_sources has been removed; use topology.type and topology.file to select one file")
     if "nics" in raw:
         raise ValueError("nics has been renamed to interfaces; update the scene config")
     fault_options = raw.get("fault_generation")
@@ -333,7 +300,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
     max_topology_nodes = int(raw.get("max_topology_nodes", 50))
     scene_duration = float(raw.get("scene_duration", 300.0))
 
-    topology_sources = _parse_topology_sources(raw.get("topology_sources"), base_dir)
+    topology = _parse_topology(raw.get("topology"), base_dir)
 
     raw_link_generation = raw.get("link_generation")
     raw_interfaces = raw.get("interfaces")
@@ -386,7 +353,7 @@ def load_config(config_path: str | Path) -> SceneConfig:
         scenes_per_topology=scenes_per_topology,
         max_topology_nodes=max_topology_nodes,
         scene_duration=scene_duration,
-        topology_sources=topology_sources,
+        topology=topology,
         link_generation=link_generation,
         interfaces=interfaces,
         nodes=nodes,

@@ -198,7 +198,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::vector<std::string>> interfacesByNode;
     std::map<std::string, std::string> outputInterfaceIdById;
     std::map<std::string, ChannelRecord> channelById;
-    std::map<std::string, bool> hasOperationalChannelByNode;
+    std::map<std::string, bool> hasInterfaceFaultByNode;
     std::map<std::pair<std::string, uint32_t>, std::string> nextNodeByNodeInterface;
     std::map<std::pair<std::string, uint32_t>, std::string> channelIdByNodeInterface;
     std::map<std::pair<std::string, std::string>, std::string> interfaceIdByChannelNode;
@@ -250,15 +250,13 @@ NetworkSceneHelper::WriteResults() const
     for (const auto& channel : m_channelRecords)
     {
         channelById[channel.id] = channel;
-        const bool operational = IsChannelOperational(channel);
-        hasOperationalChannelByNode[channel.src] |= operational;
-        hasOperationalChannelByNode[channel.dst] |= operational;
     }
     for (const auto& iface : m_interfaceRecords)
     {
         outputInterfaceIdById[iface.id] =
             ScopedLocalId(iface.node, "IF", iface.interfaceIndex);
         interfacesByNode[iface.node].push_back(outputInterfaceIdById[iface.id]);
+        hasInterfaceFaultByNode[iface.node] |= iface.state == "disabled";
         channelIdByNodeInterface[{iface.node, iface.interfaceIndex}] = iface.channelId;
         interfaceIdByChannelNode[{iface.channelId, iface.node}] = iface.id;
         auto channelIt = channelById.find(iface.channelId);
@@ -412,8 +410,11 @@ NetworkSceneHelper::WriteResults() const
     }
 
     auto channelUnavailabilityCause = [&](const ChannelRecord& channel) {
-        bool hasConnectedNodeFault = false;
-        bool hasChannelOrInterfaceFault = channel.state == "disabled";
+        std::set<std::string> causes;
+        if (channel.state == "disabled")
+        {
+            causes.insert("channel_fault");
+        }
         for (const auto& interfaceId : channel.interfaceIds)
         {
             auto interfaceIt = m_interfaceIndexById.find(interfaceId);
@@ -422,21 +423,18 @@ NetworkSceneHelper::WriteResults() const
                 continue;
             }
             const auto& iface = m_interfaceRecords[interfaceIt->second];
-            hasChannelOrInterfaceFault =
-                hasChannelOrInterfaceFault || iface.state == "disabled";
             auto nodeIt = m_nodeIndexById.find(iface.node);
             if (nodeIt != m_nodeIndexById.end() &&
                 m_nodeRecords[nodeIt->second].state == "disabled")
             {
-                hasConnectedNodeFault = true;
+                causes.insert("connected_node_fault");
+            }
+            else if (iface.state == "disabled")
+            {
+                causes.insert("interface_fault");
             }
         }
-        if (hasConnectedNodeFault == hasChannelOrInterfaceFault)
-        {
-            return std::string{};
-        }
-        return hasConnectedNodeFault ? std::string{"connected_node_fault"}
-                                     : std::string{"channel_or_interface_fault"};
+        return causes.size() == 1 ? *causes.begin() : std::string{};
     };
 
     for (const auto& iface : m_interfaceRecords)
@@ -444,8 +442,13 @@ NetworkSceneHelper::WriteResults() const
         auto counters = m_interfaceCounters.find(iface.id) == m_interfaceCounters.end()
                             ? PacketCounters{}
                             : m_interfaceCounters.at(iface.id);
+        auto offered = m_interfaceOfferedCounters.find(iface.id) == m_interfaceOfferedCounters.end()
+                           ? PacketCounters{}
+                           : m_interfaceOfferedCounters.at(iface.id);
         double txRateMbps =
             counters.txBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
+        double offeredRateMbps =
+            offered.txBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         double rxRateMbps = counters.rxBytes * 8.0 / duration / 1000000.0 * m_valueScaleFactor;
         uint32_t currentQueuePackets = GetCurrentQueuePackets(iface.id);
         double queueUtilization =
@@ -466,6 +469,8 @@ NetworkSceneHelper::WriteResults() const
                << ",\"properties\":{\"interface_index\":" << iface.interfaceIndex
                << ",\"rx_rate_mbps\":" << rxRateMbps
                << ",\"tx_rate_mbps\":" << txRateMbps
+               << ",\"offered_rate_mbps\":" << offeredRateMbps
+               << ",\"offered_packets\":" << offered.txPackets
                << ",\"queue_policy\":" << JsonString(iface.queuePolicy)
                << ",\"queue_size_packets\":" << iface.queueSizePackets
                << ",\"queue_current_packets\":" << outputCurrentQueuePackets
@@ -485,19 +490,12 @@ NetworkSceneHelper::WriteResults() const
             ",\"label\":" + JsonString(state) + "}");
         if (state == "disabled")
         {
-            auto channelIt = channelById.find(iface.channelId);
-            if (channelIt != channelById.end())
-            {
-                const std::string cause =
-                    channelUnavailabilityCause(channelIt->second);
-                if (!cause.empty())
-                {
-                    interfaceUnavailabilityCauseLabels.push_back(
-                        "{\"entity_id\":" +
-                        JsonString(outputInterfaceIdById[iface.id]) +
-                        ",\"label\":" + JsonString(cause) + "}");
-                }
-            }
+            const bool nodeFailed =
+                m_nodeRecords[m_nodeIndexById.at(iface.node)].state == "disabled";
+            const std::string cause = nodeFailed ? "connected_node_fault" : "interface_fault";
+            interfaceUnavailabilityCauseLabels.push_back(
+                "{\"entity_id\":" + JsonString(outputInterfaceIdById[iface.id]) +
+                ",\"label\":" + JsonString(cause) + "}");
         }
     }
 
@@ -518,13 +516,12 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
-        // The exported state describes network availability; physical fault
-        // attribution continues to use node.state without modification.
-        const auto channelAvailability = hasOperationalChannelByNode.find(node.id);
-        const bool isolatedByOutage =
-            channelAvailability != hasOperationalChannelByNode.end() &&
-            !channelAvailability->second;
-        const std::string state = isolatedByOutage ? "disabled" : "normal";
+        // Labels describe local physical faults, independently of peer/link
+        // availability. Whole-node failure takes precedence over port faults.
+        const std::string state = node.state == "disabled"
+                                      ? "node_down"
+                                      : (hasInterfaceFaultByNode[node.id] ? "interface_fault"
+                                                                        : "normal");
         nodeStateLabels.push_back("{\"entity_id\":" + JsonString(node.id) +
                                   ",\"label\":" + JsonString(state) + "}");
         nodeStateById[node.id] = state;
@@ -539,8 +536,8 @@ NetworkSceneHelper::WriteResults() const
         std::vector<std::string> carriedFlowRelations;
         for (const auto& ifaceId : channel.interfaceIds)
         {
-            auto countersIt = m_interfaceCounters.find(ifaceId);
-            if (countersIt != m_interfaceCounters.end())
+            auto countersIt = m_interfaceOfferedCounters.find(ifaceId);
+            if (countersIt != m_interfaceOfferedCounters.end())
             {
                 const double offeredMbps =
                     countersIt->second.txBytes * 8.0 / duration / 1000000.0 *
@@ -827,26 +824,36 @@ NetworkSceneHelper::WriteResults() const
 
         if (flowStateById[flow.id] == "failed" && pathChannels.size() >= 2)
         {
-            // Locate network unavailability on this flow's path. An isolated
-            // node represents its incident outages, regardless of their cause.
-            std::set<std::string> isolatedNodes;
+            // Preserve the physical fault's entity type. A whole-node failure
+            // covers its own ports; an interface fault is never a channel ID.
+            std::set<std::string> failedNodes;
             for (const auto& nodeId : pathNodesByFlow[flow.id])
             {
-                if (nodeStateById[nodeId] == "disabled")
+                if (nodeStateById[nodeId] == "node_down")
                 {
-                    isolatedNodes.insert(nodeId);
+                    failedNodes.insert(nodeId);
                 }
             }
-            std::set<std::string> unavailableLocations = isolatedNodes;
+            std::set<std::string> unavailableLocations = failedNodes;
             for (const auto& channelId : pathChannels)
             {
                 const auto channelIt = channelById.find(channelId);
-                if (channelIt != channelById.end() &&
-                    channelStateById[channelId] == "disabled" &&
-                    isolatedNodes.count(channelIt->second.src) == 0 &&
-                    isolatedNodes.count(channelIt->second.dst) == 0)
+                if (channelIt == channelById.end())
+                {
+                    continue;
+                }
+                const auto& channel = channelIt->second;
+                if (channel.state == "disabled")
                 {
                     unavailableLocations.insert(channelId);
+                }
+                for (const auto& interfaceId : channel.interfaceIds)
+                {
+                    const auto& iface = m_interfaceRecords.at(m_interfaceIndexById.at(interfaceId));
+                    if (iface.state == "disabled" && failedNodes.count(iface.node) == 0)
+                    {
+                        unavailableLocations.insert(outputInterfaceIdById.at(interfaceId));
+                    }
                 }
             }
             if (unavailableLocations.size() == 1)

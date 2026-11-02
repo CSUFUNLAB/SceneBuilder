@@ -5,6 +5,7 @@
 #include "ns3/network-scene-traffic.h"
 
 #include "ns3/data-rate.h"
+#include "ns3/drop-tail-queue.h"
 #include "ns3/error-model.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/inet-socket-address.h"
@@ -17,10 +18,11 @@
 #include "ns3/ipv4-static-routing.h"
 #include "ns3/log.h"
 #include "ns3/mac48-address.h"
+#include "ns3/net-device-queue-interface.h"
 #include "ns3/node.h"
 #include "ns3/on-off-helper.h"
 #include "ns3/packet-sink-helper.h"
-#include "ns3/point-to-point-helper.h"
+#include "ns3/point-to-point-channel.h"
 #include "ns3/point-to-point-net-device.h"
 #include "ns3/ppp-header.h"
 #include "ns3/queue-disc.h"
@@ -56,6 +58,40 @@ namespace
 {
 
 constexpr bool LEGACY_RUNTIME_EVENTS_ENABLED = false;
+
+/**
+ * Block failed interfaces before the base device can enqueue or transmit.
+ * PointToPointNetDevice::Send checks the virtual IsLinkUp() and reports a
+ * MacTxDrop on failure. Keeping IPv4 up separately preserves a healthy node's
+ * send attempts without turning them into physical interface transmissions.
+ * Scene faults are fixed before traffic starts; changing this gate does not
+ * cancel transmissions that have already started in a runtime event model.
+ */
+class ScenePointToPointNetDevice : public PointToPointNetDevice
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::ScenePointToPointNetDevice")
+                                .SetParent<PointToPointNetDevice>()
+                                .SetGroupName("NetworkScene")
+                                .AddConstructor<ScenePointToPointNetDevice>();
+        return tid;
+    }
+
+    void SetOperational(bool operational)
+    {
+        m_operational = operational;
+    }
+
+    bool IsLinkUp() const override
+    {
+        return m_operational && PointToPointNetDevice::IsLinkUp();
+    }
+
+  private:
+    bool m_operational{true};
+};
 
 std::pair<std::string, uint32_t>
 SplitCidr(const std::string& value)
@@ -302,6 +338,7 @@ NetworkSceneHelper::ResetForScene(const NetworkSceneData& scene)
     m_peerInterfaceById.clear();
     m_nodeCounters.clear();
     m_interfaceCounters.clear();
+    m_interfaceOfferedCounters.clear();
     m_interfaceFlowCounters.clear();
     m_queueDiscs.clear();
     m_flowRuntimeById.clear();
@@ -407,17 +444,27 @@ NetworkSceneHelper::InstallSceneChannels(const std::vector<NetworkSceneChannelRo
     {
         auto channelInterfaces = SortedNetworkSceneChannelInterfaces(interfacesByChannel, channel.id);
 
-        PointToPointHelper p2p;
         const double simulationCapacityMbps =
             channel.bandwidthMbps * channel.capacityMultiplier / m_valueScaleFactor;
-        p2p.SetDeviceAttribute("DataRate",
-                               DataRateValue(DataRate(MbpsToBps(simulationCapacityMbps))));
-        p2p.SetChannelAttribute("Delay", TimeValue(m_defaultChannelDelay));
-        p2p.SetQueue("ns3::DropTailQueue", "MaxSize", StringValue("1p"));
+        Ptr<PointToPointChannel> physicalChannel = CreateObject<PointToPointChannel>();
+        physicalChannel->SetAttribute("Delay", TimeValue(m_defaultChannelDelay));
+        NetDeviceContainer devices;
+        for (const auto& interface : channelInterfaces)
+        {
+            Ptr<ScenePointToPointNetDevice> device = CreateObject<ScenePointToPointNetDevice>();
+            device->SetDataRate(DataRate(MbpsToBps(simulationCapacityMbps)));
+            device->SetAddress(Mac48Address(interface.mac.c_str()));
+            m_nodes.Get(m_nodeIndexById.at(interface.node))->AddDevice(device);
 
-        NodeContainer endpoints(m_nodes.Get(m_nodeIndexById.at(channelInterfaces[0].node)),
-                                m_nodes.Get(m_nodeIndexById.at(channelInterfaces[1].node)));
-        NetDeviceContainer devices = p2p.Install(endpoints);
+            Ptr<DropTailQueue<Packet>> queue = CreateObject<DropTailQueue<Packet>>();
+            queue->SetAttribute("MaxSize", StringValue("1p"));
+            device->SetQueue(queue);
+            Ptr<NetDeviceQueueInterface> queueInterface = CreateObject<NetDeviceQueueInterface>();
+            queueInterface->GetTxQueue(0)->ConnectQueueTraces(queue);
+            device->AggregateObject(queueInterface);
+            device->Attach(physicalChannel);
+            devices.Add(device);
+        }
         m_devices.Add(devices);
 
         for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
@@ -651,13 +698,6 @@ NetworkSceneHelper::IsInterfaceOperational(const InterfaceRecord& iface) const
         return false;
     }
 
-    auto channelIt = m_channelIndexById.find(iface.channelId);
-    if (channelIt == m_channelIndexById.end() ||
-        !IsChannelOperational(m_channelRecords[channelIt->second]))
-    {
-        return false;
-    }
-
     return true;
 }
 
@@ -674,10 +714,10 @@ NetworkSceneHelper::ReconcileInterfaceStates()
         }
 
         Ptr<Ipv4> ipv4 = m_nodes.Get(nodeIt->second)->GetObject<Ipv4>();
-        // Keep a healthy node's static egress route and actual send attempts
-        // observable. A physical link/interface outage prevents peer delivery; it
-        // must not administratively disable both endpoints before any packet
-        // can reach the IPv4 Tx trace. A failed node itself remains silent.
+        // Keep a healthy node's static egress route and IPv4 send attempts
+        // observable, including attempts directed at its own failed interface.
+        // The device gate below prevents those attempts from reaching the wire.
+        // A failed node itself remains silent.
         if (m_nodeRecords[nodeIt->second].state != "disabled")
         {
             ipv4->SetUp(ipv4It->second);
@@ -686,13 +726,16 @@ NetworkSceneHelper::ReconcileInterfaceStates()
         {
             ipv4->SetDown(ipv4It->second);
         }
-        Ptr<PointToPointNetDevice> device =
-            DynamicCast<PointToPointNetDevice>(ipv4->GetNetDevice(ipv4It->second));
+        Ptr<ScenePointToPointNetDevice> device =
+            DynamicCast<ScenePointToPointNetDevice>(ipv4->GetNetDevice(ipv4It->second));
         auto channelIt = m_channelIndexById.find(iface.channelId);
         if (device == nullptr || channelIt == m_channelIndexById.end())
         {
             throw std::runtime_error("Missing channel device for " + iface.id);
         }
+        // A peer or channel outage prevents delivery, but does not prevent a
+        // locally healthy interface from transmitting.
+        device->SetOperational(IsInterfaceOperational(iface));
         Ptr<RateErrorModel> outage = CreateObject<RateErrorModel>();
         outage->SetUnit(RateErrorModel::ERROR_UNIT_PACKET);
         outage->SetRate(IsChannelOperational(m_channelRecords[channelIt->second]) ? 0.0 : 1.0);
@@ -798,7 +841,7 @@ NetworkSceneHelper::TraceIpv4Tx(Ptr<const Packet> packet, Ptr<Ipv4> ipv4, uint32
     auto ifaceIt = m_interfaceIdByNodeInterface.find({nodeId, interface});
     if (ifaceIt != m_interfaceIdByNodeInterface.end())
     {
-        auto& iface = m_interfaceCounters[ifaceIt->second];
+        auto& iface = m_interfaceOfferedCounters[ifaceIt->second];
         iface.txPackets++;
         iface.txBytes += packet->GetSize();
     }
@@ -899,6 +942,19 @@ NetworkSceneHelper::IdentifySceneFlow(Ptr<const Packet> packet) const
 void
 NetworkSceneHelper::TracePhyTxBegin(std::string interfaceId, Ptr<const Packet> packet)
 {
+    PppHeader ppp;
+    if (packet->GetSize() < ppp.GetSerializedSize() || packet->PeekHeader(ppp) == 0 ||
+        ppp.GetProtocol() != 0x0021)
+    {
+        return;
+    }
+
+    // Match the IPv4 observation's byte accounting while counting only packets
+    // whose physical transmission has actually begun.
+    auto& iface = m_interfaceCounters[interfaceId];
+    iface.txPackets++;
+    iface.txBytes += packet->GetSize() - ppp.GetSerializedSize();
+
     const std::string flowId = IdentifySceneFlow(packet);
     if (flowId.empty())
     {

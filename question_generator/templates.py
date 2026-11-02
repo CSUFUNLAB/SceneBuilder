@@ -77,6 +77,14 @@ def _reject_unknown(
         raise ValueError(f"{location} has unsupported fields: {unknown}")
 
 
+def _load_explanation(value: object, location: str) -> tuple[str, ...]:
+    explanation = _list(value, location)
+    for index, item in enumerate(explanation, start=1):
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{location}[{index}] must be a non-empty string")
+    return tuple(explanation)
+
+
 def _load_optimization_strategies(
     raw_strategies: object,
     template_path: Path,
@@ -248,7 +256,7 @@ def _load_templates(
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
-    base_fields = {"id", "question", "hints"}
+    base_fields = {"id", "question", "explanation"}
     if category == "optimization":
         base_fields.add("strategy")
     else:
@@ -319,7 +327,10 @@ def _load_templates(
                 strategy=strategy,
                 answer_fields=answer_fields,
                 answer_item_fields=answer_item_fields,
-                hints=tuple(item.get("hints", [])),
+                explanation=_load_explanation(
+                    item.get("explanation", []),
+                    f"{location}.explanation",
+                ),
             )
         )
     return tuple(templates)

@@ -123,23 +123,8 @@ def validate_scene_config(config: "SceneConfig") -> None:
     if float(config.scene_duration) <= 0:
         raise ValueError("scene_duration must be > 0")
 
-    if not config.topology_sources:
-        raise ValueError("At least one topology source is required")
-
-    if not any(source.enabled for source in config.topology_sources):
-        raise ValueError("At least one topology source must be enabled")
-
-    for source in config.topology_sources:
-        if source.type not in ALLOWED_SOURCE_TYPES:
-            raise ValueError(f"Unsupported topology source type: {source.type}")
-        if not source.root_dirs:
-            raise ValueError(f"Topology source root_dirs cannot be empty for {source.name}")
-        if source.type == "topologyzoo":
-            graphml_patterns = [pattern for pattern in source.glob_patterns if "graphml" in str(pattern).lower()]
-            if graphml_patterns:
-                raise ValueError(
-                    f"TopologyZoo graphml support has been removed; update glob_patterns for {source.name}: {graphml_patterns}"
-                )
+    if config.topology.type not in ALLOWED_SOURCE_TYPES:
+        raise ValueError(f"Unsupported topology.type: {config.topology.type}")
 
     for section_name, section in (
         ("link_generation", config.link_generation),

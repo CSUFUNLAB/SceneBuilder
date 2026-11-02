@@ -3,29 +3,34 @@ question_type: analysis
 
 templates:
   - id: TA0001
-    question: "What is the current state of node $node_id$: normal or disabled?"
-    hints:
-      - "Normal means successful data delivery between the node and a peer through at least one interface; disabled means no such delivery through any interface despite transmission attempts."
-      - "An idle node is not necessarily disabled; availability concerns communication through its interfaces."
+    question: "What is the current state of node $node_id$: normal, interface_fault, or node_down?"
+    explanation:
+      - "Normal means the node itself and all of its interfaces are free of physical faults. Interface_fault means the node itself remains operational but at least one of its own interfaces has a physical fault."
+      - "Node_down means the entire node has failed and all of its interfaces stop transmitting and receiving. Failure of every interface does not by itself establish a node fault."
+      - "A failed neighboring node or external channel does not establish a fault in this node or its interfaces. Silence or successful delivery through only one interface does not establish the condition of every interface."
     answer:
       type: enum
-      values: [normal, disabled]
+      values: [normal, interface_fault, node_down]
 
   - id: TA0002
     question: "What is the current state of channel $channel_id$: normal, disabled, degraded, or saturated?"
-    hints:
+    explanation:
       - "Saturated means traffic approaches the channel's original capacity. Interface queue saturation alone does not imply channel saturation."
       - "Degraded means reduced forwarding capability cannot serve the current load, even though traffic remains below the original capacity. Saturation at a reduced capacity is classified as degraded."
       - "Normal means the channel serves the current load without saturation or impaired delivery. Reduced capacity that still serves the current load is normal."
       - "Disabled means communication is unavailable despite transmission attempts. Silence alone does not establish an outage."
+      - "A channel fault interrupts delivery while its endpoint interfaces can still physically transmit. Actual transmission at both endpoints with no reception across the channel distinguishes a channel fault from an interface that cannot transmit or receive. Offered traffic alone is not actual transmission."
     answer:
       type: enum
       values: [normal, disabled, degraded, saturated]
 
   - id: TA0003
     question: "What is the current state of interface $interface_id$: normal, disabled, or saturated?"
-    hints:
-      - "Normal means the interface can communicate without queue saturation; disabled means its connection is unavailable. An idle interface is not necessarily disabled."
+    explanation:
+      - "Normal means the local interface remains operational without queue saturation. Disabled means the interface itself or its host node has failed, so the interface cannot physically transmit or receive."
+      - "An unavailable external channel or failed peer interface does not make this local interface disabled. An idle interface is not necessarily disabled."
+      - "Interface transmission counts describe packets that actually start physical transmission; offered traffic describes local network-layer attempts to send through this interface. A node can offer traffic even when its failed interface transmits nothing."
+      - "A failed interface has zero actual transmission and zero reception. An interface that physically transmits remains operational even when its peer receives nothing; the peer's ability to transmit must also be considered before attributing the interruption to the channel."
       - "Saturated means the interface's transmit queue is full or nearly full during active communication. Interface queue saturation and channel capacity saturation are distinct."
     answer:
       type: enum
@@ -33,7 +38,7 @@ templates:
 
   - id: TA0004
     question: "What is the current state of data flow $data_flow_id$: normal, unstable, degraded, or failed?"
-    hints:
+    explanation:
       - "Normal means reliable delivery that meets the flow's demand; unstable means delivery suffers packet loss."
       - "Degraded means delivery continues without packet loss but throughput is substantially below demand; failed means end-to-end delivery is unavailable."
     answer:
@@ -42,7 +47,7 @@ templates:
 
   - id: TA0005
     question: "What is limiting data flow $data_flow_id$: insufficient channel capacity or traffic congestion?"
-    hints:
+    explanation:
       - "Insufficient_channel_capacity means a channel on the flow's path cannot meet its demand even without competing traffic."
       - "Traffic_congestion means competing traffic strains shared channel capacity and limits the flow."
     answer:
@@ -51,7 +56,7 @@ templates:
 
   - id: TA0006
     question: "Which congestion pattern applies to data flow $data_flow_id$: a single bottleneck channel or multiple saturated channels?"
-    hints:
+    explanation:
       - "Single_channel_bottleneck means congestion is concentrated at a single channel on the flow's path; multi_channel_saturation means several path channels are saturated."
       - "Channel saturation means traffic approaches the channel's original capacity; interface queue saturation is a separate concept."
     answer:
@@ -60,7 +65,7 @@ templates:
 
   - id: TA0007
     question: "What traffic pattern is saturating channel $channel_id$: one large data flow or an aggregation of multiple data flows?"
-    hints:
+    explanation:
       - "This question concerns the traffic currently carried by the channel. Single_large_flow means a dominant flow drives channel saturation; multiple_flow_aggregation means the combined traffic of several flows drives saturation."
     answer:
       type: enum
@@ -68,17 +73,18 @@ templates:
 
   - id: TA0008
     question: "Which channel is the bottleneck for data flow $data_flow_id$?"
-    hints:
+    explanation:
       - "A bottleneck channel constrains the flow's achievable throughput along its path. Low capacity or a full interface queue alone does not establish a bottleneck."
     answer:
       type: channel_id
 
   - id: TA0009
-    question: "Which failed node or channel is responsible for data flow $data_flow_id$'s failure?"
-    hints:
-      - "A fault location is a node or channel on the flow's path where communication is interrupted despite transmission attempts. Silence alone does not establish an outage."
-      - "If an interface failure makes a link unavailable, count it as a link failure and return the corresponding channel ID."
-      - "A node-level outage means all adjacent links are unavailable; those links and the node describe the same outage and should not be counted separately."
-      - "Fault locations require independent delivery evidence; an observed interruption does not identify its hidden physical cause."
+    question: "Which failed node, channel, or interface is responsible for data flow $data_flow_id$'s failure?"
+    explanation:
+      - "A fault location is a node, channel, or interface on the flow's path where communication is interrupted. Offered traffic means a local attempt to send, while actual interface transmission means physical transmission has started. Idle zero traffic alone does not establish a fault."
+      - "An interface fault stops both physical transmission and reception at that interface despite offered traffic. Its fault location is the complete node-qualified interface ID rather than the owning node or channel ID."
+      - "A channel fault prevents delivery while its endpoints can still physically transmit. Actual transmission at both endpoint interfaces with zero reception at their peers identifies a channel fault. One-sided transmission without reception alone cannot rule out a failed receiving interface."
+      - "A node fault means the entire node has failed. Unavailability of all adjacent links or interfaces alone does not distinguish a node fault from separate interface or channel faults."
+      - "Node IDs identify independently established whole-node faults, while channel IDs identify channel faults. Distinct interface and channel faults remain distinct fault locations."
     answer:
       type: entity_id

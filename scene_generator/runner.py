@@ -15,7 +15,7 @@ from .generators.nodes import NODE_FIELDS, generate_nodes, infer_node_roles
 from .generators.routing import generate_routing_matrix
 from .generators.traffic import apply_hard_traffic_constraints, generate_traffic
 from .rng import RandomManager
-from .topology.selector import SelectedTopology, collect_topologies, load_topology
+from .topology.selector import SelectedTopology, load_topology, select_topology
 from .utils.graph_utils import as_working_graph, ordered_nodes
 from .writers.csv_writer import write_csv
 from .writers.json_writer import write_json
@@ -372,18 +372,15 @@ def run(config_path: str | Path) -> list[Path]:
                 "Generated scene output already exists under "
                 f"{config.output_root}; run 'python main.py clean' first"
             )
-    eligible_topologies: list[tuple[SelectedTopology, nx.Graph]] = []
-    for selected in collect_topologies(config):
-        parsed_graph = load_topology(selected)
-        if parsed_graph.number_of_nodes() <= int(config.max_topology_nodes):
-            eligible_topologies.append((selected, parsed_graph))
-
-    if not eligible_topologies:
+    selected = select_topology(config)
+    parsed_graph = load_topology(selected)
+    if parsed_graph.number_of_nodes() > int(config.max_topology_nodes):
         raise ValueError(
-            f"No topology has at most {config.max_topology_nodes} nodes"
+            f"Selected topology {selected.file_path} has {parsed_graph.number_of_nodes()} nodes, "
+            f"exceeding max_topology_nodes={config.max_topology_nodes}"
         )
 
-    total_scene_count = len(eligible_topologies) * int(config.scenes_per_topology)
+    total_scene_count = int(config.scenes_per_topology)
     (
         config.output_root
         / ORIGINAL_SCENES_DIR_NAME
@@ -392,23 +389,20 @@ def run(config_path: str | Path) -> list[Path]:
     root_rng = RandomManager(config.seed)
 
     generated: list[Path] = []
-    scene_index = 0
-    for selected, parsed_graph in eligible_topologies:
-        for topology_scene_index in range(1, int(config.scenes_per_topology) + 1):
-            scene_index += 1
-            scene_rng = root_rng.fork(
-                f"topology:{selected.source_type}:{selected.file_path}:scene:{topology_scene_index}"
+    for scene_index in range(1, total_scene_count + 1):
+        scene_rng = root_rng.fork(
+            f"topology:{selected.source_type}:{selected.file_path}:scene:{scene_index}"
+        )
+        generated.append(
+            _generate_single_scene(
+                config,
+                scene_rng,
+                selected,
+                parsed_graph,
+                scene_index=scene_index,
+                topology_scene_index=scene_index,
+                total_scene_count=total_scene_count,
             )
-            generated.append(
-                _generate_single_scene(
-                    config,
-                    scene_rng,
-                    selected,
-                    parsed_graph,
-                    scene_index=scene_index,
-                    topology_scene_index=topology_scene_index,
-                    total_scene_count=total_scene_count,
-                )
-            )
+        )
 
     return generated

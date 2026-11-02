@@ -120,9 +120,9 @@ def _channel_directional_measurements(
     """Return sampled (offered, delivered) rates for both channel directions.
 
     A point-to-point channel exposes exactly two interfaces. For each direction, the
-    sender interface's local IPv4 transmit counters measure traffic offered to this
-    channel, while the peer interface's receive counters measure traffic delivered by
-    it.  This remains direct evidence when the channel is an intermediate hop.
+    sender interface's offered counters measure local IPv4 attempts, separately
+    from actual device transmissions. The peer's receive counters measure delivery.
+    This also covers a failed egress interface which cannot physically transmit.
     """
 
     connected = channel.relations.get("connects")
@@ -146,9 +146,9 @@ def _channel_directional_measurements(
     for sender, receiver in ((interfaces[0], interfaces[1]), (interfaces[1], interfaces[0])):
         if sender is None or receiver is None:
             continue
-        offered = _number(sender.properties, "tx_rate_mbps")
+        offered = _number(sender.properties, "offered_rate_mbps")
         delivered = _number(receiver.properties, "rx_rate_mbps")
-        offered_packets = _number(sender.properties, "tx_packets")
+        offered_packets = _number(sender.properties, "offered_packets")
         if (
             offered is None
             or delivered is None
@@ -307,11 +307,11 @@ def _complete_flow_path(
 
 
 def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
-    """Infer availability, including isolation by failures of all adjacent links.
+    """Infer local port faults independently of external link availability.
 
-    Transmit attempts alone do not establish connectivity. Missing or idle
-    links cannot establish an outage, and incomplete adjacency cannot establish
-    that *all* links are unavailable. No physical root cause is implied.
+    Whole-node silence is ambiguous without an independent liveness observation:
+    an idle node or one whose ports have all failed can produce the same counters.
+    Never use the answer label or the injected fault count to resolve that case.
     """
     raw_interfaces = node.relations.get("interfaces")
     if not isinstance(raw_interfaces, list) or not raw_interfaces:
@@ -324,30 +324,19 @@ def infer_node_state(scene: SceneData, node: EntityRecord) -> str | None:
     }:
         return None
 
-    channels: dict[str, EntityRecord] = {}
+    states: list[str | None] = []
     for interface_id in interface_ids:
         interface = scene.entity("interface", interface_id)
-        if interface is None:
+        if interface is None or interface.relations["node"] != [node.entity_id]:
             return None
-        channel_ids = interface.relations["channel"]
-        if not channel_ids:
-            return None
-        for channel_id in channel_ids:
-            channel = scene.entity("channel", channel_id)
-            if (
-                channel is None
-                or not isinstance(channel.relations.get("connects"), list)
-                or interface_id not in channel.relations["connects"]
-                or len(scene.channel_endpoint_nodes(channel)) != 2
-            ):
-                return None
-            channels[channel.entity_id] = channel
+        states.append(infer_interface_state(scene, interface))
 
-    rates = [_channel_receive_rates(scene, channel) for channel in channels.values()]
-    if any(pair is not None and max(pair) > FLOAT_TOLERANCE for pair in rates):
+    # An offered sample behind a failed port is evidence of a working local
+    # network stack. This remains interface_fault when every local port fails.
+    if "disabled" in states:
+        return "interface_fault"
+    if all(state in {"normal", "saturated"} for state in states):
         return "normal"
-    if all(_channel_has_observed_outage(scene, channel) for channel in channels.values()):
-        return "disabled"
     return None
 
 
@@ -358,22 +347,36 @@ def infer_interface_state(scene: SceneData, interface: EntityRecord) -> str | No
     if len(channel_ids) != 1:
         return None
     channel = scene.entity("channel", channel_ids[0])
-    if channel is None:
+    if (
+        channel is None
+        or interface.entity_id not in channel.relations.get("connects", [])
+        or len(channel.relations.get("connects", [])) != 2
+        or len(interface.relations["node"]) != 1
+    ):
         return None
 
-    channel_state = infer_channel_state(scene, channel)
-    if channel_state == "disabled":
-        # Interface state is operational, not a physical-root label. An interface
-        # attached to a disabled channel is itself unavailable regardless of
-        # whether the channel, an endpoint node, or one interface caused the fault.
-        # infer_channel_state already requires a sampled local send attempt.
-        return "disabled"
-
-    current_throughput = _maximum_channel_throughput(scene, channel)
-    if current_throughput is None or current_throughput <= FLOAT_TOLERANCE:
+    tx_packets = _number(interface.properties, "tx_packets")
+    rx_packets = _number(interface.properties, "rx_packets")
+    tx_rate = _number(interface.properties, "tx_rate_mbps")
+    rx_rate = _number(interface.properties, "rx_rate_mbps")
+    if any(value is None or value < 0 for value in (tx_packets, rx_packets, tx_rate, rx_rate)):
         return None
-    receive_rates = _channel_receive_rates(scene, channel)
-    if receive_rates is None or max(receive_rates) <= FLOAT_TOLERANCE:
+    if any(
+        (packets == 0) != (rate <= FLOAT_TOLERANCE)
+        for packets, rate in ((tx_packets, tx_rate), (rx_packets, rx_rate))
+    ):
+        return None
+
+    if tx_packets == 0 and rx_packets == 0:
+        offered = _number(interface.properties, "offered_rate_mbps")
+        offered_packets = _number(interface.properties, "offered_packets")
+        dropped = _number(interface.properties, "tx_drop_packets")
+        if (
+            offered is not None and offered > FLOAT_TOLERANCE
+            and offered_packets is not None and offered_packets >= MIN_OFFERED_PACKET_SAMPLE
+            and dropped is not None and MIN_OFFERED_PACKET_SAMPLE <= dropped <= offered_packets
+        ):
+            return "disabled"
         return None
 
     queue_size = _number(interface.properties, "queue_size_packets")
@@ -387,6 +390,62 @@ def infer_interface_state(scene: SceneData, interface: EntityRecord) -> str | No
     if queue_current / queue_size >= SATURATION_THRESHOLD:
         return "saturated"
     return "normal"
+
+
+def infer_channel_failure_locations(
+    scene: SceneData,
+    channel: EntityRecord,
+) -> tuple[str, ...] | None:
+    """Distinguish failed local interfaces from a failed transmission channel.
+
+    Offered traffic is not a physical transmission. A failed interface has no
+    actual receive or transmit activity and needs local attempted/drop evidence.
+    Channel failure instead requires sampled actual transmissions at both ends
+    with no reception at either end. A single active sender cannot distinguish
+    channel failure from failure of its silent peer interface or node.
+    """
+    connected = channel.relations.get("connects")
+    if (
+        not isinstance(connected, list)
+        or len(connected) != 2
+        or any(not isinstance(interface_id, str) or not interface_id for interface_id in connected)
+        or connected[0] == connected[1]
+    ):
+        return None
+    interfaces: list[EntityRecord] = []
+    for interface_id in connected:
+        interface = scene.entity("interface", interface_id)
+        if (
+            interface is None
+            or interface.relations["channel"] != [channel.entity_id]
+            or len(interface.relations["node"]) != 1
+        ):
+            return None
+        interfaces.append(interface)
+    if interfaces[0].relations["node"] == interfaces[1].relations["node"]:
+        return None
+
+    failed_interfaces = tuple(sorted(
+        interface.entity_id
+        for interface in interfaces
+        if infer_interface_state(scene, interface) == "disabled"
+    ))
+    if failed_interfaces:
+        return failed_interfaces
+
+    for interface in interfaces:
+        tx_packets = _number(interface.properties, "tx_packets")
+        tx_rate = _number(interface.properties, "tx_rate_mbps")
+        rx_packets = _number(interface.properties, "rx_packets")
+        rx_rate = _number(interface.properties, "rx_rate_mbps")
+        if (
+            tx_packets is None or tx_packets < MIN_OFFERED_PACKET_SAMPLE
+            or tx_rate is None or tx_rate <= FLOAT_TOLERANCE
+            or rx_packets != 0
+            or rx_rate is None or not 0 <= rx_rate <= FLOAT_TOLERANCE
+        ):
+            return None
+    return (channel.entity_id,)
 
 
 def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
@@ -527,14 +586,17 @@ def infer_flow_failure_locations(
 ) -> tuple[str, ...] | None:
     """Locate observed interruptions on this flow's declared path.
 
-    An isolated node represents its unavailable incident links; those links are
-    not reported again. Unsampled downstream silence is not an interruption
-    observation. Multiple locations are allowed, independent of how many faults
-    the scene generator injected or what happens on unrelated paths.
+    Keep the physical node, interface, or channel identity. A link operating
+    outage alone cannot locate its cause. Independently established whole-node
+    failure covers its own ports; unsampled downstream silence
+    is not an interruption observation. Multiple locations are allowed,
+    independent of injected faults or events on unrelated paths.
     """
+    tx_packets = _number(flow.properties, "tx_packets")
     if (
         infer_flow_state(flow) != "failed"
-        or _number(flow.properties, "tx_packets") < MIN_OFFERED_PACKET_SAMPLE
+        or tx_packets is None
+        or tx_packets < MIN_OFFERED_PACKET_SAMPLE
     ):
         return None
     path = _complete_flow_path(scene, flow)
@@ -543,19 +605,21 @@ def infer_flow_failure_locations(
     path_node_ids, path_channels = path
     if len(path_channels) < 2:
         return None
-    isolated_nodes = {
+    failed_nodes = {
         node_id
         for node_id in path_node_ids
         if (node := scene.entity("node", node_id)) is not None
-        and infer_node_state(scene, node) == "disabled"
+        and infer_node_state(scene, node) == "node_down"
     }
-    interrupted_channels = {
-        channel.entity_id
-        for channel in path_channels
-        if not isolated_nodes.intersection(scene.channel_endpoint_nodes(channel))
-        and _channel_has_observed_outage(scene, channel)
-    }
-    return tuple(sorted(isolated_nodes | interrupted_channels))
+    failed_entities = set(failed_nodes)
+    for channel in path_channels:
+        locations = infer_channel_failure_locations(scene, channel)
+        for entity_id in locations or ():
+            interface = scene.entity("interface", entity_id)
+            if interface is not None and failed_nodes.intersection(interface.relations["node"]):
+                continue
+            failed_entities.add(entity_id)
+    return tuple(sorted(failed_entities))
 
 
 def infer_flow_failure_cause(scene: SceneData, flow: EntityRecord) -> str | None:

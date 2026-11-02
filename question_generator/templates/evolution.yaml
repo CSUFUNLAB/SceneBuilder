@@ -4,26 +4,38 @@ question_type: evolution
 templates:
   - id: TE0029
     question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ fails: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Node failure means the entire node fails and all of its interfaces stop physically transmitting and receiving. It is distinct from a fault in one of the node's interfaces."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0033
     question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ recovers: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Node recovery repairs the node's own failure. It does not repair independent faults in its interfaces, neighboring nodes, or external channels."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0037
     question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ fails: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Channel failure prevents delivery across that channel while healthy endpoint interfaces can still physically transmit. Traffic actually transmitted at either endpoint is not received by its peer; offered traffic alone does not establish actual transmission."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0041
     question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ recovers: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Channel recovery repairs that channel's failure. It does not repair independent faults in either endpoint node or interface."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0045
     question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ fails: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Interface failure makes both actual transmission and reception zero on that local interface. Its host node can still offer traffic and use other operational interfaces; the peer interface can still physically transmit, but the failed interface cannot receive its traffic."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0049
     question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ recovers: normal, unstable, degraded, or failed?"
+    explanation:
+      - "Interface recovery repairs only that interface's own failure. Communication still depends on its host node, peer interface, and channel being operational."
     answer: [normal, unstable, degraded, failed]
 
   - id: TE0051

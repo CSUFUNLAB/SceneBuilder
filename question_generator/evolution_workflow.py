@@ -243,7 +243,7 @@ _EXPECTED_ANSWER_VALUES = {
     "TE0004": ("increase", "unchanged"),
     "TE0012": ("increase", "unchanged"),
     "TE0014": ("increase", "unchanged", "decrease"),
-    "TE0015": ("unchanged", "disabled"),
+    "TE0015": ("unchanged", "node_down"),
     "TE0016": ("recovered", "unchanged"),
     "TE0017": ("increase", "unchanged", "decrease"),
     "TE0018": ("saturated", "not_saturated"),
@@ -257,7 +257,7 @@ _EXPECTED_ANSWER_VALUES = {
 
 
 _ENTITY_STATE_VALUES = {
-    "node": ("normal", "disabled"),
+    "node": ("normal", "interface_fault", "node_down"),
     "channel": ("normal", "disabled", "degraded", "saturated"),
     "interface": ("normal", "disabled", "saturated"),
     "data_flow": ("normal", "unstable", "degraded", "failed"),
@@ -1048,8 +1048,8 @@ def _choose_event_entity(
         if source.physical_faults:
             return None
     elif spec.change == "recovery":
-        # Recovery repairs an injected physical fault. Operational node labels
-        # also include isolation by adjacent links and cannot select this event.
+        # Recovery repairs the selected injected physical fault. A node's
+        # interface_fault label does not identify a failure of the node itself.
         matching = [
             fault
             for fault in source.physical_faults
@@ -1577,8 +1577,8 @@ def _event_has_state_evidence(
             for route in routes
         )
     # The event is a stated physical intervention chosen from source inputs.
-    # This check only establishes the preceding operating state; an isolated
-    # node's "disabled" label does not identify a physical node fault.
+    # This check establishes the preceding state from public evidence. Traffic
+    # silence alone cannot distinguish a node fault from failed interfaces.
     return (
         _evidence_backed_entity_state(
             before,

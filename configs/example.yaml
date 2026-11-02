@@ -1,20 +1,13 @@
 output_root: ../generated
 seed: 20260331
-scenes_per_topology: 10
+scenes_per_topology: 2000
 max_topology_nodes: 50
 scene_duration: 1
 
-topology_sources:
-  - name: brite_pool
-    type: brite
-    enabled: false
-    root_dir: ../scene_generator/topologies/brite
-    glob_patterns: ["**/*.brite"]
-  - name: topologyzoo_pool
-    type: topologyzoo
-    enabled: true
-    root_dir: ../scene_generator/topologies/topologyzoo
-    glob_patterns: ["**/*.gml"]
+# All scenes use this topology; file is relative to this YAML file.
+topology:
+  type: topologyzoo
+  file: ../scene_generator/topologies/topologyzoo/Abilene.gml
 
 fault_generation:
   scenario_probabilities:
