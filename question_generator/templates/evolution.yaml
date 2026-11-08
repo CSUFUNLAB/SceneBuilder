@@ -1,55 +1,48 @@
 schema_version: 1
 question_type: evolution
 
+# Covers node/channel/interface failure and recovery, flow load change,
+# and flow addition. Event generation uses the built-in event catalog.
 templates:
-  - id: TE0029
-    question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ fails: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Node failure means the entire node fails and all of its interfaces stop physically transmitting and receiving. It is distinct from a fault in one of the node's interfaces."
-    answer: [normal, unstable, degraded, failed]
 
-  - id: TE0033
-    question: "What operating state will data flow $target_data_flow_id$ have after node $event_node_id$ recovers: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Node recovery repairs the node's own failure. It does not repair independent faults in its interfaces, neighboring nodes, or external channels."
-    answer: [normal, unstable, degraded, failed]
-
+  # Operating state after an event (5 questions).
   - id: TE0037
     question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ fails: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Channel failure prevents delivery across that channel while healthy endpoint interfaces can still physically transmit. Traffic actually transmitted at either endpoint is not received by its peer; offered traffic alone does not establish actual transmission."
     answer: [normal, unstable, degraded, failed]
 
-  - id: TE0041
-    question: "What operating state will data flow $target_data_flow_id$ have after channel $event_channel_id$ recovers: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Channel recovery repairs that channel's failure. It does not repair independent faults in either endpoint node or interface."
-    answer: [normal, unstable, degraded, failed]
+  - id: TE0044
+    question: "What operating state will interface $target_interface_id$ have after interface $event_interface_id$ fails: normal, disabled, or saturated?"
+    answer: [normal, disabled, saturated]
 
-  - id: TE0045
-    question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ fails: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Interface failure makes both actual transmission and reception zero on that local interface. Its host node can still offer traffic and use other operational interfaces; the peer interface can still physically transmit, but the failed interface cannot receive its traffic."
-    answer: [normal, unstable, degraded, failed]
-
-  - id: TE0049
-    question: "What operating state will data flow $target_data_flow_id$ have after interface $event_interface_id$ recovers: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Interface recovery repairs only that interface's own failure. Communication still depends on its host node, peer interface, and channel being operational."
-    answer: [normal, unstable, degraded, failed]
+  - id: TE0048
+    question: "What operating state will interface $target_interface_id$ have after interface $event_interface_id$ recovers: normal, disabled, or saturated?"
+    answer: [normal, disabled, saturated]
 
   - id: TE0051
     question: "What operating state will channel $target_channel_id$ have when data flow $event_data_flow_id$'s demand becomes $event_demand_mbps$ Mbps: normal, disabled, degraded, or saturated?"
     answer: [normal, disabled, degraded, saturated]
 
-  - id: TE0053
-    question: "What operating state will data flow $event_data_flow_id$ have when its demand becomes $event_demand_mbps$ Mbps: normal, unstable, degraded, or failed?"
-    answer: [normal, unstable, degraded, failed]
-
-  - id: TE0055
-    question: "What operating state will channel $target_channel_id$ have when data flow $event_data_flow_id$ is added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal, disabled, degraded, or saturated?"
-    answer: [normal, disabled, degraded, saturated]
-
   - id: TE0057
     question: "What operating state will data flow $event_data_flow_id$ have when added from node $event_source_node_id$ to node $event_destination_node_id$ at $event_demand_mbps$ Mbps: normal, unstable, degraded, or failed?"
     answer: [normal, unstable, degraded, failed]
+
+  # Performance metric changes after an event (5 questions).
+  - id: TE0001
+    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ fails: increase, decrease, or remain unchanged?"
+    answer: [increase, unchanged, decrease]
+
+  - id: TE0003
+    question: "How will data flow $target_data_flow_id$'s throughput change if node $event_node_id$ recovers: increase, decrease, or remain unchanged?"
+    answer: [increase, unchanged, decrease]
+
+  - id: TE0007
+    question: "How will data flow $target_data_flow_id$'s throughput change if channel $event_channel_id$ recovers: increase, decrease, or remain unchanged?"
+    answer: [increase, unchanged, decrease]
+
+  - id: TE0009
+    question: "How will data flow $target_data_flow_id$'s throughput change if interface $event_interface_id$ fails: increase, decrease, or remain unchanged?"
+    answer: [increase, unchanged, decrease]
+
+  - id: TE0017
+    question: "How will data flow $event_data_flow_id$'s packet loss rate change when its demand becomes $event_demand_mbps$ Mbps: increase, decrease, or remain unchanged?"
+    answer: [increase, unchanged, decrease]
