@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 import re
 from pathlib import Path
+import shlex
 
 import networkx as nx
 
@@ -49,7 +50,7 @@ def _build_scene_dir(config, selected: SelectedTopology, scene_index: int, total
         f"t{duration}s"
     )
     return (
-        config.output_root
+        config.topology_output_root
         / ORIGINAL_SCENES_DIR_NAME
         / INPUT_DIR_NAME
         / scene_name
@@ -356,21 +357,23 @@ def _generate_single_scene(
 
 def run(config_path: str | Path) -> list[Path]:
     config = load_config(config_path)
-    if config.output_root.exists():
-        if config.output_root.is_symlink():
+    output_root = config.topology_output_root
+    if output_root.exists() or output_root.is_symlink():
+        if output_root.is_symlink():
             raise ValueError(
-                f"Refusing to generate into a symbolic-link output_root: "
-                f"{config.output_root}"
+                f"Refusing to generate into a symbolic-link topology output root: "
+                f"{output_root}"
             )
-        if not config.output_root.is_dir():
+        if not output_root.is_dir():
             raise NotADirectoryError(
-                f"output_root is not a directory: {config.output_root}"
+                f"Topology output root is not a directory: {output_root}"
             )
-        existing_output = next(config.output_root.iterdir(), None)
+        existing_output = next(output_root.iterdir(), None)
         if existing_output is not None:
             raise ValueError(
                 "Generated scene output already exists under "
-                f"{config.output_root}; run 'python main.py clean' first"
+                f"{output_root}; run `python main.py clean -c "
+                f"{shlex.quote(str(config.config_path))}` first"
             )
     selected = select_topology(config)
     parsed_graph = load_topology(selected)
@@ -382,7 +385,7 @@ def run(config_path: str | Path) -> list[Path]:
 
     total_scene_count = int(config.scenes_per_topology)
     (
-        config.output_root
+        output_root
         / ORIGINAL_SCENES_DIR_NAME
         / INPUT_DIR_NAME
     ).mkdir(parents=True, exist_ok=True)

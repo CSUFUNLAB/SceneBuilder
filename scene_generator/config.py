@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -34,6 +35,11 @@ class SceneConfig:
     flow_feature: dict[str, Any]
     events: dict[str, Any]
     config_path: Path
+
+    @property
+    def topology_output_root(self) -> Path:
+        topology_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", self.topology.file.stem)
+        return self.output_root / topology_name
 
 
 _DEFAULT_LINK_CONFIG = {

@@ -26,7 +26,7 @@ from typing import Iterable, Sequence
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_NS3_ROOT = PROJECT_ROOT / "ns-3"
 DEFAULT_SCALE = 5.0
-DEFAULT_SCENE_CONFIG = PROJECT_ROOT / "configs" / "example.yaml"
+DEFAULT_SCENE_CONFIG = PROJECT_ROOT / "configs" / "Abilene.yaml"
 DEFAULT_QUESTION_CONFIG = PROJECT_ROOT / "configs" / "question_generator.yaml"
 DEFAULT_DATASET_SPLIT_CONFIG = (
     PROJECT_ROOT / "configs" / "dataset_split.yaml"
@@ -193,7 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     twin_parser.add_argument(
         "--scene-root",
-        help="Override the scenes_root in the question configuration.",
+        help="Select a topology output directory for scenes and question files.",
     )
     _add_twin_arguments(twin_parser)
 
@@ -218,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     questions_parser.add_argument(
         "--scene-root",
-        help="Override the scenes_root in the question configuration.",
+        help="Select a topology output directory for scenes and question files.",
     )
     split_parser = subparsers.add_parser(
         "split",
@@ -240,6 +240,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Override train_ratio from the split config (default 0.6). Must be in (0, 1).",
+    )
+    split_parser.add_argument(
+        "--scene-root",
+        help="Use the scenes and question files under this topology output directory.",
     )
     clean_parser = subparsers.add_parser(
         "clean",
@@ -279,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     clean_parser.add_argument(
         "--scene-root",
-        help="Override scenes_root when cleaning Twins or questions.",
+        help="Select the topology output directory when cleaning Twins or questions.",
     )
     return parser
 
@@ -1524,6 +1528,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             _require_ns3_initialized(args.ns3_root)
 
         if args.command == "clean":
+            if args.clean_object in {None, "scenes"} and args.scene_root is not None:
+                raise ValueError(
+                    "Full/scenes cleanup selects the topology with '-c <scene config>'; "
+                    "--scene-root is only supported for Twin or question cleanup"
+                )
             if (
                 args.clean_object == "scenes"
                 and args.clean_type is not None
@@ -1569,7 +1578,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 scene_config = load_scene_config(config_path)
                 output_root, removed = reset_output_root(
-                    scene_config.output_root
+                    scene_config.topology_output_root
                 )
                 print(
                     f"Removed {len(removed)} top-level generated output "
@@ -1639,6 +1648,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = split_generated_dataset(
                 args.dataset_split_config,
                 train_ratio=args.train_ratio,
+                scenes_root=_resolve_project_path(args.scene_root) if args.scene_root else None,
             )
             print(
                 f"Dataset split complete: train_ratio={result.train_ratio:g}"
@@ -1766,7 +1776,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scenes_root,
             )
             question_config = load_question_config(
-                args.question_config
+                args.question_config,
+                scenes_root=configured_root,
             )
             ensure_question_outputs_absent(
                 question_config.categories[args.question_type]
@@ -1781,7 +1792,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 result = generate_questions(
                     args.question_config,
-                    scenes_root=original_scenes_root,
+                    scenes_root=configured_root,
                     scene_files=[
                         _twin_file_for_scene(
                             original_scenes_root,

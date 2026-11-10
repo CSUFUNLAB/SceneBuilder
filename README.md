@@ -15,7 +15,7 @@ cd /home/lb/STN/SceneBuilder
 python main.py init -p ./ns-allinone-3.48.tar.bz2
 
 # 1. 生成原始场景输入
-python main.py scenes -c configs/example.yaml
+python main.py scenes -c configs/Abilene.yaml
 
 # 2. 生成原始 Twin
 python main.py twin -t origin
@@ -38,6 +38,19 @@ python main.py questions -t optimization -c configs/question_generator.yaml
 # 8. 按场景隔离划分训练集和测试集
 python main.py split -c configs/dataset_split.yaml
 ```
+
+默认流程使用 Abilene 拓扑，生成内容位于 `generated/Abilene/`。使用 Geant2012 拓扑时：
+
+```bash
+python main.py scenes -c configs/Geant.yaml
+python main.py twin -t origin --scene-root generated/Geant2012
+python main.py questions -t analysis --scene-root generated/Geant2012
+python main.py split --scene-root generated/Geant2012
+```
+
+生成 Geant2012 的演化、优化 Twin 和问题时，也需传入相同的 `--scene-root`。
+两套生成内容独立保存；`split` 的训练集、测试集输出目录仍由划分配置决定，切换拓扑
+不会自动更换输出目录，运行前仍须保证这些目录为空。
 
 命令格式为：
 
@@ -86,27 +99,28 @@ python main.py init
 ### 1. 生成场景
 
 ```bash
-python main.py scenes -c configs/example.yaml
+python main.py scenes -c configs/Abilene.yaml
 ```
 
-场景原始输入生成到配置文件的 `output_root`，示例配置对应：
+`output_root` 是生成内容的公共根目录，下一层使用拓扑文件名（不含扩展名）。
+默认配置的场景原始输入位于：
 
 ```text
-/home/lb/STN/SceneBuilder/generated/origin/input
+/home/SceneBuilder/generated/Abilene/origin/input
 ```
 
 每次使用配置中 `topology.file` 指定的一个拓扑文件，生成 `scenes_per_topology` 个场景。
 所有场景使用相同的节点和连接结构，流量、链路参数和故障等仍按配置随机生成；
 配置与拓扑文件不变时，使用相同的 `seed` 可以复现生成结果。
 
-`scenes` 不会覆盖或清理任何已有内容。只要配置指定的 `output_root` 中已经存在文件
-或目录，命令就会立即停止并提示先运行：
+`scenes` 不会覆盖或清理任何已有内容。只要该拓扑的输出目录中已经存在文件或目录，
+命令就会立即停止并提示先运行对应配置的清理命令。默认 Abilene 使用：
 
 ```bash
 python main.py clean
 ```
 
-清理后才能重新生成场景。
+清理后才能重新生成场景。其他拓扑目录不受影响。
 
 ### 2. 生成 Twin
 
@@ -115,6 +129,9 @@ python main.py clean
 ```bash
 python main.py twin -t origin
 ```
+
+默认从 `generated/Abilene/` 读取场景；`--scene-root generated/Geant2012` 可切换拓扑。
+下文的 `origin/`、`evo/` 和 `opt/` 路径均相对于选定的拓扑目录。
 
 使用 4 个线程并发生成（演化和优化 Twin 同样支持 `--threads`）：
 
@@ -229,12 +246,13 @@ python main.py questions -t evolution -c configs/question_generator.yaml
 python main.py questions -t optimization -c configs/question_generator.yaml
 ```
 
-`-c` 默认使用 `configs/question_generator.yaml`。也可以覆盖场景数据根目录：
+`-c` 默认使用 `configs/question_generator.yaml`，其中场景根目录为 `generated/Abilene/`。
+也可以覆盖场景数据根目录，默认问题输出会随之切换到指定拓扑目录：
 
 ```bash
 python main.py questions -t analysis \
   -c configs/question_generator.yaml \
-  --scene-root generated
+  --scene-root generated/Geant2012
 ```
 
 分析问题允许使用部分完成的 origin Twin；命令会报告已使用和跳过的场景数。只有没有
@@ -292,6 +310,8 @@ python main.py split
 - `train_ratio`：训练问题比例，默认 `0.6`。
 
 `-r` 是 `--train-ratio` 的简写，可覆盖配置文件比例，必须在 `0` 和 `1` 之间。
+`--scene-root` 可指定待划分的拓扑目录，例如 `generated/Geant2012`；场景和问题均从
+该目录读取，训练集、测试集和模板输出目录仍使用上述配置。
 
 `train_output_root`、`test_output_root` 和 `template_output_root` 必须都不存在或为空。任一输出目录非空时，
 `split` 会在创建临时数据前直接停止，不会删除或覆盖已有数据集；需要先显式清空对应目录
@@ -332,19 +352,21 @@ analysis 默认目标为 125 题，证据充足时按默认比例分为训练 75
 可以再用 `-t/--type` 指定内部类型；省略 `-t` 会清理该对象下的全部类型。`scenes`
 没有下级类型，不能搭配 `-t`。
 
-清理全部生成内容：
+清理默认拓扑的全部生成内容：
 
 ```bash
 python main.py clean
 python main.py clean -o scenes
 ```
 
-两个命令行为相同：使用默认的 `configs/example.yaml`，清空其 `output_root` 中的场景
-输入、Twin、标签、演化派生输入和问题输出。场景是最上游数据，因此 `-o scenes` 不会
-保留下游产物。使用其他场景配置时：
+两个命令行为相同：使用默认的 `configs/Abilene.yaml`，清空 `generated/Abilene/` 中的
+场景输入、Twin、标签、演化派生输入和问题输出，保留其他拓扑目录。场景是最上游数据，
+因此 `-o scenes` 不会保留下游产物。清理 Geant2012 时使用对应场景配置：
 
 ```bash
-python main.py clean -o scenes -c configs/example.yaml
+python main.py clean -c configs/Geant.yaml
+# 等价写法
+python main.py clean -o scenes -c configs/Geant.yaml
 ```
 
 只清理 Twin 层及其下游问题：
@@ -356,6 +378,13 @@ python main.py clean -o twin
 该命令保留 `origin/input` 中的原始场景输入，删除 origin Twin 和标签、全部
 `evo/input`、`evo/scenes`、`opt/input` 与 `opt/scenes`，并删除所有问题列表。
 使用其他问题配置时可增加 `-c <question_config>`。
+默认清理范围为 `generated/Abilene/`；清理其他拓扑的 Twin 或问题时，使用
+`--scene-root`，例如：
+
+```bash
+python main.py clean -o twin --scene-root generated/Geant2012
+python main.py clean -o questions --scene-root generated/Geant2012
+```
 
 也可以只清理指定的 Twin 分组及其对应问题：
 
@@ -432,36 +461,39 @@ cd /home/lb/STN/SceneBuilder
 
 ```text
 generated/
-├── origin/
-│   ├── analysis_questions.jsonl
-│   ├── input/
-│   │   └── <original_scene_id>/
-│   │       ├── metadata.json
-│   │       ├── nodes.csv
-│   │       ├── channels.csv
-│   │       ├── interfaces.csv
-│   │       ├── routing_matrix.csv
-│   │       ├── traffic.jsonl
-│   │       └── labels.jsonl
-│   └── scenes/
-│       └── <original_scene_id>.jsonl
-├── evo/
-│   ├── evolution_questions.jsonl
-│   ├── input/
-│   │   └── <evolved_scene_id>/
-│   │       └── 与原场景相同的输入文件及 labels.jsonl
-│   └── scenes/
-│       └── <evolved_scene_id>.jsonl
-└── opt/
-    ├── optimization_questions.jsonl
-    ├── input/
-    │   ├── <optimization_context_scene_id>/
-    │   │   └── 未施加动作的上下文输入、优化候选元数据及 labels.jsonl
-    │   └── <optimization_candidate_scene_id>/
-    │       └── 仅施加一个候选动作的输入及 labels.jsonl
-    └── scenes/
-        ├── <optimization_context_scene_id>.jsonl
-        └── <optimization_candidate_scene_id>.jsonl
+├── Abilene/
+│   ├── origin/
+│   │   ├── analysis_questions.jsonl
+│   │   ├── input/
+│   │   │   └── <original_scene_id>/
+│   │   │       ├── metadata.json
+│   │   │       ├── nodes.csv
+│   │   │       ├── channels.csv
+│   │   │       ├── interfaces.csv
+│   │   │       ├── routing_matrix.csv
+│   │   │       ├── traffic.jsonl
+│   │   │       └── labels.jsonl
+│   │   └── scenes/
+│   │       └── <original_scene_id>.jsonl
+│   ├── evo/
+│   │   ├── evolution_questions.jsonl
+│   │   ├── input/
+│   │   │   └── <evolved_scene_id>/
+│   │   │       └── 与原场景相同的输入文件及 labels.jsonl
+│   │   └── scenes/
+│   │       └── <evolved_scene_id>.jsonl
+│   └── opt/
+│       ├── optimization_questions.jsonl
+│       ├── input/
+│       │   ├── <optimization_context_scene_id>/
+│       │   │   └── 未施加动作的上下文输入、优化候选元数据及 labels.jsonl
+│       │   └── <optimization_candidate_scene_id>/
+│       │       └── 仅施加一个候选动作的输入及 labels.jsonl
+│       └── scenes/
+│           ├── <optimization_context_scene_id>.jsonl
+│           └── <optimization_candidate_scene_id>.jsonl
+└── Geant2012/
+    └── 与 Abilene 相同的 origin/、evo/、opt/ 结构
 ```
 
 普通场景生成始终写入 `origin/input`，`twin -t origin` 将 Twin 写入 `origin/scenes`。
@@ -642,17 +674,19 @@ generated/
 
 数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
 
-问题文件的位置由 `configs/question_generator.yaml` 中各类别的 `output_file` 决定。
-默认分析问题写入 `generated/origin/analysis_questions.jsonl`。
+问题文件默认按 `scenes_root` 和类别派生到 `origin/`、`evo/`、`opt/` 下，也可通过各类别
+的 `output_file` 显式指定。
+默认分析问题写入 `generated/Abilene/origin/analysis_questions.jsonl`。
 
 演化问题的总列表默认写入
-`generated/evo/evolution_questions.jsonl`。每条记录除通用字段外，还包含：
+`generated/Abilene/evo/evolution_questions.jsonl`。使用 `--scene-root` 时，这些路径随拓扑
+目录切换。每条记录除通用字段外，还包含：
 
 - `original_scene_id`：变更前的原场景 ID。
 - `evolved_scene_id`：基于原场景生成的新场景 ID。
 - `scene_name`：为兼容通用问题读取逻辑，值与 `evolved_scene_id` 相同。
 
-不再为每个场景单独写问题文件；每种任务只保留由 `output_file` 指定的全局问题列表。
+不再为每个场景单独写问题文件；每种任务只保留一份全局问题列表。
 演化场景的 `input/<scene_id>/metadata.json` 会记录来源场景、事件场景 ID 和静态变更
 内容。所有问题类型都只在至少生成一道问题时创建 JSONL；问题列表为空时不会保留空文件。
 
@@ -660,9 +694,11 @@ generated/
 
 ### 场景配置
 
-场景配置示例为 `configs/example.yaml`，主要控制：
+场景配置提供 `configs/Abilene.yaml`（默认，使用 `Abilene.gml`）和 `configs/Geant.yaml`
+（使用 `Geant2012.gml`），主要控制：
 
-- `output_root`：场景输出目录。
+- `output_root`：场景输出的公共根目录，默认 `../generated`；实际输出追加拓扑文件名
+  （不含扩展名），分别为 `generated/Abilene/` 和 `generated/Geant2012/`。
 - `seed`：随机种子。
 - `scenes_per_topology`：在指定拓扑上生成的场景总数。
 - `max_topology_nodes`：指定拓扑允许的最大节点数，超限时直接报错。
@@ -699,14 +735,15 @@ topology:
 
 问题配置示例为 `configs/question_generator.yaml`，主要控制：
 
-- `scenes_root`：包含场景及孪生体的目录。
+- `scenes_root`：包含场景及孪生体的拓扑目录，默认 `../generated/Abilene`。
 - `seed`：问题实体选择的随机种子。
 - 顶层 `questions_per_template: 20`：统一设置每条模板期望生成的题数，三类任务共用，
   不配置模板编号或逐模板覆盖。分析分类题按模板声明的标签尽量均分，例如三分类为 7、7、6；
   定位题每模板 20 题。当前 9 个分析模板共目标 180 题。演化状态题按实际状态取样，
   性能指标题按变化方向尽量均分；证据或候选不足时实际数量可能更少。
 - `template_file`：该类问题使用的模板文件。
-- `output_file`：生成问题的 JSONL 输出位置。
+- `output_file`：可选的 JSONL 输出位置；省略时按场景根目录和类别派生。
+  `--scene-root` 会同步调整原根目录内的输出路径；显式指定在根目录外的输出保持不变。
 - `enabled`：是否启用对应的问题类别。
 
 问题生成阶段不会把模板复制到 `generated/`。运行 `split` 时，三类 `template_file` 才会
@@ -810,7 +847,9 @@ STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不�
 - `--continue-on-error`：单个场景失败后继续处理其他场景。
 - `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
   `twin -t optimization` 会创建派生场景，因此不支持该选项。
-- `questions --scene-root <路径>`：覆盖问题配置中的孪生体场景目录。
+- `--scene-root <路径>`：`twin`、`questions` 和 `split` 可用，用于切换拓扑目录；
+  `clean -o twin/questions` 同样支持。默认 `generated/Abilene`，Geant2012 使用
+  `generated/Geant2012`。默认问题输出跟随该目录，`split` 的数据集输出位置保持配置值。
 
 `--scale` 会传给 ns-3 的 `scaleFactor`；直接运行 `TwinGenerate` 时默认值也为 `5`。
 例如 `python main.py twin -t origin -s 5 --threads 4`。原始场景与用于比较的演化、优化

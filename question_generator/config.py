@@ -40,7 +40,14 @@ def _resolve_path(value: object, base_dir: Path, name: str) -> Path:
     return path.resolve()
 
 
-def _load_category(name: str, raw: object, base_dir: Path, count: int) -> CategoryConfig:
+def _load_category(
+    name: str,
+    raw: object,
+    base_dir: Path,
+    count: int,
+    configured_scenes_root: Path,
+    scenes_root: Path,
+) -> CategoryConfig:
     if not isinstance(raw, dict):
         raise ValueError(f"categories.{name} must be a mapping")
 
@@ -52,6 +59,24 @@ def _load_category(name: str, raw: object, base_dir: Path, count: int) -> Catego
     if not isinstance(options, dict):
         raise ValueError(f"categories.{name}.options must be a mapping")
 
+    output_file = _resolve_path(
+        raw.get(
+            "output_file",
+            configured_scenes_root
+            / QUESTION_DATASET_DIRS[name]
+            / f"{name}_questions.jsonl",
+        ),
+        base_dir,
+        f"categories.{name}.output_file",
+    )
+    if scenes_root != configured_scenes_root:
+        try:
+            relative_output = output_file.relative_to(configured_scenes_root)
+        except ValueError:
+            pass
+        else:
+            output_file = scenes_root / relative_output
+
     return CategoryConfig(
         name=name,
         enabled=enabled,
@@ -61,22 +86,16 @@ def _load_category(name: str, raw: object, base_dir: Path, count: int) -> Catego
             base_dir,
             f"categories.{name}.template_file",
         ),
-        output_file=_resolve_path(
-            raw.get(
-                "output_file",
-                (
-                    f"../generated/{QUESTION_DATASET_DIRS[name]}/"
-                    f"{name}_questions.jsonl"
-                ),
-            ),
-            base_dir,
-            f"categories.{name}.output_file",
-        ),
+        output_file=output_file,
         options=dict(options),
     )
 
 
-def load_config(config_path: str | Path) -> QuestionGeneratorConfig:
+def load_config(
+    config_path: str | Path,
+    *,
+    scenes_root: str | Path | None = None,
+) -> QuestionGeneratorConfig:
     path = Path(config_path).expanduser().resolve()
     with path.open("r", encoding="utf-8-sig") as handle:
         raw = yaml.safe_load(handle) or {}
@@ -91,6 +110,15 @@ def load_config(config_path: str | Path) -> QuestionGeneratorConfig:
     if isinstance(count, bool) or not isinstance(count, int) or count < 1:
         raise ValueError("questions_per_template must be a positive integer")
 
+    configured_scenes_root = _resolve_path(
+        raw.get("scenes_root"), path.parent, "scenes_root"
+    )
+    effective_scenes_root = (
+        Path(scenes_root).expanduser().resolve()
+        if scenes_root is not None
+        else configured_scenes_root
+    )
+
     categories_raw = raw.get("categories")
     if not isinstance(categories_raw, dict):
         raise ValueError("categories must be a mapping")
@@ -100,15 +128,21 @@ def load_config(config_path: str | Path) -> QuestionGeneratorConfig:
         raise ValueError(f"Unsupported question categories: {sorted(unknown_categories)}")
 
     categories = {
-        name: _load_category(name, categories_raw.get(name, {}), path.parent, count)
+        name: _load_category(
+            name,
+            categories_raw.get(name, {}),
+            path.parent,
+            count,
+            configured_scenes_root,
+            effective_scenes_root,
+        )
         for name in QUESTION_CATEGORIES
     }
     if not any(category.enabled for category in categories.values()):
         raise ValueError("At least one question category must be enabled")
 
-    scenes_root = _resolve_path(raw.get("scenes_root"), path.parent, "scenes_root")
     return QuestionGeneratorConfig(
         seed=seed,
-        scenes_root=scenes_root,
+        scenes_root=effective_scenes_root,
         categories=categories,
     )

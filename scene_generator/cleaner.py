@@ -118,4 +118,4 @@ def reset_output_root(
 
 def clean(config_path: str | Path) -> tuple[Path, list[Path]]:
     config = load_config(config_path)
-    return clean_output_root(config.output_root)
+    return clean_output_root(config.topology_output_root)

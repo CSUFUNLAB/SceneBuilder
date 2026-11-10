@@ -88,7 +88,7 @@ def clean_question_outputs(
     scenes_root: str | Path | None = None,
     categories: Sequence[str] | None = None,
 ) -> QuestionCleanupResult:
-    config = load_config(config_path)
+    config = load_config(config_path, scenes_root=scenes_root)
     selected_categories = (
         QUESTION_CATEGORIES
         if categories is None
@@ -106,7 +106,7 @@ def clean_question_outputs(
         raise ValueError(
             f"Unknown question category for cleanup: {invalid_category}"
         )
-    root = Path(scenes_root).expanduser().resolve() if scenes_root is not None else config.scenes_root
+    root = config.scenes_root
     scene_directories = (
         _discover_scene_directories_for_cleanup(root)
         if root.is_dir()
@@ -269,8 +269,8 @@ def run(
     scene_files: Sequence[str | Path] | None = None,
     question_type: str | None = None,
 ) -> QuestionGenerationResult:
-    config: QuestionGeneratorConfig = load_config(config_path)
-    root = Path(scenes_root).expanduser().resolve() if scenes_root is not None else config.scenes_root
+    config: QuestionGeneratorConfig = load_config(config_path, scenes_root=scenes_root)
+    root = config.scenes_root
 
     if question_type is not None:
         if question_type not in QUESTION_CATEGORIES:

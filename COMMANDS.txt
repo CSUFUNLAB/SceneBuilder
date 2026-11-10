@@ -7,7 +7,8 @@ python main.py init -p ./ns-allinone-3.48.tar.bz2
 # 已解压到 ns-3/：直接配置并编译
 python main.py init
 
-python main.py scenes -c configs/example.yaml
+# Abilene（默认）：生成内容位于 generated/Abilene/
+python main.py scenes -c configs/Abilene.yaml
 python main.py twin -t origin --threads 4 --scale 5
 python main.py questions -t analysis
 python main.py twin -t evolution --threads 4 -s 5
@@ -16,6 +17,18 @@ python main.py twin -t optimization --threads 4 -s 5
 python main.py questions -t optimization
 python main.py split -r 0.8
 
+# Geant2012：Twin、问题与划分命令均使用对应的拓扑目录
+python main.py scenes -c configs/Geant.yaml
+python main.py twin -t origin --scene-root generated/Geant2012 --threads 4 --scale 5
+python main.py questions -t analysis --scene-root generated/Geant2012
+python main.py twin -t evolution --scene-root generated/Geant2012 --threads 4 -s 5
+python main.py questions -t evolution --scene-root generated/Geant2012
+python main.py twin -t optimization --scene-root generated/Geant2012 --threads 4 -s 5
+python main.py questions -t optimization --scene-root generated/Geant2012
+# split 输出仍由 configs/dataset_split.yaml 指定，执行前必须为空
+python main.py split --scene-root generated/Geant2012 -r 0.8
+
+# 默认仅清理 Abilene
 python main.py clean -o questions -t analysis
 python main.py clean -o questions -t evolution
 python main.py clean -o questions -t optimization
@@ -23,3 +36,8 @@ python main.py clean -o twin -t origin
 python main.py clean -o twin -t evolution
 python main.py clean -o twin -t optimization
 python main.py clean -o scenes
+
+# 清理 Geant2012
+python main.py clean -o questions --scene-root generated/Geant2012
+python main.py clean -o twin --scene-root generated/Geant2012
+python main.py clean -c configs/Geant.yaml

@@ -238,7 +238,7 @@ def prepare_optimization_scenes(
     *,
     scenes_root: str | Path | None = None,
 ) -> OptimizationPreparation:
-    config = load_config(config_path)
+    config = load_config(config_path, scenes_root=scenes_root)
     category = config.categories["optimization"]
     template_bundle = load_template_bundle(
         category.template_file,
@@ -246,11 +246,7 @@ def prepare_optimization_scenes(
     )
     templates = list(template_bundle.templates)
     _validate_templates(templates)
-    root = (
-        Path(scenes_root).expanduser().resolve()
-        if scenes_root is not None
-        else config.scenes_root
-    )
+    root = config.scenes_root
     if not root.is_dir():
         raise ValueError(f"scenes_root is not a directory: {root}")
     _ensure_optimization_outputs_absent(root, category)
@@ -362,13 +358,9 @@ def generate_optimization_questions(
     *,
     scenes_root: str | Path | None = None,
 ) -> QuestionGenerationResult:
-    config = load_config(config_path)
+    config = load_config(config_path, scenes_root=scenes_root)
     category = config.categories["optimization"]
-    root = (
-        Path(scenes_root).expanduser().resolve()
-        if scenes_root is not None
-        else config.scenes_root
-    )
+    root = config.scenes_root
     ensure_question_outputs_absent(category)
     template_bundle = load_template_bundle(
         category.template_file,

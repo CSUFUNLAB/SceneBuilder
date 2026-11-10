@@ -115,10 +115,13 @@ def split_generated_dataset(
     config_path: str | Path,
     *,
     train_ratio: float | None = None,
+    scenes_root: str | Path | None = None,
 ) -> DatasetSplitResult:
     config = load_dataset_split_config(config_path)
     effective_ratio = _validate_ratio(config.train_ratio if train_ratio is None else train_ratio)
-    question_config = load_question_config(config.question_config)
+    question_config = load_question_config(
+        config.question_config, scenes_root=scenes_root
+    )
     _validate_outputs_outside_sources(config, question_config)
     _ensure_output_roots_empty(config)
 

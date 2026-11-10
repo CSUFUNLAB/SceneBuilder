@@ -1,16 +1,16 @@
 seed: 42
-scenes_root: ../generated
+scenes_root: ../generated/Abilene
 questions_per_template: 20
 
+# Question files default to scenes_root/<origin|evo|opt>/<type>_questions.jsonl.
+# --scene-root switches both scene inputs and these question outputs.
 categories:
   analysis:
     enabled: true
     template_file: ../question_generator/templates/analysis.yaml
-    output_file: ../generated/origin/analysis_questions.jsonl
   evolution:
     enabled: false
     template_file: ../question_generator/templates/evolution.yaml
-    output_file: ../generated/evo/evolution_questions.jsonl
     options:
       load_change_multiplier_range: [0.0, 3.0]
       load_change_saturated_flow_ratio: 0.5
@@ -21,7 +21,6 @@ categories:
   optimization:
     enabled: false
     template_file: ../question_generator/templates/optimization.yaml
-    output_file: ../generated/opt/optimization_questions.jsonl
     options:
       channel_expansion_capacity_candidates_mbps: [10000, 20000, 40000, 100000]
       channel_expansion_max_candidates: 4
