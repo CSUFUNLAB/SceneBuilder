@@ -15,7 +15,7 @@ cd /home/lb/STN/SceneBuilder
 python main.py init -p ./ns-allinone-3.48.tar.bz2
 
 # 1. 生成原始场景输入
-python main.py scenes -c configs/Abilene.yaml
+python main.py scenes -c configs/scenes/Abilene.yaml
 
 # 2. 生成原始 Twin
 python main.py twin -t origin
@@ -39,16 +39,18 @@ python main.py questions -t optimization -c configs/question_generator.yaml
 python main.py split -c configs/dataset_split.yaml
 ```
 
-默认流程使用 Abilene 拓扑，生成内容位于 `generated/Abilene/`。使用 Geant2012 拓扑时：
+上例生成 Abilene 场景，内容位于 `generated/Abilene/`。`twin` 不传 `--scene-root` 时会
+处理 `generated/` 下全部已有网络。只处理 Geant2012 时：
 
 ```bash
-python main.py scenes -c configs/Geant.yaml
+python main.py scenes -c configs/scenes/Geant.yaml
 python main.py twin -t origin --scene-root generated/Geant2012
 python main.py questions -t analysis --scene-root generated/Geant2012
 python main.py split --scene-root generated/Geant2012
 ```
 
-生成 Geant2012 的演化、优化 Twin 和问题时，也需传入相同的 `--scene-root`。
+只生成 Geant2012 的演化、优化 Twin 时，也传入相同的 `--scene-root`；省略参数会处理全部网络。
+问题生成和数据集划分仍按配置或显式 `--scene-root` 选择目录。
 两套生成内容独立保存；`split` 的训练集、测试集输出目录仍由划分配置决定，切换拓扑
 不会自动更换输出目录，运行前仍须保证这些目录为空。
 
@@ -65,7 +67,7 @@ python main.py <模式> [选项]
 - `twin`：生成 `origin`、`evolution` 或 `optimization` Twin。
 - `questions`：从已有 Twin 和标签生成问题。
 - `split`：按问题模板分别划分训练集和测试集。
-- `clean`：清理场景配置对应的已有场景。
+- `clean`：默认清理全部拓扑的生成数据并调用 ns-3 clean；可用 `-o` 只清理指定数据层。
 
 ### 0. 初始化 ns-3
 
@@ -99,7 +101,7 @@ python main.py init
 ### 1. 生成场景
 
 ```bash
-python main.py scenes -c configs/Abilene.yaml
+python main.py scenes -c configs/scenes/Abilene.yaml
 ```
 
 `output_root` 是生成内容的公共根目录，下一层使用拓扑文件名（不含扩展名）。
@@ -114,10 +116,10 @@ python main.py scenes -c configs/Abilene.yaml
 配置与拓扑文件不变时，使用相同的 `seed` 可以复现生成结果。
 
 `scenes` 不会覆盖或清理任何已有内容。只要该拓扑的输出目录中已经存在文件或目录，
-命令就会立即停止并提示先运行对应配置的清理命令。默认 Abilene 使用：
+命令就会立即停止并提示先运行对应配置的清理命令。只清理 Abilene 使用：
 
 ```bash
-python main.py clean
+python main.py clean -o scenes --scene-root generated/Abilene
 ```
 
 清理后才能重新生成场景。其他拓扑目录不受影响。
@@ -130,7 +132,11 @@ python main.py clean
 python main.py twin -t origin
 ```
 
-默认从 `generated/Abilene/` 读取场景；`--scene-root generated/Geant2012` 可切换拓扑。
+不传 `--scene-root` 时，自动处理 `generated/` 下所有包含原始场景输入的网络目录，
+例如 `generated/Abilene/` 和 `generated/Geant2012/`；直接位于 `generated/origin/input/`
+的场景也会纳入。`--scene-root generated/Geant2012` 则只处理该网络。
+这一默认行为同时适用于 `origin`、`evolution`、`optimization` 三种 Twin 类型，
+不再由问题配置中的 `scenes_root` 限定为某个网络。
 下文的 `origin/`、`evo/` 和 `opt/` 路径均相对于选定的拓扑目录。
 
 使用 4 个线程并发生成（演化和优化 Twin 同样支持 `--threads`）：
@@ -142,7 +148,7 @@ python main.py twin -t optimization --threads 4
 ```
 
 场景由线程池分配，每个线程启动一个独立的 ns-3 进程，完成后继续领取下一个场景。
-运行前统一编译一次；每次仿真禁用隐式编译，避免并发操作构建目录。
+一次命令只编译一次；多个网络依次处理，每次仿真禁用隐式编译，避免并发操作构建目录。
 默认使用 1 个线程；并发数不会超过场景数量，并发日志带有场景标识。
 默认遇到失败后停止启动新场景，已运行的场景会正常结束；指定 `--continue-on-error`
 可继续处理其余场景。
@@ -175,11 +181,11 @@ python main.py twin -t evolution
 
 该命令从具有完整原始 Twin 和标签的 origin 场景中随机抽样，使用代码内置的变更规则，将变更施加到
 复制的静态输入并写入 `evo/input/<scene_id>/`，然后将演化 Twin 写入
-`evo/scenes/<scene_id>.jsonl`。当前包含节点、信道和接口的故障/恢复、数据流负载的
-变化以及新增数据流，共八类事件。
+`evo/scenes/<scene_id>.jsonl`。模板文件的 `events` 列表声明四类事件：节点故障、接口故障、
+信道故障、数据流需求变化。每个事件类型的 Twin 可供对应的四个问题模板共用。
 节点故障通过使所有本地接口停止实际收发实现；接口故障只使指定本地接口停止实际收发，
 不使宿主节点或对端接口自身故障。信道故障使该信道无法交付，端点仍可发送。
-恢复事件只修复指定实体自身的故障，其他实体的独立故障保持不变。
+每次从没有物理故障的 origin 中派生一个独立变化；其余输入和路由保持不变。
 
 准备阶段会立即输出配置加载、原始场景扫描和读取进度，随后显示各类变更的输入生成数量及
 累计耗时；处理中约每 5 秒更新一次，阶段结束时输出汇总。全部演化输入准备完成后才启动
@@ -191,7 +197,8 @@ ns-3 仿真。`--threads` 控制后续仿真的并发进程数，`-s` 是仿真�
 的流，另一半随机选择状态为 normal 且路径没有饱和信道/接口的流。每个 origin 场景在
 同一事件类型中最多使用一次，所选分类会写入事件元数据的 `source_flow_class`。新的需求
 值等于原需求乘以 `load_change_multiplier_range` 中随机采样的倍率，默认范围为 `[0.0, 3.0]`；
-问题直接显示计算后的 Mbps，不再显示倍率。
+问题直接写“需求变为 X Mbps”，显示计算后的具体值，不区分增大或减小，也不显示倍率；
+需求取到与原值相同的数值时跳过该候选。
 
 生成优化场景 Twin：
 
@@ -352,22 +359,32 @@ analysis 默认目标为 125 题，证据充足时按默认比例分为训练 75
 可以再用 `-t/--type` 指定内部类型；省略 `-t` 会清理该对象下的全部类型。`scenes`
 没有下级类型，不能搭配 `-t`。
 
-清理默认拓扑的全部生成内容：
+清理全部拓扑的生成数据及 ns-3 编译产物：
 
 ```bash
 python main.py clean
+```
+
+**警告：该命令默认删除 `generated/` 下全部拓扑数据，并在 `ns-3/` 中调用 `./ns3 clean`，
+清除编译产物和构建缓存。之后需要重新运行 `python main.py init` 配置并编译 ns-3。**
+
+只清理场景及其下游产物、保留 ns-3 编译产物：
+
+```bash
 python main.py clean -o scenes
 ```
 
-两个命令行为相同：使用默认的 `configs/Abilene.yaml`，清空 `generated/Abilene/` 中的
-场景输入、Twin、标签、演化派生输入和问题输出，保留其他拓扑目录。场景是最上游数据，
-因此 `-o scenes` 不会保留下游产物。清理 Geant2012 时使用对应场景配置：
+该命令默认清空 `generated/` 中全部拓扑的场景输入、Twin、标签、派生输入和问题输出，
+也包括直接位于 `generated/origin/` 等目录的产物。场景是最上游数据，因此 `-o scenes`
+不会保留下游产物。只清理 Geant2012 的生成数据时指定目录：
 
 ```bash
-python main.py clean -c configs/Geant.yaml
-# 等价写法
-python main.py clean -o scenes -c configs/Geant.yaml
+python main.py clean -o scenes --scene-root generated/Geant2012
 ```
+
+全量或场景清理也可用显式 `-c configs/scenes/Geant.yaml` 选择该配置的拓扑输出目录；
+同时指定时以 `--scene-root` 为准。这些参数仅限定生成数据的范围；未指定 `-o` 时，
+仍会调用 ns-3 clean 清理共享的编译产物。
 
 只清理 Twin 层及其下游问题：
 
@@ -378,8 +395,8 @@ python main.py clean -o twin
 该命令保留 `origin/input` 中的原始场景输入，删除 origin Twin 和标签、全部
 `evo/input`、`evo/scenes`、`opt/input` 与 `opt/scenes`，并删除所有问题列表。
 使用其他问题配置时可增加 `-c <question_config>`。
-默认清理范围为 `generated/Abilene/`；清理其他拓扑的 Twin 或问题时，使用
-`--scene-root`，例如：
+Twin 和问题清理默认遍历 `generated/` 下全部拓扑，包括只剩派生输入、Twin 或问题文件的目录。
+只清理一个拓扑时使用 `--scene-root`，例如：
 
 ```bash
 python main.py clean -o twin --scene-root generated/Geant2012
@@ -529,8 +546,9 @@ generated/
 
 输入配置使用 `interfaces`，接口文件为 `interfaces.csv`，标识列为
 `interface_id`；故障配置使用 `interface_state_probabilities`，演化事件使用
-`interface_failure` / `interface_recovery`，问题参数使用 `interface_id`、
-`event_interface_id`、`target_interface_id`。旧配置和旧场景文件不自动转换，
+`interface_failure`，问题参数使用 `interface_id`；同时涉及两个接口时用
+`changed_interface_id` 区分发生变化的接口。
+旧配置和旧场景文件不自动转换，
 已有数据需要按新格式重新生成，下游 Twin 读取端也需要使用新实体类型和列表关系。
 
 数据流的 `demand_mbps` 和 `throughput_mbps` 都采用应用层有效载荷口径；
@@ -694,10 +712,11 @@ generated/
 
 ### 场景配置
 
-场景配置提供 `configs/Abilene.yaml`（默认，使用 `Abilene.gml`）和 `configs/Geant.yaml`
-（使用 `Geant2012.gml`），主要控制：
+各网络的场景配置集中在 `configs/scenes/`：`Abilene.yaml` 使用 `Abilene.gml`，
+`Geant.yaml` 使用 `Geant2012.gml`。问题生成与数据集划分配置仍放在 `configs/` 下。
+场景配置主要控制：
 
-- `output_root`：场景输出的公共根目录，默认 `../generated`；实际输出追加拓扑文件名
+- `output_root`：场景输出的公共根目录，示例配置为 `../../generated`；实际输出追加拓扑文件名
   （不含扩展名），分别为 `generated/Abilene/` 和 `generated/Geant2012/`。
 - `seed`：随机种子。
 - `scenes_per_topology`：在指定拓扑上生成的场景总数。
@@ -717,7 +736,7 @@ generated/
 ```yaml
 topology:
   type: topologyzoo
-  file: ../scene_generator/topologies/topologyzoo/Abilene.gml
+  file: ../../scene_generator/topologies/topologyzoo/Abilene.gml
 ```
 
 旧配置中的 `topology_sources` 必须迁移为上述单个 `topology` 配置，不再扫描拓扑目录。
@@ -756,38 +775,34 @@ topology:
 `id`、问题文本 `question` 和 `answer`；演化模板的 `answer` 是标签列表，不再重复声明
 `type: enum` 和 `values`。优化任务的每项包含 `id`、`strategy` 和
 `question`，答案格式由对应的优化问题生成规则确定。三类模板 ID 分别使用 `TA`、`TE`、
-`TO` 前缀，后接四位数字；精简后的演化模板保留原编号。问题生成器根据
+`TO` 前缀，后接四位数字。演化模板重新编号为 `TE0001` 至 `TE0016`，问题生成器根据
 模板 ID 选择对应生成规则。
-三类模板均可附加 `explanation` 字符串列表，用于解释问题中的基本概念、标签含义和范围，不包含具体数值阈值、
-标签生成公式、判定优先级或样本筛选前提。分析模板的节点三态、信道 `saturated/degraded`
+三类模板均可附加 `explanation` 字符串列表，用于解释问题中的基本概念、标签含义和范围，
+不包含解题步骤、判定优先级或样本筛选前提。演化吞吐量题说明题意要求的 ±3% 范围。分析模板的节点三态、信道 `saturated/degraded`
 区分、接口饱和、本地接口故障与整机故障等定义在这里维护。
 问题解释不拼入具体问题文本，也不改变仿真标签或候选筛选；`split` 随模板一同导出。
 STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不由模型生成或训练修改；
 运行时只从知识库加载匹配题型的问题解释，`--no-kb` 也保留它们。
-演化模板只包含 `schema_version`、`question_type` 和 `templates`，不再配置 `events`。
-场景变更沿用代码中的内置语义映射，`questions -t evolution` 根据前后 Twin 的证据生成问题。
-当前保留两类各 5 个、共 10 个演化模板，沿用原编号，覆盖节点、信道、接口的故障与恢复、
-流负载变化和新增流共 8 类事件：
+演化模板包含 `schema_version`、`question_type`、`events` 和 `templates`。
+`events` 明确列出节点故障、接口故障、信道故障、数据流需求变化四类事件；代码提供对应的
+输入修改规则。四类事件各有四个询问目标，共 16 个模板：
 
-| 类别 | 模板 | 事件与预测目标 |
-| --- | --- | --- |
-| 事件后状态 | `TE0037` | 信道故障后的数据流状态 |
-| 事件后状态 | `TE0044` | 接口故障后的接口状态 |
-| 事件后状态 | `TE0048` | 接口恢复后的接口状态 |
-| 事件后状态 | `TE0051` | 流负载变化后的信道状态 |
-| 事件后状态 | `TE0057` | 新增流的状态 |
-| 性能指标变化 | `TE0001` | 节点故障后的数据流吞吐量变化 |
-| 性能指标变化 | `TE0003` | 节点恢复后的数据流吞吐量变化 |
-| 性能指标变化 | `TE0007` | 信道恢复后的数据流吞吐量变化 |
-| 性能指标变化 | `TE0009` | 接口故障后的数据流吞吐量变化 |
-| 性能指标变化 | `TE0017` | 流负载变化后的该流丢包率变化 |
+| 事件 | 流吞吐量变化 | 接口状态 | 信道状态 | 数据流状态 |
+| --- | --- | --- | --- | --- |
+| 节点故障 | TE0001 | TE0002 | TE0003 | TE0004 |
+| 接口故障 | TE0005 | TE0006 | TE0007 | TE0008 |
+| 信道故障 | TE0009 | TE0010 | TE0011 | TE0012 |
+| 数据流需求变为 X Mbps | TE0013 | TE0014 | TE0015 | TE0016 |
 
-状态题回答事件后的状态，保留对应实体的完整状态集合，按实际标签取样，不强制标签均衡。
-事件实体和已有目标必须在原始 Twin 中有状态证据；目标在演化后 Twin 中的状态也必须能由
-可观测属性重新推导且与标签一致。新增流不存在原始状态，因此改为检查其端点存在、
-当前路由证据可查询，并要求新增后的流状态满足同样的证据一致性。
-性能指标题比较同一目标在事件前后的指标，答案为 `increase/unchanged/decrease`，
-沿用各方向配额与指标容差；缺少指标证据或没有满足某方向的候选时不生成对应样本。
+状态题回答变化后的具体状态，保留对应实体的完整状态集合，按实际标签取样，不强制标签均衡。
+事件实体和目标在原始 Twin 中需要有状态证据；目标在演化后 Twin 中的状态也必须能由
+可观测属性推导且与标签一致。状态题可查询事件实体自身，也可查询其他对象。
+吞吐量题比较同一目标流在变化前后的吞吐量，答案为 `increase/unchanged/decrease`。
+相对原始吞吐量变化在 ±3% 以内（含边界）为 `unchanged`；原吞吐量为零时，仅新值仍为零
+算不变。需求变化题的吞吐量目标必须是另一条流。
+同类型的两个对象分别使用 `changed_data_flow_id` / `data_flow_id` 等占位符，避免覆盖 ID；
+不同类型的对象直接使用 `node_id`、`interface_id`、`channel_id`、`data_flow_id`。
+吞吐量题保留方向配额；缺少测量或某方向候选不足时不补造标签。
 
 优化模板文件的 `strategies` 声明 `routing_adjustment`、`channel_expansion` 和
 `fault_repair` 三种策略。`routing_adjustment` 只修改指定转发节点面向指定目的节点的一个
@@ -828,14 +843,12 @@ STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不�
 `delay_packet_loss_rate_tolerance`。
 
 演化类的 `options.scenes_per_event` 使用一个正整数控制每类事件生成多少个场景；例如设置
-为 `3` 时，八类事件各生成 3 个场景，最多生成 24 个演化场景。该区域还可配置负载变化的
-`load_change_multiplier_range` 倍率范围、新增流的
-`flow_addition_demand_mbps_range` 需求带宽范围，以及优先选择事件相关目标的概率。同一事件
-类型内部从符合条件的原场景中随机不放回抽取；不同事件类型彼此独立，可以复用同一个
-原场景，前面的事件不会消耗后续事件的候选场景。
-当前演化模板包含 5 个事件后状态题和 5 个性能指标变化题；性能指标选用吞吐量和丢包率。
-当前已经实现分析类、这 10 个演化模板，以及 TO0001 至 TO0009
-九个优化问题的场景与问题生成。
+为 `3` 时，四类事件各生成最多 3 个场景，共最多 12 个演化场景。默认 `300` 对应最多
+1200 个场景，四个目标模板共享同类事件的 Twin，不为每个模板重复仿真。该区域还可配置
+`load_change_multiplier_range` 倍率范围，以及优先选择事件相关目标的概率。同一事件类型
+内部从符合条件的原场景中随机不放回抽取；不同事件类型彼此独立，可以复用同一个原场景。
+对于两个不同的数据流，共用同方向信道的流视为相关目标。
+当前实现分析类、这 16 个演化模板，以及 TO0001 至 TO0009 九个优化模板的场景与问题生成。
 
 ## 常用选项
 
@@ -848,8 +861,10 @@ STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不�
 - `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
   `twin -t optimization` 会创建派生场景，因此不支持该选项。
 - `--scene-root <路径>`：`twin`、`questions` 和 `split` 可用，用于切换拓扑目录；
-  `clean -o twin/questions` 同样支持。默认 `generated/Abilene`，Geant2012 使用
-  `generated/Geant2012`。默认问题输出跟随该目录，`split` 的数据集输出位置保持配置值。
+  所有 `clean` 命令同样支持。`twin` 和 `clean` 默认处理 `generated/` 下全部网络
+  （全量或场景清理显式传入 `-c` 时按场景配置选择拓扑）；`questions` 和 `split` 沿用
+  配置中的目录（默认 `generated/Abilene`）。默认问题输出跟随所选目录，`split` 的
+  数据集输出位置保持配置值。
 
 `--scale` 会传给 ns-3 的 `scaleFactor`；直接运行 `TwinGenerate` 时默认值也为 `5`。
 例如 `python main.py twin -t origin -s 5 --threads 4`。原始场景与用于比较的演化、优化

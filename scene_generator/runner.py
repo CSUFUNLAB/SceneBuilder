@@ -372,7 +372,7 @@ def run(config_path: str | Path) -> list[Path]:
         if existing_output is not None:
             raise ValueError(
                 "Generated scene output already exists under "
-                f"{output_root}; run `python main.py clean -c "
+                f"{output_root}; run `python main.py clean -o scenes -c "
                 f"{shlex.quote(str(config.config_path))}` first"
             )
     selected = select_topology(config)

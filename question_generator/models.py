@@ -10,13 +10,9 @@ _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
 
 EVOLUTION_EVENT_SEMANTICS = {
     "node_failure": ("node", "failure"),
-    "node_recovery": ("node", "recovery"),
-    "channel_failure": ("channel", "failure"),
-    "channel_recovery": ("channel", "recovery"),
     "interface_failure": ("interface", "failure"),
-    "interface_recovery": ("interface", "recovery"),
+    "channel_failure": ("channel", "failure"),
     "flow_load_change": ("data_flow", "load_change"),
-    "flow_addition": ("data_flow", "addition"),
 }
 
 

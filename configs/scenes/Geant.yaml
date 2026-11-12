@@ -1,4 +1,4 @@
-output_root: ../generated
+output_root: ../../generated
 seed: 20260331
 scenes_per_topology: 2000
 max_topology_nodes: 50
@@ -7,7 +7,7 @@ scene_duration: 1
 # All scenes use this topology; file is relative to this YAML file.
 topology:
   type: topologyzoo
-  file: ../scene_generator/topologies/topologyzoo/Abilene.gml
+  file: ../../scene_generator/topologies/topologyzoo/Geant2012.gml
 
 fault_generation:
   scenario_probabilities:

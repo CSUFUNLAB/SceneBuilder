@@ -7,37 +7,46 @@ python main.py init -p ./ns-allinone-3.48.tar.bz2
 # 已解压到 ns-3/：直接配置并编译
 python main.py init
 
-# Abilene（默认）：生成内容位于 generated/Abilene/
-python main.py scenes -c configs/Abilene.yaml
+# 生成各网络的原始场景，分别位于 generated/Abilene/ 和 generated/Geant2012/
+python main.py scenes -c configs/scenes/Abilene.yaml
+python main.py scenes -c configs/scenes/Geant.yaml
+
+# Twin：不传 --scene-root，默认处理 generated/ 下全部已有网络
+# 同时支持直接位于 generated/origin/input/ 的原始场景
 python main.py twin -t origin --threads 4 --scale 5
-python main.py questions -t analysis
 python main.py twin -t evolution --threads 4 -s 5
-python main.py questions -t evolution
 python main.py twin -t optimization --threads 4 -s 5
+# 如需只处理某个网络，在相应 twin 命令末尾添加 --scene-root generated/Geant2012
+
+# 问题生成与划分仍默认处理 Abilene，不会自动遍历全部网络
+python main.py questions -t analysis
+python main.py questions -t evolution
 python main.py questions -t optimization
+# split 输出由 configs/dataset_split.yaml 指定，执行前必须为空
 python main.py split -r 0.8
 
-# Geant2012：Twin、问题与划分命令均使用对应的拓扑目录
-python main.py scenes -c configs/Geant.yaml
-python main.py twin -t origin --scene-root generated/Geant2012 --threads 4 --scale 5
+# Geant2012：问题与划分命令需指定对应的拓扑目录
 python main.py questions -t analysis --scene-root generated/Geant2012
-python main.py twin -t evolution --scene-root generated/Geant2012 --threads 4 -s 5
 python main.py questions -t evolution --scene-root generated/Geant2012
-python main.py twin -t optimization --scene-root generated/Geant2012 --threads 4 -s 5
 python main.py questions -t optimization --scene-root generated/Geant2012
 # split 输出仍由 configs/dataset_split.yaml 指定，执行前必须为空
 python main.py split --scene-root generated/Geant2012 -r 0.8
 
-# 默认仅清理 Abilene
+# 清理：默认处理 generated/ 下全部拓扑（含直接位于 generated/origin/ 等目录的产物）
 python main.py clean -o questions -t analysis
 python main.py clean -o questions -t evolution
 python main.py clean -o questions -t optimization
 python main.py clean -o twin -t origin
 python main.py clean -o twin -t evolution
 python main.py clean -o twin -t optimization
+# 清理全部拓扑的场景及下游产物，保留 ns-3 编译产物
 python main.py clean -o scenes
 
-# 清理 Geant2012
+# 【警告】以下命令会删除 generated/ 下全部拓扑数据，并调用 ./ns3 clean 清除编译产物和构建缓存！
+# 执行后需重新运行 python main.py init 配置并编译 ns-3。
+python main.py clean
+
+# 只清理 Geant2012：显式指定 --scene-root
 python main.py clean -o questions --scene-root generated/Geant2012
 python main.py clean -o twin --scene-root generated/Geant2012
-python main.py clean -c configs/Geant.yaml
+python main.py clean -o scenes --scene-root generated/Geant2012
