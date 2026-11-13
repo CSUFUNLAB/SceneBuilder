@@ -1,6 +1,6 @@
 seed: 42
-# Default for questions and dataset operations. Twin generation and Twin/question
-# cleanup scan all generated/ scene roots unless --scene-root selects one.
+# Default for dataset splitting and direct library calls. main.py twin/questions
+# and Twin/question cleanup scan all generated/ scene roots unless --scene-root selects one.
 scenes_root: ../generated/Abilene
 questions_per_template: 20
 

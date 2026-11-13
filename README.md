@@ -39,7 +39,7 @@ python main.py questions -t optimization -c configs/question_generator.yaml
 python main.py split -c configs/dataset_split.yaml
 ```
 
-上例生成 Abilene 场景，内容位于 `generated/Abilene/`。`twin` 不传 `--scene-root` 时会
+上例生成 Abilene 场景，内容位于 `generated/Abilene/`。`twin` 和 `questions` 不传 `--scene-root` 时会
 处理 `generated/` 下全部已有网络。只处理 Geant2012 时：
 
 ```bash
@@ -50,7 +50,7 @@ python main.py split --scene-root generated/Geant2012
 ```
 
 只生成 Geant2012 的演化、优化 Twin 时，也传入相同的 `--scene-root`；省略参数会处理全部网络。
-问题生成和数据集划分仍按配置或显式 `--scene-root` 选择目录。
+问题生成会为各网络分别保存问题列表；数据集划分仍按配置或显式 `--scene-root` 选择目录。
 两套生成内容独立保存；`split` 的训练集、测试集输出目录仍由划分配置决定，切换拓扑
 不会自动更换输出目录，运行前仍须保证这些目录为空。
 
@@ -253,8 +253,11 @@ python main.py questions -t evolution -c configs/question_generator.yaml
 python main.py questions -t optimization -c configs/question_generator.yaml
 ```
 
-`-c` 默认使用 `configs/question_generator.yaml`，其中场景根目录为 `generated/Abilene/`。
-也可以覆盖场景数据根目录，默认问题输出会随之切换到指定拓扑目录：
+`-c` 默认使用 `configs/question_generator.yaml`。不传 `--scene-root` 时，自动遍历
+`generated/` 下具有对应场景输入的全部网络，分别生成问题并保存到各自的目录；
+也支持直接位于 `generated/origin/`、`generated/evo/`、`generated/opt/` 的场景。
+例如 analysis 会分别处理 Abilene 和 Geant2012 的 origin 输入及 Twin。
+只为指定网络生成问题时，传入 `--scene-root`：
 
 ```bash
 python main.py questions -t analysis \
@@ -267,10 +270,10 @@ python main.py questions -t analysis \
 使用原始和演化 Twin 及两侧 `input/<scene>/labels.jsonl` 都存在的场景对，跳过未完成的
 场景对，并报告使用和跳过数量；只有没有完整场景对时才要求先生成 Twin。无需等全部演化
 场景跑完。问题通过比较变更前后的 Twin 生成实际满足目标变化的答案。
-演化状态题按模板总数采样实际状态，不强制各标签数量相同；性能指标题按
-`increase/unchanged/decrease` 分配方向配额，只采集实际满足对应变化的候选，
-证据不足或某方向候选不足时允许少出题，不补造标签。状态题每个 Twin 对同一模板最多
-贡献一道题；指标题对每个方向分别应用这一限制，达到对应配额后停止。
+演化状态题和吞吐量题均沿用分析分类题的规则，按模板声明的标签尽量均分配额：
+每模板 20 题时，三分类为 7/7/6，四分类为 5/5/5/5。只采集真实结果和证据符合
+目标标签的候选；不足时少出题并按标签报告缺口，不用其他标签补满，也不补造标签。
+每个 Twin 对同一模板的同一标签最多贡献一道题，达到该标签配额后停止。
 信道扩容和路由调整问题比较同一候选组的上下文 Twin 和全部候选 Twin。
 最优候选相对原场景存在超过阈值的正向提升，并且领先第二名
 超过胜出阈值时生成其实体 ID，否则跳过该样本。故障修复问题只比较两个单故障候选 Twin
@@ -280,11 +283,12 @@ TO0001/TO0003/TO0004 的标签是 `Cxxxx` 信道 ID，TO0002/TO0005/TO0006 的�
 接口 ID。
 问题的 `scene_name` 指向未施加动作的上下文 Twin，候选 Twin 只用于离线计算标签。
 
-问题生成不会删除或覆盖已有问题列表。目标问题输出已经存在时，命令会立即
-停止并提示先运行：
+问题生成不会删除或覆盖已有问题列表。某个网络的目标问题输出已经存在，或生成失败时，
+会报告该目录的错误并继续处理其余网络；有任何失败时命令最终返回非零状态。
+需要重新生成已有问题时，可先按类型清理（加 `--scene-root` 可只清理一个网络）：
 
 ```bash
-python main.py clean -o questions
+python main.py clean -o questions -t analysis
 ```
 
 问题模板使用稳定的 `template_id`：分析、演化和优化模板分别使用 `TA`、`TE`、`TO`
@@ -690,21 +694,28 @@ generated/
 全部分析候选以及执行证据校验的演化、优化候选在证据缺失、相互矛盾或不能支持唯一答案时
 直接跳过，不生成 `unknown` 答案来补足数量。存在真值标签不等同于观测证据充足。
 
-数据流状态的判断优先级为 `failed > unstable > degraded > normal`：无统计、未发送或未接收数据时为 `failed`；成功接收但有丢包时为 `unstable`；无丢包但吞吐量低于需求带宽的 95% 时为 `degraded`；其余情况为 `normal`。
+数据流状态为 `normal`（正常）、`congested`（拥塞）、`lossy`（丢包）、`failed`（断连）。
+有发送但没有任何接收时为 `failed`，它描述端到端交付，不等同于硬件故障；有接收且本流
+记录到丢包时为 `lossy`。有接收且未记录丢包时，检查目标流路径上同方向发送接口的当前
+队列：任一队列占用达到容量的 95% 时为 `congested`，否则为 `normal`。
+不再用吞吐量是否达到需求的 95% 判断流状态，低速流的整包发送误差不会据此标为拥塞。
+未发送或没有流统计时不输出状态标签，问题生成器也不把沉默当成断连。
+队列占用是仿真结束时的快照；丢包是本流的累计观测，共用队列中其他流的丢包不能代替
+本流丢包。无丢包流的正常/拥塞判断要求完整路径和同方向队列观测，证据缺失时跳过。
 
 问题文件默认按 `scenes_root` 和类别派生到 `origin/`、`evo/`、`opt/` 下，也可通过各类别
 的 `output_file` 显式指定。
-默认分析问题写入 `generated/Abilene/origin/analysis_questions.jsonl`。
+默认分析问题分别写入各网络的 `origin/analysis_questions.jsonl`，例如
+`generated/Abilene/origin/analysis_questions.jsonl` 和 `generated/Geant2012/origin/analysis_questions.jsonl`。
 
-演化问题的总列表默认写入
-`generated/Abilene/evo/evolution_questions.jsonl`。使用 `--scene-root` 时，这些路径随拓扑
-目录切换。每条记录除通用字段外，还包含：
+演化问题列表分别写入各网络的 `evo/evolution_questions.jsonl`，优化问题写入
+`opt/optimization_questions.jsonl`。使用 `--scene-root` 时只处理该目录。每条演化记录除通用字段外，还包含：
 
 - `original_scene_id`：变更前的原场景 ID。
 - `evolved_scene_id`：基于原场景生成的新场景 ID。
 - `scene_name`：为兼容通用问题读取逻辑，值与 `evolved_scene_id` 相同。
 
-不再为每个场景单独写问题文件；每种任务只保留一份全局问题列表。
+不再为每个场景单独写问题文件；每个网络的每种任务只保留一份问题列表。
 演化场景的 `input/<scene_id>/metadata.json` 会记录来源场景、事件场景 ID 和静态变更
 内容。所有问题类型都只在至少生成一道问题时创建 JSONL；问题列表为空时不会保留空文件。
 
@@ -754,12 +765,13 @@ topology:
 
 问题配置示例为 `configs/question_generator.yaml`，主要控制：
 
-- `scenes_root`：包含场景及孪生体的拓扑目录，默认 `../generated/Abilene`。
+- `scenes_root`：数据集划分和直接调用生成库时使用的场景目录，默认 `../generated/Abilene`。
+  `main.py questions` 默认遍历全部网络，不以该配置限定网络；`--scene-root` 可指定一个目录。
 - `seed`：问题实体选择的随机种子。
 - 顶层 `questions_per_template: 20`：统一设置每条模板期望生成的题数，三类任务共用，
   不配置模板编号或逐模板覆盖。分析分类题按模板声明的标签尽量均分，例如三分类为 7、7、6；
-  定位题每模板 20 题。当前 9 个分析模板共目标 180 题。演化状态题按实际状态取样，
-  性能指标题按变化方向尽量均分；证据或候选不足时实际数量可能更少。
+  定位题每模板 20 题。当前 9 个分析模板共目标 180 题。演化状态题和吞吐量题
+  使用相同的标签配额规则；证据或候选不足时实际数量可能更少，不用其他标签补满。
 - `template_file`：该类问题使用的模板文件。
 - `output_file`：可选的 JSONL 输出位置；省略时按场景根目录和类别派生。
   `--scene-root` 会同步调整原根目录内的输出路径；显式指定在根目录外的输出保持不变。
@@ -767,22 +779,17 @@ topology:
 
 问题生成阶段不会把模板复制到 `generated/`。运行 `split` 时，三类 `template_file` 才会
 分别复制为 `STN_tasks/question_template/analysis.yaml`、`evolution.yaml` 和
-`optimization.yaml`，供训练集和测试集共用。分析模板通过结构化 `answer` 声明答案类型，演化模板直接用
-`answer: [value1, value2]` 声明允许的标签；优化问题的答案格式由对应模板 ID 的生成规则确定。
+`optimization.yaml`，供训练集和测试集共用。三类模板统一使用列表声明答案空间：
+标签答案写为 `answer: [normal, congested, lossy, failed]`；实体答案写为
+`answer: [node_id]`、`answer: [channel_id]` 或 `answer: [entity_id]`，表示返回相应类型的具体 ID。
 模板和生成数据都不接受不确定答案标签；无法确定唯一答案的样本不会写入问题列表。
 
-模板文件是 `schema_version: 1` 的 YAML。分析和演化任务的 `templates` 每项包含唯一的
-`id`、问题文本 `question` 和 `answer`；演化模板的 `answer` 是标签列表，不再重复声明
-`type: enum` 和 `values`。优化任务的每项包含 `id`、`strategy` 和
-`question`，答案格式由对应的优化问题生成规则确定。三类模板 ID 分别使用 `TA`、`TE`、
+模板文件是 `schema_version: 1` 的 YAML。三类任务的 `templates` 每项包含唯一的
+`id`、问题文本 `question` 和非空列表 `answer`；优化任务额外包含 `strategy`，其答案 ID 类型
+必须与策略一致。三类模板 ID 分别使用 `TA`、`TE`、
 `TO` 前缀，后接四位数字。演化模板重新编号为 `TE0001` 至 `TE0016`，问题生成器根据
 模板 ID 选择对应生成规则。
-三类模板均可附加 `explanation` 字符串列表，用于解释问题中的基本概念、标签含义和范围，
-不包含解题步骤、判定优先级或样本筛选前提。演化吞吐量题说明题意要求的 ±3% 范围。分析模板的节点三态、信道 `saturated/degraded`
-区分、接口饱和、本地接口故障与整机故障等定义在这里维护。
-问题解释不拼入具体问题文本，也不改变仿真标签或候选筛选；`split` 随模板一同导出。
-STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不由模型生成或训练修改；
-运行时只从知识库加载匹配题型的问题解释，`--no-kb` 也保留它们。
+
 演化模板包含 `schema_version`、`question_type`、`events` 和 `templates`。
 `events` 明确列出节点故障、接口故障、信道故障、数据流需求变化四类事件；代码提供对应的
 输入修改规则。四类事件各有四个询问目标，共 16 个模板：
@@ -794,7 +801,10 @@ STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不�
 | 信道故障 | TE0009 | TE0010 | TE0011 | TE0012 |
 | 数据流需求变为 X Mbps | TE0013 | TE0014 | TE0015 | TE0016 |
 
-状态题回答变化后的具体状态，保留对应实体的完整状态集合，按实际标签取样，不强制标签均衡。
+状态题回答变化前后状态的转换，使用 `A_to_B`；状态相同时统一回答 `unchanged`，
+沿用分析题按答案标签均分配额。接口和信道只比较 `normal/saturated`，排除硬件故障类变化。
+数据流比较 `normal/congested/lossy/failed`，包含变为断连以及有实际前后证据的恢复变化；
+共 12 个有向变化和 `unchanged`。模板的 `answer` 保留答案空间，流状态题面不罗列全部选项。
 事件实体和目标在原始 Twin 中需要有状态证据；目标在演化后 Twin 中的状态也必须能由
 可观测属性推导且与标签一致。状态题可查询事件实体自身，也可查询其他对象。
 吞吐量题比较同一目标流在变化前后的吞吐量，答案为 `increase/unchanged/decrease`。
@@ -861,8 +871,8 @@ STN-Runtime 的 `construct -m kb` 将问题解释原样复制到知识库，不�
 - `--dry-run`：只打印将执行的 ns-3 命令。`twin -t evolution` 和
   `twin -t optimization` 会创建派生场景，因此不支持该选项。
 - `--scene-root <路径>`：`twin`、`questions` 和 `split` 可用，用于切换拓扑目录；
-  所有 `clean` 命令同样支持。`twin` 和 `clean` 默认处理 `generated/` 下全部网络
-  （全量或场景清理显式传入 `-c` 时按场景配置选择拓扑）；`questions` 和 `split` 沿用
+  所有 `clean` 命令同样支持。`twin`、`questions` 和 `clean` 默认处理 `generated/` 下全部网络
+  （全量或场景清理显式传入 `-c` 时按场景配置选择拓扑）；`split` 沿用
   配置中的目录（默认 `generated/Abilene`）。默认问题输出跟随所选目录，`split` 的
   数据集输出位置保持配置值。
 

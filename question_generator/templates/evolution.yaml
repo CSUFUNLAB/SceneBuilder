@@ -15,118 +15,69 @@ events:
     entity_type: data_flow
     description: "Set the offered demand of one existing data flow to a new Mbps value."
 
-# Four changes x four targets: throughput, interface state, channel state, flow state.
+# Four events x four targets: throughput change, interface state change, channel state change, flow state change.
 templates:
 
   - id: TE0001
     question: "If node $node_id$ fails, how will the throughput of data flow $data_flow_id$ change: increase, decrease, or remain unchanged within +/-3%?"
-    explanation:
-      - "Node failure means the entire node fails and all its interfaces stop physically transmitting and receiving."
-      - "Compare with the target flow's original throughput: unchanged includes changes within +/-3%; when the original throughput is zero, only zero is unchanged."
     answer: [increase, unchanged, decrease]
 
   - id: TE0002
-    question: "If node $node_id$ fails, what operating state will interface $interface_id$ have: normal, disabled, or saturated?"
-    explanation:
-      - "Node failure means the entire node fails and all its interfaces stop physically transmitting and receiving."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, saturated]
+    question: "If node $node_id$ fails, how will the operating state of interface $interface_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0003
-    question: "If node $node_id$ fails, what operating state will channel $channel_id$ have: normal, disabled, degraded, or saturated?"
-    explanation:
-      - "Node failure means the entire node fails and all its interfaces stop physically transmitting and receiving."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, degraded, saturated]
+    question: "If node $node_id$ fails, how will the operating state of channel $channel_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0004
-    question: "If node $node_id$ fails, what operating state will data flow $data_flow_id$ have: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Node failure means the entire node fails and all its interfaces stop physically transmitting and receiving."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, unstable, degraded, failed]
+    question: "If node $node_id$ fails, how will the operating state of data flow $data_flow_id$ change?"
+    answer: [normal_to_congested, normal_to_lossy, normal_to_failed, congested_to_normal, congested_to_lossy, congested_to_failed, lossy_to_normal, lossy_to_congested, lossy_to_failed, failed_to_normal, failed_to_congested, failed_to_lossy, unchanged]
 
   - id: TE0005
     question: "If interface $interface_id$ fails, how will the throughput of data flow $data_flow_id$ change: increase, decrease, or remain unchanged within +/-3%?"
-    explanation:
-      - "Interface failure stops physical transmission and reception on that local interface; it does not directly fail the entire node or the peer interface."
-      - "Compare with the target flow's original throughput: unchanged includes changes within +/-3%; when the original throughput is zero, only zero is unchanged."
     answer: [increase, unchanged, decrease]
 
   - id: TE0006
-    question: "If interface $changed_interface_id$ fails, what operating state will interface $interface_id$ have: normal, disabled, or saturated?"
-    explanation:
-      - "Interface failure stops physical transmission and reception on that local interface; it does not directly fail the entire node or the peer interface."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, saturated]
+    question: "If interface $changed_interface_id$ fails, how will the operating state of interface $interface_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0007
-    question: "If interface $interface_id$ fails, what operating state will channel $channel_id$ have: normal, disabled, degraded, or saturated?"
-    explanation:
-      - "Interface failure stops physical transmission and reception on that local interface; it does not directly fail the entire node or the peer interface."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, degraded, saturated]
+    question: "If interface $interface_id$ fails, how will the operating state of channel $channel_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0008
-    question: "If interface $interface_id$ fails, what operating state will data flow $data_flow_id$ have: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Interface failure stops physical transmission and reception on that local interface; it does not directly fail the entire node or the peer interface."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, unstable, degraded, failed]
+    question: "If interface $interface_id$ fails, how will the operating state of data flow $data_flow_id$ change?"
+    answer: [normal_to_congested, normal_to_lossy, normal_to_failed, congested_to_normal, congested_to_lossy, congested_to_failed, lossy_to_normal, lossy_to_congested, lossy_to_failed, failed_to_normal, failed_to_congested, failed_to_lossy, unchanged]
 
   - id: TE0009
     question: "If channel $channel_id$ fails, how will the throughput of data flow $data_flow_id$ change: increase, decrease, or remain unchanged within +/-3%?"
-    explanation:
-      - "Channel failure prevents delivery across the channel; healthy endpoint interfaces can still physically transmit."
-      - "Compare with the target flow's original throughput: unchanged includes changes within +/-3%; when the original throughput is zero, only zero is unchanged."
     answer: [increase, unchanged, decrease]
 
   - id: TE0010
-    question: "If channel $channel_id$ fails, what operating state will interface $interface_id$ have: normal, disabled, or saturated?"
-    explanation:
-      - "Channel failure prevents delivery across the channel; healthy endpoint interfaces can still physically transmit."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, saturated]
+    question: "If channel $channel_id$ fails, how will the operating state of interface $interface_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0011
-    question: "If channel $changed_channel_id$ fails, what operating state will channel $channel_id$ have: normal, disabled, degraded, or saturated?"
-    explanation:
-      - "Channel failure prevents delivery across the channel; healthy endpoint interfaces can still physically transmit."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, degraded, saturated]
+    question: "If channel $changed_channel_id$ fails, how will the operating state of channel $channel_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0012
-    question: "If channel $channel_id$ fails, what operating state will data flow $data_flow_id$ have: normal, unstable, degraded, or failed?"
-    explanation:
-      - "Channel failure prevents delivery across the channel; healthy endpoint interfaces can still physically transmit."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, unstable, degraded, failed]
+    question: "If channel $channel_id$ fails, how will the operating state of data flow $data_flow_id$ change?"
+    answer: [normal_to_congested, normal_to_lossy, normal_to_failed, congested_to_normal, congested_to_lossy, congested_to_failed, lossy_to_normal, lossy_to_congested, lossy_to_failed, failed_to_normal, failed_to_congested, failed_to_lossy, unchanged]
 
   - id: TE0013
     question: "If the demand of data flow $changed_data_flow_id$ becomes $demand_mbps$ Mbps, how will the throughput of data flow $data_flow_id$ change: increase, decrease, or remain unchanged within +/-3%?"
-    explanation:
-      - "The stated Mbps value is the new offered demand of that flow; other flows retain their original demands."
-      - "Compare with the target flow's original throughput: unchanged includes changes within +/-3%; when the original throughput is zero, only zero is unchanged."
-      - "The target flow is different from the flow whose demand changes."
     answer: [increase, unchanged, decrease]
 
   - id: TE0014
-    question: "If the demand of data flow $data_flow_id$ becomes $demand_mbps$ Mbps, what operating state will interface $interface_id$ have: normal, disabled, or saturated?"
-    explanation:
-      - "The stated Mbps value is the new offered demand of that flow; other flows retain their original demands."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, saturated]
+    question: "If the demand of data flow $data_flow_id$ becomes $demand_mbps$ Mbps, how will the operating state of interface $interface_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0015
-    question: "If the demand of data flow $data_flow_id$ becomes $demand_mbps$ Mbps, what operating state will channel $channel_id$ have: normal, disabled, degraded, or saturated?"
-    explanation:
-      - "The stated Mbps value is the new offered demand of that flow; other flows retain their original demands."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, disabled, degraded, saturated]
+    question: "If the demand of data flow $data_flow_id$ becomes $demand_mbps$ Mbps, how will the operating state of channel $channel_id$ change: from normal to saturated, from saturated to normal, or remain unchanged?"
+    answer: [normal_to_saturated, saturated_to_normal, unchanged]
 
   - id: TE0016
-    question: "If the demand of data flow $changed_data_flow_id$ becomes $demand_mbps$ Mbps, what operating state will data flow $data_flow_id$ have: normal, unstable, degraded, or failed?"
-    explanation:
-      - "The stated Mbps value is the new offered demand of that flow; other flows retain their original demands."
-      - "Answer the target's state after the stated change. Other inputs and routing remain fixed."
-    answer: [normal, unstable, degraded, failed]
+    question: "If the demand of data flow $changed_data_flow_id$ becomes $demand_mbps$ Mbps, how will the operating state of data flow $data_flow_id$ change?"
+    answer: [normal_to_congested, normal_to_lossy, normal_to_failed, congested_to_normal, congested_to_lossy, congested_to_failed, lossy_to_normal, lossy_to_congested, lossy_to_failed, failed_to_normal, failed_to_congested, failed_to_lossy, unchanged]

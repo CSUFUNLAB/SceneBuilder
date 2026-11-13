@@ -19,44 +19,44 @@ templates:
   - id: TO0001
     strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest increase in total network throughput?
+    answer: [channel_id]
 
   - id: TO0002
     strategy: routing_adjustment
     question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to maximize the aggregate received throughput of all data flows destined for that node?
+    answer: [node_id]
 
   - id: TO0003
     strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest reduction in the packet-weighted mean end-to-end delay across all data flows without increasing the network-wide aggregate packet loss rate?
+    answer: [channel_id]
 
   - id: TO0004
     strategy: channel_expansion
     question: Among candidate channels $candidate_channel_ids$ incident to node $node_id$, which channel should have its capacity increased to $target_capacity_mbps$ Mbps to produce the largest reduction in the network-wide aggregate packet loss rate?
+    answer: [channel_id]
 
   - id: TO0005
     strategy: routing_adjustment
     question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to minimize the packet-weighted mean end-to-end delay of all data flows destined for that node without increasing their aggregate packet loss rate?
+    answer: [node_id]
 
   - id: TO0006
     strategy: routing_adjustment
     question: Which next hop among $candidate_next_hop_ids$ should node $routing_node_id$ use in its routing entry for destination node $destination_node_id$ to minimize the aggregate packet loss rate of all data flows destined for that node?
+    answer: [node_id]
 
   - id: TO0007
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the highest total network throughput?
-    explanation:
-      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
-      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."
+    answer: [entity_id]
 
   - id: TO0008
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest packet-weighted mean end-to-end delay across all data flows without resulting in a higher network-wide aggregate packet loss rate than the alternative repair?
-    explanation:
-      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
-      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."
+    answer: [entity_id]
 
   - id: TO0009
     strategy: fault_repair
     question: If $candidate_fault_entity_ids$ fail and only one can be repaired, which entity should be repaired to achieve the lowest network-wide aggregate packet loss rate?
-    explanation:
-      - "Repairing a node restores the node itself; repairing an interface restores only that local interface. Neither action repairs independent faults in other entities."
-      - "Interface failure prevents both physical transmission and reception; channel failure prevents delivery while healthy endpoint interfaces can still physically transmit. Each listed interface is a distinct repair candidate identified by its complete interface ID."
+    answer: [entity_id]

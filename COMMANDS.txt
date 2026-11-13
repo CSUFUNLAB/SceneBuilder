@@ -13,22 +13,21 @@ python main.py scenes -c configs/scenes/Geant.yaml
 
 # Twin：不传 --scene-root，默认处理 generated/ 下全部已有网络
 # 同时支持直接位于 generated/origin/input/ 的原始场景
-python main.py twin -t origin --threads 4 --scale 5
-python main.py twin -t evolution --threads 4 -s 5
+python main.py twin -t origin --threads 14 --scale 10
+python main.py twin -t evolution --threads 14 -s 10
 python main.py twin -t optimization --threads 4 -s 5
 # 如需只处理某个网络，在相应 twin 命令末尾添加 --scene-root generated/Geant2012
 
-# 问题生成与划分仍默认处理 Abilene，不会自动遍历全部网络
+# 问题生成：默认处理 generated/ 下全部具有对应场景输入的网络，分别保存问题文件
 python main.py questions -t analysis
 python main.py questions -t evolution
 python main.py questions -t optimization
-# split 输出由 configs/dataset_split.yaml 指定，执行前必须为空
+# 只为某个网络生成问题时，在相应命令末尾添加 --scene-root generated/Geant2012
+
+# split 仍按配置选择目录（默认 Abilene），输出由 configs/dataset_split.yaml 指定，执行前必须为空
 python main.py split -r 0.8
 
-# Geant2012：问题与划分命令需指定对应的拓扑目录
-python main.py questions -t analysis --scene-root generated/Geant2012
-python main.py questions -t evolution --scene-root generated/Geant2012
-python main.py questions -t optimization --scene-root generated/Geant2012
+# Geant2012：划分命令指定对应的拓扑目录
 # split 输出仍由 configs/dataset_split.yaml 指定，执行前必须为空
 python main.py split --scene-root generated/Geant2012 -r 0.8
 

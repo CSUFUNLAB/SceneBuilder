@@ -172,6 +172,7 @@ NetworkSceneHelper::WriteResults() const
     std::map<std::string, std::string> nodeStateById;
     std::map<std::string, std::string> channelStateById;
     std::map<std::string, std::string> flowStateById;
+    std::map<std::string, double> queueUtilizationByInterface;
 
     const double duration = std::max(0.000001, (m_applicationStopTime - m_applicationStartTime).GetSeconds());
     std::map<uint16_t, FlowMonitor::FlowStats> statsByPort;
@@ -458,6 +459,9 @@ NetworkSceneHelper::WriteResults() const
             BoundedRatio(currentQueuePackets, iface.simulationQueueSizePackets);
         uint32_t outputCurrentQueuePackets = static_cast<uint32_t>(
             std::llround(queueUtilization * iface.queueSizePackets));
+        // Use the exported queue counts so flow labels and public evidence agree.
+        queueUtilizationByInterface[iface.id] =
+            BoundedRatio(outputCurrentQueuePackets, iface.queueSizePackets);
         std::string state = "normal";
         if (!IsInterfaceOperational(iface))
         {
@@ -683,20 +687,39 @@ NetworkSceneHelper::WriteResults() const
         {
             successfulFlows++;
         }
-        std::string state = "normal";
-        if (!hasStats || stats.txPackets == 0 || stats.rxPackets == 0)
+        const auto& pathNodes = pathNodesByFlow[flow.id];
+        const auto& pathChannels = pathChannelsByFlow[flow.id];
+        bool congested = false;
+        for (std::size_t hop = 0; hop < pathChannels.size(); ++hop)
+        {
+            const auto& channel = channelById.at(pathChannels[hop]);
+            for (const auto& interfaceId : channel.interfaceIds)
+            {
+                const auto& iface = m_interfaceRecords.at(m_interfaceIndexById.at(interfaceId));
+                if (iface.node == pathNodes[hop] &&
+                    queueUtilizationByInterface.at(interfaceId) >= SATURATION_THRESHOLD)
+                {
+                    congested = true;
+                }
+            }
+        }
+        std::string state;
+        if (!hasStats || stats.txPackets == 0)
+        {
+            // No send attempts: keep the observation, but do not invent a state label.
+        }
+        else if (stats.rxPackets == 0)
         {
             state = "failed";
         }
         else if (stats.lostPackets > 0)
         {
-            state = "unstable";
+            state = "lossy";
         }
-        else if (throughputMbps < flow.nominalDemandMbps * 0.95)
+        else
         {
-            state = "degraded";
+            state = congested ? "congested" : "normal";
         }
-        const auto& pathNodes = pathNodesByFlow[flow.id];
         output << "{\"entity_type\":\"data_flow\",\"entity_id\":" << JsonString(flow.id)
                << ",\"properties\":{\"demand_mbps\":" << flow.nominalDemandMbps
                << ",\"tx_packets\":" << (hasStats ? stats.txPackets : 0)
@@ -714,8 +737,11 @@ NetworkSceneHelper::WriteResults() const
             output << ",\"action\":" << JsonRawArray(actionIt->second);
         }
         output << "}\n";
-        dataFlowStateLabels.push_back("{\"entity_id\":" + JsonString(flow.id) +
-                                      ",\"label\":" + JsonString(state) + "}");
+        if (!state.empty())
+        {
+            dataFlowStateLabels.push_back("{\"entity_id\":" + JsonString(flow.id) +
+                                          ",\"label\":" + JsonString(state) + "}");
+        }
         flowStateById[flow.id] = state;
     }
 

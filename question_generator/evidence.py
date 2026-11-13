@@ -89,7 +89,7 @@ def _maximum_channel_throughput(
     return max(throughputs) if throughputs is not None else None
 
 
-def infer_flow_state(flow: EntityRecord) -> str | None:
+def infer_flow_state(scene: SceneData, flow: EntityRecord) -> str | None:
     tx_packets = _number(flow.properties, "tx_packets")
     rx_packets = _number(flow.properties, "rx_packets")
     lost_packets = _number(flow.properties, "lost_packets")
@@ -104,13 +104,37 @@ def infer_flow_state(flow: EntityRecord) -> str | None:
         or (rx_packets == 0 and throughput > FLOAT_TOLERANCE)
     ):
         return None
-    if tx_packets <= 0 or rx_packets <= 0:
+    if tx_packets <= 0:
+        return None
+    if rx_packets <= 0:
         return "failed"
     if lost_packets > 0:
-        return "unstable"
-    if throughput < demand * 0.95:
-        return "degraded"
-    return "normal"
+        return "lossy"
+
+    path = _complete_flow_path(scene, flow)
+    if path is None:
+        return None
+    path_nodes, channels = path
+    congested = False
+    for source, channel in zip(path_nodes, channels):
+        senders = [
+            interface
+            for interface_id in channel.relations.get("connects", [])
+            if (interface := scene.entity("interface", str(interface_id))) is not None
+            and interface.relations["node"] == [source]
+            and interface.relations["channel"] == [channel.entity_id]
+        ]
+        if len(senders) != 1:
+            return None
+        queue_size = _number(senders[0].properties, "queue_size_packets")
+        queue_current = _number(senders[0].properties, "queue_current_packets")
+        if (
+            queue_size is None or queue_current is None
+            or queue_size <= 0 or not 0 <= queue_current <= queue_size
+        ):
+            return None
+        congested |= queue_current / queue_size >= SATURATION_THRESHOLD
+    return "congested" if congested else "normal"
 
 
 def _channel_directional_measurements(
@@ -456,7 +480,7 @@ def infer_entity_state(scene: SceneData, entity: EntityRecord) -> str | None:
     if entity.entity_type == "interface":
         return infer_interface_state(scene, entity)
     if entity.entity_type == "data_flow":
-        return infer_flow_state(entity)
+        return infer_flow_state(scene, entity)
     return None
 
 
@@ -594,7 +618,7 @@ def infer_flow_failure_locations(
     """
     tx_packets = _number(flow.properties, "tx_packets")
     if (
-        infer_flow_state(flow) != "failed"
+        infer_flow_state(scene, flow) != "failed"
         or tx_packets is None
         or tx_packets < MIN_OFFERED_PACKET_SAMPLE
     ):

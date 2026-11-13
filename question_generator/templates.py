@@ -17,14 +17,11 @@ from .models import (
 
 SCHEMA_VERSION = 1
 _PLACEHOLDER_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\$")
-_ANSWER_TYPES = {
-    "enum",
-    "node_id",
-    "channel_id",
-    "entity_id",
-    "path",
-    "route_entries",
-    "channel_capacity",
+_ID_ANSWER_TYPES = {"node_id", "channel_id", "entity_id"}
+_OPTIMIZATION_ANSWER_TYPES = {
+    "routing_adjustment": "node_id",
+    "channel_expansion": "channel_id",
+    "fault_repair": "entity_id",
 }
 _TEMPLATE_ID_PREFIXES = {
     "analysis": "TA",
@@ -75,14 +72,6 @@ def _reject_unknown(
     unknown = sorted(set(value) - allowed)
     if unknown:
         raise ValueError(f"{location} has unsupported fields: {unknown}")
-
-
-def _load_explanation(value: object, location: str) -> tuple[str, ...]:
-    explanation = _list(value, location)
-    for index, item in enumerate(explanation, start=1):
-        if not isinstance(item, str) or not item.strip():
-            raise ValueError(f"{location}[{index}] must be a non-empty string")
-    return tuple(explanation)
 
 
 def _load_evolution_events(
@@ -191,100 +180,37 @@ def _validate_optimization_strategy_coverage(
             f"{template_path}: optimization templates reference unknown "
             f"strategies: {unknown}"
         )
+    for template in templates:
+        expected = _OPTIMIZATION_ANSWER_TYPES[template.strategy]
+        if template.answer_type != expected:
+            raise ValueError(
+                f"{template_path}: {template.template_id} answer must be "
+                f"[{expected}] for {template.strategy}"
+            )
 
 
 def _load_answer(
     raw_answer: object,
     location: str,
-) -> tuple[
-    str,
-    tuple[str, ...],
-    tuple[str, ...],
-    tuple[str, ...],
-]:
-    answer = _mapping(raw_answer, location)
-    _reject_unknown(
-        answer,
-        {"type", "values", "fields", "item_fields"},
-        location,
-    )
-    answer_type = _identifier(answer.get("type"), f"{location}.type")
-    if answer_type not in _ANSWER_TYPES:
-        raise ValueError(
-            f"{location}.type must be one of {sorted(_ANSWER_TYPES)}"
-        )
-    raw_values = answer.get("values", [])
-    values = tuple(
-        _text(value, f"{location}.values")
-        for value in _list(raw_values, f"{location}.values")
-    )
-    if len(values) != len(set(values)):
-        raise ValueError(f"{location}.values must be unique")
-    if any(value.casefold() in _INDETERMINATE_ANSWER_LABELS for value in values):
-        raise ValueError(
-            f"{location}.values cannot contain an indeterminate answer label"
-        )
-    if answer_type == "enum" and not values:
-        raise ValueError(f"{location}: enum answers require values")
-    if answer_type != "enum" and values:
-        raise ValueError(f"{location}: ID answers cannot define values")
-    fields = tuple(
-        _identifier(value, f"{location}.fields")
-        for value in _list(answer.get("fields", []), f"{location}.fields")
-    )
-    item_fields = tuple(
-        _identifier(value, f"{location}.item_fields")
-        for value in _list(
-            answer.get("item_fields", []),
-            f"{location}.item_fields",
-        )
-    )
-    if len(fields) != len(set(fields)):
-        raise ValueError(f"{location}.fields must be unique")
-    if len(item_fields) != len(set(item_fields)):
-        raise ValueError(f"{location}.item_fields must be unique")
-    if answer_type == "channel_capacity":
-        if not fields or item_fields:
-            raise ValueError(
-                f"{location}: channel_capacity requires fields only"
-            )
-    elif answer_type == "route_entries":
-        if not item_fields or fields:
-            raise ValueError(
-                f"{location}: route_entries requires item_fields only"
-            )
-    elif fields or item_fields:
-        raise ValueError(
-            f"{location}: {answer_type} cannot define fields or item_fields"
-        )
-    return (
-        answer_type,
-        values if answer_type == "enum" else (answer_type,),
-        fields,
-        item_fields,
-    )
-
-
-def _load_evolution_answer(
-    raw_answer: object,
-    location: str,
-) -> tuple[str, ...]:
-    values = tuple(
-        _text(value, f"{location}[{index}]")
-        for index, value in enumerate(
-            _list(raw_answer, location),
-            start=1,
-        )
-    )
-    if not values:
-        raise ValueError(f"{location} must not be empty")
-    if len(values) != len(set(values)):
+) -> tuple[str, tuple[str, ...]]:
+    raw_values = _list(raw_answer, location)
+    if not raw_values or any(
+        not isinstance(value, str) or not value.strip() for value in raw_values
+    ):
+        raise ValueError(f"{location} must be a non-empty list of non-empty strings")
+    values = tuple(value.strip() for value in raw_values)
+    normalized = [value.casefold() for value in values]
+    if len(normalized) != len(set(normalized)):
         raise ValueError(f"{location} values must be unique")
     if any(value.casefold() in _INDETERMINATE_ANSWER_LABELS for value in values):
         raise ValueError(
             f"{location} cannot contain an indeterminate answer label"
         )
-    return values
+    if _ID_ANSWER_TYPES.intersection(values):
+        if len(values) != 1:
+            raise ValueError(f"{location} must contain exactly one ID type or only labels")
+        return values[0], values
+    return "enum", values
 
 
 def _load_templates(
@@ -294,11 +220,9 @@ def _load_templates(
 ) -> tuple[QuestionTemplate, ...]:
     templates: list[QuestionTemplate] = []
     seen_ids: set[str] = set()
-    base_fields = {"id", "question", "explanation"}
+    base_fields = {"id", "question", "answer"}
     if category == "optimization":
         base_fields.add("strategy")
-    else:
-        base_fields.add("answer")
 
     for index, raw_template in enumerate(
         _list(raw_templates, f"{template_path}:templates"),
@@ -330,29 +254,10 @@ def _load_templates(
         )
         if not placeholders:
             raise ValueError(f"{location}.question needs at least one placeholder")
-        if category == "optimization":
-            answer_type = ""
-            answer_values = ()
-            answer_fields = ()
-            answer_item_fields = ()
-        elif category == "evolution":
-            answer_type = "enum"
-            answer_values = _load_evolution_answer(
-                item.get("answer"),
-                f"{location}.answer",
-            )
-            answer_fields = ()
-            answer_item_fields = ()
-        else:
-            (
-                answer_type,
-                answer_values,
-                answer_fields,
-                answer_item_fields,
-            ) = _load_answer(
-                item.get("answer"),
-                f"{location}.answer",
-            )
+        answer_type, answer_values = _load_answer(
+            item.get("answer"),
+            f"{location}.answer",
+        )
 
         templates.append(
             QuestionTemplate(
@@ -363,12 +268,6 @@ def _load_templates(
                 answer_values=answer_values,
                 placeholders=placeholders,
                 strategy=strategy,
-                answer_fields=answer_fields,
-                answer_item_fields=answer_item_fields,
-                explanation=_load_explanation(
-                    item.get("explanation", []),
-                    f"{location}.explanation",
-                ),
             )
         )
     return tuple(templates)

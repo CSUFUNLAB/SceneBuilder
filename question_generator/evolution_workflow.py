@@ -23,6 +23,7 @@ from .models import (
 from .runner import (
     CategoryRunResult,
     QuestionGenerationResult,
+    _target_counts,
     ensure_question_outputs_absent,
 )
 from .scene import EntityRecord, SceneData
@@ -77,11 +78,20 @@ _QUESTION_RULES = {
 
 
 _ENTITY_STATE_VALUES = {
-    "channel": ("normal", "disabled", "degraded", "saturated"),
-    "interface": ("normal", "disabled", "saturated"),
-    "data_flow": ("normal", "unstable", "degraded", "failed"),
+    "channel": ("normal", "saturated"),
+    "interface": ("normal", "saturated"),
+    "data_flow": ("normal", "congested", "lossy", "failed"),
 }
-_EVIDENCE_BACKED_STATE_TARGET = "evidence_backed_state"
+
+
+def _state_transition_answers(entity_type: str) -> tuple[str, ...]:
+    states = _ENTITY_STATE_VALUES[entity_type]
+    return tuple(
+        f"{before}_to_{after}"
+        for before in states
+        for after in states
+        if before != after
+    ) + ("unchanged",)
 
 
 @dataclass(frozen=True)
@@ -403,9 +413,8 @@ def generate_evolution_questions(
             for plan in plans
             if plan.event_type == rule.event_type_id
         ]
-        for target_label, requested in _generation_target_counts(
+        for target_label, requested in _target_counts(
             template,
-            rule,
             category.questions_per_template,
         ):
             shuffled_plans = list(matching_plans)
@@ -510,9 +519,8 @@ def generate_evolution_questions(
             ),
         )
         for template in templates
-        for target_label, requested in _generation_target_counts(
+        for target_label, requested in _target_counts(
             template,
-            _question_rule(template),
             category.questions_per_template,
         )
     )
@@ -558,7 +566,7 @@ def _validate_templates(
         expected_answers = (
             ("increase", "unchanged", "decrease")
             if rule.comparison_kind == "numeric"
-            else _ENTITY_STATE_VALUES[rule.target_entity_type]
+            else _state_transition_answers(rule.target_entity_type)
         )
         if template.answer_values != expected_answers:
             raise ValueError(
@@ -612,29 +620,6 @@ def _evolution_options(category: CategoryConfig) -> dict[str, object]:
     ):
         raise ValueError("evolution options.scenes_per_event must be a positive integer")
     return options
-
-
-def _target_label_counts(
-    template: QuestionTemplate,
-    total_count: int,
-) -> tuple[tuple[str, int], ...]:
-    labels = list(template.answer_values)
-    count_per_label, remainder = divmod(total_count, len(labels))
-    return tuple(
-        (target_label, count_per_label + (index < remainder))
-        for index, target_label in enumerate(labels)
-        if count_per_label + (index < remainder) > 0
-    )
-
-
-def _generation_target_counts(
-    template: QuestionTemplate,
-    rule: EvolutionQuestionRule,
-    total_count: int,
-) -> tuple[tuple[str, int], ...]:
-    if rule.comparison_kind == "state_prediction":
-        return ((_EVIDENCE_BACKED_STATE_TARGET, total_count),)
-    return _target_label_counts(template, total_count)
 
 
 def _select_event(
@@ -1053,7 +1038,7 @@ def _find_evidence_candidates(
         answer_label = _evaluate_target(before, after, rule, target_id)
         if answer_label is None or answer_label not in template.answer_values:
             continue
-        if target_label != _EVIDENCE_BACKED_STATE_TARGET and answer_label != target_label:
+        if answer_label != target_label:
             continue
         replacements = {
             _change_placeholder(rule, event_type): event_id,
@@ -1160,9 +1145,12 @@ def _evaluate_target(
     if before_entity is None or after_entity is None:
         return None
     if rule.comparison_kind == "state_prediction":
-        if _evidence_backed_entity_state(before, target_entity_type, target_id) is None:
+        before_state = _evidence_backed_entity_state(before, target_entity_type, target_id)
+        after_state = _evidence_backed_entity_state(after, target_entity_type, target_id)
+        allowed = _ENTITY_STATE_VALUES[target_entity_type]
+        if before_state not in allowed or after_state not in allowed:
             return None
-        return _evidence_backed_entity_state(after, target_entity_type, target_id)
+        return "unchanged" if before_state == after_state else f"{before_state}_to_{after_state}"
 
     before_value = _finite_number(before_entity.properties.get("throughput_mbps"))
     after_value = _finite_number(after_entity.properties.get("throughput_mbps"))

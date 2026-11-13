@@ -34,9 +34,6 @@ class QuestionTemplate:
     answer_values: tuple[str, ...]
     placeholders: tuple[str, ...]
     strategy: str | None = None
-    answer_fields: tuple[str, ...] = ()
-    answer_item_fields: tuple[str, ...] = ()
-    explanation: tuple[str, ...] = ()
 
     @property
     def has_id_answer(self) -> bool:
